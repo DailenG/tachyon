@@ -150,9 +150,16 @@ pub fn parse(src: &str, defs: &DefTable) -> Vec<ParsedBlock> {
             Event::Start(Tag::List(_) | Tag::BlockQuote(_) | Tag::FootnoteDefinition(_))
                 | Event::End(TagEnd::List(_) | TagEnd::BlockQuote(_) | TagEnd::FootnoteDefinition)
         );
-        if !container && let Some(b) = builder.as_mut() {
-            b.extent_end = b.extent_end.max(range.end);
+        // Item ranges span nested items, so they do not grow a leaf either.
+        let structural =
+            container || matches!(event, Event::Start(Tag::Item) | Event::End(TagEnd::Item));
+        if let Some(b) = builder.as_mut() {
+            if !container {
+                b.extent_end = b.extent_end.max(range.end);
+            }
+            b.last_offset = range.start;
         }
+        let touch = (!structural).then(|| range.clone());
         match event {
             Event::Start(tag) => {
                 if depth == 0 {
@@ -165,12 +172,14 @@ pub fn parse(src: &str, defs: &DefTable) -> Vec<ParsedBlock> {
                 depth += 1;
                 if let Some(b) = builder.as_mut() {
                     b.start(tag);
+                    b.touch(touch);
                 }
             }
             Event::End(end) => {
                 depth -= 1;
                 if let Some(b) = builder.as_mut() {
                     b.end(end);
+                    b.touch(touch);
                 }
                 if depth == 0
                     && let Some(b) = builder.take()
@@ -185,12 +194,15 @@ pub fn parse(src: &str, defs: &DefTable) -> Vec<ParsedBlock> {
                     if matches!(event, Event::Rule) { BlockKind::Rule } else { BlockKind::Html };
                 let mut b = Builder::new(src, range.start, kind, defs);
                 b.extent_end = range.end;
+                b.last_offset = range.start;
                 b.event(event, range.clone());
+                b.touch(touch);
                 pending.push(b.finish(range));
             }
             event => {
                 if let Some(b) = builder.as_mut() {
                     b.event(event, range);
+                    b.touch(touch);
                 }
             }
         }
@@ -290,6 +302,15 @@ fn attach_leading_definitions(src: &str, pending: &mut [Pending]) {
     }
 }
 
+/// Offset just after the `\n` ending the line that contains `offset - 1`
+/// (so an offset already at a line start stays put).
+fn line_end_inclusive(src: &str, offset: usize) -> usize {
+    if offset == 0 || src.as_bytes()[offset - 1] == b'\n' {
+        return offset;
+    }
+    src[offset..].find('\n').map_or(src.len(), |nl| offset + nl + 1)
+}
+
 fn line_start(src: &str, offset: usize) -> usize {
     src[..offset].rfind('\n').map_or(0, |nl| nl + 1)
 }
@@ -305,7 +326,14 @@ pub fn unparsed(src: &str) -> ParsedBlock {
             ir.text.push('\n');
         }
         let start = ir.text.len();
-        ir.lines.push(LineInfo { start, kind: LineKind::Text, indent: 0, quote: 0, marker: None });
+        ir.lines.push(LineInfo {
+            start,
+            kind: LineKind::Text,
+            indent: 0,
+            quote: 0,
+            marker: None,
+            leaf: 0,
+        });
         ir.text.push_str(content);
         if !content.is_empty() {
             ir.map.push(SourceSpan {
@@ -315,6 +343,9 @@ pub fn unparsed(src: &str) -> ParsedBlock {
             });
         }
         offset += line.len();
+    }
+    if !src.is_empty() {
+        ir.leaves.push(0..src.len());
     }
     ParsedBlock {
         kind: BlockKind::Unparsed,
@@ -337,12 +368,57 @@ struct Pending {
     origin: usize,
     /// End of the block's real content (see `Builder::extent_end`).
     extent_end: usize,
+    /// Leaf source ranges, absolute in the window.
+    leaves: Vec<Range<usize>>,
     ir: BlockIr,
     refs: Vec<String>,
     footnotes: Vec<String>,
 }
 
 impl Pending {
+    /// Appends a block that starts on this block's last line.
+    fn absorb(&mut self, other: Pending) {
+        let text_shift = if self.ir.text.is_empty() && self.ir.lines.is_empty() {
+            0
+        } else {
+            self.ir.text.push('\n');
+            self.ir.text.len()
+        };
+        let source_shift = other.origin - self.origin;
+        let leaf_shift = self.leaves.len();
+        let ir = other.ir;
+        self.ir.text.push_str(&ir.text);
+        self.ir.lines.extend(ir.lines.into_iter().map(|mut line| {
+            line.start += text_shift;
+            line.leaf += leaf_shift;
+            line
+        }));
+        self.ir.runs.extend(ir.runs.into_iter().map(|mut run| {
+            run.range = run.range.start + text_shift..run.range.end + text_shift;
+            run
+        }));
+        self.ir.links.extend(ir.links.into_iter().map(|mut link| {
+            link.visible = link.visible.start + text_shift..link.visible.end + text_shift;
+            link
+        }));
+        let last_source = self.ir.map.last().map_or(0, |span| span.source.end);
+        self.ir.map.extend(
+            ir.map
+                .into_iter()
+                .map(|mut span| {
+                    span.visible = span.visible.start + text_shift..span.visible.end + text_shift;
+                    span.source = span.source.start + source_shift..span.source.end + source_shift;
+                    span
+                })
+                .filter(|span| span.source.start >= last_source),
+        );
+        self.leaves.extend(other.leaves);
+        self.refs.extend(other.refs);
+        self.footnotes.extend(other.footnotes);
+        self.content.end = self.content.end.max(other.content.end);
+        self.extent_end = self.extent_end.max(other.extent_end);
+    }
+
     /// Link reference definitions in `span`, shown verbatim line by line.
     fn definitions(src: &str, span: Range<usize>) -> Self {
         let mut ir = unparsed(&src[span.clone()]).ir;
@@ -351,6 +427,7 @@ impl Pending {
             kind: BlockKind::LinkDefinition,
             origin: span.start,
             extent_end: span.end,
+            leaves: vec![span.clone()],
             content: span,
             ir,
             refs: Vec::new(),
@@ -381,12 +458,34 @@ fn tile(src: &str, pending: Vec<Pending>) -> Vec<ParsedBlock> {
             source_hash: hash(src),
         }];
     }
-    let mut starts = Vec::with_capacity(pending.len() + 1);
+    // Blocks start at the beginning of their content's line. Two blocks
+    // on one line (an empty footnote definition followed by another) become
+    // one block: a mid-line cut would parse differently on its own.
+    let mut starts: Vec<usize> = Vec::with_capacity(pending.len() + 1);
+    let mut merged: Vec<Pending> = Vec::with_capacity(pending.len());
     let mut previous_end = 0;
-    for (i, p) in pending.iter().enumerate() {
-        starts.push(if i == 0 { 0 } else { line_start(src, p.content.start).max(previous_end) });
-        previous_end = previous_end.max(p.content.end);
+    for p in pending {
+        let start =
+            if merged.is_empty() { 0 } else { line_start(src, p.content.start).max(previous_end) };
+        // Real content, not the container range: a list's range can run into
+        // the indentation of the next block's first line.
+        previous_end = previous_end.max(p.extent_end);
+        match merged.last_mut() {
+            // The first block's start is 0, not its content's line.
+            Some(last)
+                if starts
+                    .last()
+                    .is_some_and(|&s| start <= s.max(line_start(src, last.content.start))) =>
+            {
+                last.absorb(p)
+            }
+            _ => {
+                starts.push(start);
+                merged.push(p);
+            }
+        }
     }
+    let pending = merged;
     starts.push(src.len());
     pending
         .into_iter()
@@ -401,6 +500,26 @@ fn tile(src: &str, pending: Vec<Pending>) -> Vec<ParsedBlock> {
                     span.source = span.source.start + shift..span.source.end + shift;
                 }
             }
+            // Leaves as whole source lines, so list and quote markers are
+            // part of their raw text. Leaves sharing a line merge.
+            let mut leaves: Vec<Range<usize>> = Vec::with_capacity(p.leaves.len());
+            let mut remap = Vec::with_capacity(p.leaves.len());
+            for leaf in &p.leaves {
+                let s = line_start(src, leaf.start.clamp(start, end)).max(start);
+                // An empty leaf (an empty list item) is its marker line.
+                let content_end = if leaf.is_empty() { s + 1 } else { leaf.end };
+                let e = line_end_inclusive(src, content_end.clamp(s, end)).min(end);
+                let (s, e) = (s - start, e - start);
+                match leaves.last_mut() {
+                    Some(last) if s < last.end => last.end = last.end.max(e),
+                    _ => leaves.push(s..e),
+                }
+                remap.push(leaves.len() - 1);
+            }
+            for line in &mut p.ir.lines {
+                line.leaf = remap.get(line.leaf).copied().unwrap_or(0);
+            }
+            p.ir.leaves = leaves;
             let content_end = p.content.end.min(end);
             p.refs.sort();
             p.refs.dedup();
@@ -492,6 +611,10 @@ struct Builder<'a> {
     /// End of the furthest non-container event: where the block's real
     /// content ends, as opposed to its (possibly longer) container range.
     extent_end: usize,
+    /// Start of the event being processed.
+    last_offset: usize,
+    /// Leaf source ranges (absolute), grown by the events inside them.
+    leaves: Vec<Range<usize>>,
     kind: BlockKind,
     defs: &'a DefTable,
     ir: BlockIr,
@@ -518,6 +641,8 @@ impl<'a> Builder<'a> {
             src,
             origin,
             extent_end: origin,
+            last_offset: origin,
+            leaves: Vec::new(),
             kind,
             defs,
             ir: BlockIr::default(),
@@ -539,6 +664,7 @@ impl<'a> Builder<'a> {
     fn finish(mut self, range: Range<usize>) -> Pending {
         if self.pending_marker.is_some() {
             // Empty list item: still show its marker.
+            self.begin_leaf();
             self.open_line(LineKind::Text);
         }
         Pending {
@@ -546,6 +672,7 @@ impl<'a> Builder<'a> {
             content: range,
             origin: self.origin,
             extent_end: self.extent_end.max(self.origin),
+            leaves: self.leaves,
             ir: self.ir,
             refs: self.refs,
             footnotes: self.footnotes,
@@ -556,7 +683,27 @@ impl<'a> Builder<'a> {
         self.styles.iter().fold(Style::PLAIN, |acc, &s| acc | s)
     }
 
+    fn begin_leaf(&mut self) {
+        self.leaves.push(self.last_offset..self.last_offset);
+    }
+
+    /// Grows the current leaf over an event's source range. Only while a
+    /// line is open: events between leaves (a task marker or `**` before a
+    /// tight item's text) belong to the next leaf, not the previous one.
+    fn touch(&mut self, range: Option<Range<usize>>) {
+        if !self.line_open {
+            return;
+        }
+        if let (Some(range), Some(leaf)) = (range, self.leaves.last_mut()) {
+            leaf.start = leaf.start.min(range.start);
+            leaf.end = leaf.end.max(range.end);
+        }
+    }
+
     fn open_line(&mut self, kind: LineKind) {
+        if self.leaves.is_empty() {
+            self.begin_leaf();
+        }
         if !self.ir.text.is_empty() || !self.ir.lines.is_empty() {
             self.ir.text.push('\n');
         }
@@ -566,6 +713,7 @@ impl<'a> Builder<'a> {
             indent: self.lists.len() as u8,
             quote: self.quote,
             marker: self.pending_marker.take(),
+            leaf: self.leaves.len() - 1,
         });
         self.line_kind = kind;
         self.line_open = true;
@@ -578,6 +726,9 @@ impl<'a> Builder<'a> {
             let kind = self.line_kind;
             self.open_line(kind);
         } else if !self.line_open {
+            // Inline content outside a paragraph: the text of a tight list
+            // item, a leaf of its own.
+            self.begin_leaf();
             self.open_line(LineKind::Text);
         }
     }
@@ -676,16 +827,25 @@ impl<'a> Builder<'a> {
 
     fn start(&mut self, tag: Tag<'_>) {
         match tag {
-            Tag::Paragraph => self.open_line(LineKind::Text),
-            Tag::Heading { level, .. } => self.open_line(LineKind::Heading(level as u8)),
+            Tag::Paragraph => {
+                self.begin_leaf();
+                self.open_line(LineKind::Text);
+            }
+            Tag::Heading { level, .. } => {
+                self.begin_leaf();
+                self.open_line(LineKind::Heading(level as u8));
+            }
             Tag::CodeBlock(_) => {
+                self.begin_leaf();
                 self.open_line(LineKind::Code);
                 self.in_verbatim_block = true;
             }
             Tag::HtmlBlock => {
+                self.begin_leaf();
                 self.open_line(LineKind::Html);
                 self.in_verbatim_block = true;
             }
+            Tag::Table(_) => self.begin_leaf(),
             Tag::BlockQuote(_) => {
                 self.quote += 1;
                 self.line_open = false;
@@ -759,6 +919,8 @@ impl<'a> Builder<'a> {
             }
             TagEnd::Item => {
                 if self.pending_marker.is_some() {
+                    // Empty item: its marker line is a leaf.
+                    self.begin_leaf();
                     self.open_line(LineKind::Text);
                 }
                 self.line_open = false;
@@ -807,6 +969,7 @@ impl<'a> Builder<'a> {
                 self.open_line(kind);
             }
             Event::Rule => {
+                self.begin_leaf();
                 self.open_line(LineKind::Rule);
                 self.line_open = false;
             }

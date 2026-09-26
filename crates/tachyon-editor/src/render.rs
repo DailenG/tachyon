@@ -112,11 +112,13 @@ impl Editor {
         };
         let range = self.doc.block_range(index);
         let parsed = block.parsed_shared();
-        let raw = block.is_stale() || self.active_block() == Some(index);
-        let content = if raw {
-            self.render_raw(range, &parsed, window, cx)
+        let active = self.active_block() == Some(index);
+        let leaf = if active { self.active_leaf() } else { None };
+        let content = if block.is_stale() || (active && leaf.is_none()) {
+            let code = matches!(parsed.kind, BlockKind::CodeBlock { .. } | BlockKind::Html);
+            self.render_raw(range, code, window, cx)
         } else {
-            self.render_rendered(range.start, parsed, cx)
+            self.render_rendered(range.start, parsed, leaf, window, cx)
         };
         div()
             .w_full()
@@ -130,7 +132,7 @@ impl Editor {
     fn render_raw(
         &mut self,
         range: Range<usize>,
-        parsed: &ParsedBlock,
+        code: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -171,7 +173,6 @@ impl Editor {
         let cursor_color = theme.cursor;
         let paint_layout = layout.clone();
 
-        let code = matches!(parsed.kind, BlockKind::CodeBlock { .. } | BlockKind::Html);
         let mut element = div()
             .relative()
             .my_1()
@@ -213,14 +214,16 @@ impl Editor {
         with_mouse(element, layout, TextTarget::Raw { base }, cx).into_any_element()
     }
 
-    /// An inactive block: rendered lines with syntax hidden.
+    /// Rendered lines with syntax hidden; the lines of `raw_leaf` (the leaf
+    /// holding the caret, with its absolute source range) are shown raw.
     fn render_rendered(
-        &self,
+        &mut self,
         block_start: usize,
         parsed: Arc<ParsedBlock>,
+        raw_leaf: Option<(usize, Range<usize>)>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let theme = &self.theme;
         let ir = &parsed.ir;
         let block_len = parsed.len;
         // Selection mapped to visible offsets of this block.
@@ -242,7 +245,19 @@ impl Editor {
         }
 
         let mut column = div().flex().flex_col().my_2();
+        let mut raw_shown = false;
         for (i, line) in ir.lines.iter().enumerate() {
+            if let Some((leaf, range)) = &raw_leaf
+                && line.leaf == *leaf
+            {
+                if !std::mem::replace(&mut raw_shown, true) {
+                    let code = ir.lines.iter().any(|l| {
+                        l.leaf == *leaf && matches!(l.kind, LineKind::Code | LineKind::Html)
+                    });
+                    column = column.child(self.render_raw(range.clone(), code, window, cx));
+                }
+                continue;
+            }
             let end = ir.lines.get(i + 1).map_or(ir.text.len(), |next| next.start - 1);
             column = column.child(self.render_line(
                 line,
@@ -254,7 +269,7 @@ impl Editor {
             ));
         }
         if let BlockKind::Heading(1 | 2) = parsed.kind {
-            column = column.pb_1().border_b_1().border_color(theme.rule);
+            column = column.pb_1().border_b_1().border_color(self.theme.rule);
         }
         column.into_any_element()
     }

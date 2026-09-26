@@ -49,7 +49,8 @@ the end of 512 KiB 7 ms. All corpus tests pass.
 - [x] Editor view on GPUI's virtualized list; rich rendering for headings, emphasis, inline code,
       links, fences, lists, task lists, quotes, tables, rules, math
 - [x] Raw rendering for the active block; swap on cursor movement
-- [ ] Swap at leaf granularity inside lists and quotes (today the whole top-level block swaps)
+- [x] Swap at leaf granularity inside lists, quotes and footnotes (list item text, paragraph, code
+      block); other blocks swap whole
 - [x] Arrow keys, words, home/end, document start/end; selections across blocks; copy/cut/paste;
       undo/redo with typing-run grouping
 - [x] Clicks and drag selection through rendered blocks via source maps (implemented; not yet

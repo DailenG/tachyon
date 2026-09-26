@@ -22,7 +22,10 @@ This is only correct if every block parses identically on its own as inside the 
 segmenter in `tachyon-md` enforces that:
 
 1. **Blocks start at line starts.** pulldown-cmark reports some blocks without their indentation
-   (indented code); a block cut mid-line would parse differently alone.
+   (indented code); a block cut mid-line would parse differently alone. The previous block's
+   *real content* end (not its container range, which can run into the next line's indentation)
+   bounds the cut. Two blocks that start on the same line merge into one, so no block is ever
+   empty (an empty block cannot be addressed by offset, and reparsing looped on it).
 2. **Link reference definitions directly before a block belong to it.** After a definition the
    parser is in a paragraph-like state ("[x]: /u\n2) two" is a paragraph, "2) two" alone is a
    list), and pulldown-cmark may attribute the definition to the previous container's range.
@@ -49,3 +52,6 @@ window is marked dirty again. One job is outstanding at a time.
 - The remaining per-keystroke cost is O(blocks) bookkeeping (prefix sums, `Vec` splice). Replace
   with a sum tree if documents with far more blocks need it.
 - A `\r` ending an insert is dropped by the buffer (half of a CRLF split across streamed chunks).
+- Known gap: nested footnote definitions on one line (`[^1]:[^1]: x`) can render differently
+  after incremental edits than after a full parse, because pulldown-cmark attributes their ranges
+  inconsistently. For them only termination and tiling are tested; a full reload fixes the view.
