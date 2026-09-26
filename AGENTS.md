@@ -15,9 +15,10 @@ criteria: [docs/ROADMAP.md](docs/ROADMAP.md). Decisions: [docs/adr/](docs/adr/).
 - `crates/tachyon`: binary: CLI, single-instance claim, startup sequencing, windows.
 - `crates/tachyon-platform`: OS integration GPUI lacks (single-instance IPC). The only crate besides
   `main.rs` allowed to contain `#[cfg(target_os)]`/`#[cfg(windows)]` code.
+- `crates/tachyon-text`: rope buffer, edit log, undo, UTF-16 mapping. No GPUI dependency, ever.
 - `xtask`: `cargo xtask ci` (required checks), `cargo xtask bench-startup` (startup budget).
-- Planned (do not create early; empty crates are not allowed): `tachyon-text`, `tachyon-md`,
-  `tachyon-doc` (no GPUI dependency, ever), `tachyon-theme`, `tachyon-editor`.
+- Planned (do not create early; empty crates are not allowed): `tachyon-md`, `tachyon-doc` (no
+  GPUI dependency, ever), `tachyon-theme`, `tachyon-editor`.
 
 ## Commands
 

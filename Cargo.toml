@@ -28,6 +28,7 @@ large_futures = "warn"
 
 [workspace.dependencies]
 tachyon-platform = { path = "crates/tachyon-platform" }
+tachyon-text = { path = "crates/tachyon-text" }
 
 # GPUI is consumed straight from the Zed monorepo. Bump `rev` deliberately:
 # the API is unstable between revisions.
@@ -36,7 +37,11 @@ gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "933d8d93
 
 futures = "0.3"
 lexopt = "0.3"
+ropey = "1.6"
 windows-sys = "0.61"
+
+# Test and benchmark only.
+proptest = "1"
 
 # Zed's workspace patches that GPUI's dependency graph relies on. A git
 # dependency does not inherit the upstream workspace's [patch] table.
