@@ -16,8 +16,9 @@ Tasks:
       (when installed). Run before pushing.
   bench-startup [--warm] [--runs N] [--budget-ms MS] [--bin PATH] [--no-build]
       Launches the release binary N times (default 20) with --startup-report and
-      reports spawn-to-first-frame latency. Exits non-zero if the p95 exceeds
-      the budget (default 50 ms).
+      reports spawn-to-first-frame latency. The first run is reported on its
+      own (coldest caches); percentiles cover the other runs. Exits non-zero
+      if their p95 exceeds the budget (default 50 ms).
       --warm measures launches handed to a resident instance instead: spawn of
       the second process until the resident instance has drawn the new window.
 ";
@@ -292,8 +293,14 @@ fn report(samples: &[Sample], budget: Duration, marks_from: &str) -> ExitCode {
         rows.push((format!("{marks_from} -> {name}"), values));
     }
 
-    // The first launch has the coldest caches; percentiles cover the rest.
+    // The first launch has the coldest caches: it gets its own column, and
+    // the percentiles (and the verdict) cover the remaining runs.
     let warm = samples.len() > 1;
+    let rest_of = |values: &[Duration]| {
+        let mut rest = if warm { values[1..].to_vec() } else { values.to_vec() };
+        rest.sort();
+        rest
+    };
     println!(
         "{:<24}{:>9}{:>9}{:>9}{:>9}   ({} runs, ms)",
         "metric",
@@ -305,8 +312,7 @@ fn report(samples: &[Sample], budget: Duration, marks_from: &str) -> ExitCode {
     );
     for (name, values) in &rows {
         let first = values[0];
-        let mut rest = if warm { values[1..].to_vec() } else { values.clone() };
-        rest.sort();
+        let rest = rest_of(values);
         println!(
             "{name:<24} {} {} {} {}",
             ms(first),
@@ -316,12 +322,12 @@ fn report(samples: &[Sample], budget: Duration, marks_from: &str) -> ExitCode {
         );
     }
 
-    let mut external: Vec<Duration> = rows[0].1.clone();
-    external.sort();
-    let p95 = percentile(&external, 0.95);
+    // Same statistic as the table's p95 column for the first row.
+    let p95 = percentile(&rest_of(&rows[0].1), 0.95);
     let verdict = if p95 <= budget { "PASS" } else { "FAIL" };
+    let runs = if warm { format!("runs 2-{}", samples.len()) } else { "1 run".to_owned() };
     println!(
-        "\n{verdict}: p95 spawn -> first frame {:.2} ms (budget {} ms, all runs)",
+        "\n{verdict}: p95 spawn -> first frame {:.2} ms (budget {} ms, {runs})",
         p95.as_secs_f64() * 1000.0,
         budget.as_millis()
     );

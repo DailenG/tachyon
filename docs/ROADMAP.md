@@ -21,11 +21,17 @@ Measured so far (release, 20 runs, `cargo xtask bench-startup`):
 | Linux, Intel UHD 750, Wayland | 193 ms | 199 ms | platform 10 ms, window open +180 ms |
 | Windows, GitHub `windows-latest` runner (no GPU; not reference hardware) | 142 ms | 161 ms | platform 60 ms, window open +44 ms, first frame +23 ms; ~16 ms before `main` |
 
-Both miss the 50 ms budget. The runner numbers only show that on Windows platform
-initialization alone can exceed the budget; the gate still needs a real machine.
+| Windows 11, reference (Core Ultra 7 155H, Intel Arc), 4K @ 30 Hz | 447 ms | 511 ms | platform 288 ms, window open +111 ms, first frame +21 ms |
+| Same machine, 1440p @ 59 Hz | 280 ms | 324 ms | platform 180 ms, window open +67 ms, first frame +12 ms |
+
+All miss the 50 ms budget. On the reference Windows machine GPUI's platform initialization alone
+takes 180-330 ms.
 
 Warm launches into a resident instance (`--resident`, `cargo xtask bench-startup --warm`) meet it
-on Linux: p50 27.6 ms, p95 29.5 ms (first launch into a windowless instance 180 ms). See ADR 0004.
+on Linux: p50 27.6 ms, p95 29.5 ms (first launch into a windowless instance 180 ms), but not on
+the reference Windows machine: p95 150-188 ms, of which the resident instance's window open to
+first frame is 86-93 ms. Next: a timing-instrumented GPUI build on that machine to attribute
+platform init and per-window costs. See ADR 0004.
 
 ## Phase 2: headless core (`tachyon-text`, `tachyon-md`, `tachyon-doc`) (done)
 
@@ -62,7 +68,9 @@ the end of 512 KiB 7 ms. All corpus tests pass.
       viewport do not move it; the view follows the caret's line (not its block) and edits inside
       the top block keep their pixel offset
 - [x] IME through GPUI's input handler (composition is one undo step)
-- [ ] IME verified with a Japanese or Chinese IME on Windows
+- [x] IME verified by hand on Windows with Microsoft IME (Japanese) and Microsoft Pinyin: candidate
+      window at the caret, underlined composition, commit, Escape cancels, one undo step. Synthetic
+      keystrokes bypass Windows IMEs, so this stays a manual check
 - [x] Paste path: large pastes show unparsed blocks and parse on the background executor; a 5 MB
       paste costs ≈ 6 ms on the UI thread, then 38 chunks applied in ≤ 7 ms each (the caret's
       first, ≈ 0.1 ms); a paste that defines its own references no longer triggers a reparse of
@@ -75,7 +83,9 @@ the end of 512 KiB 7 ms. All corpus tests pass.
       paste frame takes ≈ 31 ms (clipboard read inside GPUI ≈ 7 ms, rope insert and pre-segmenting
       ≈ 8 ms, first paint of the raw placeholder under the caret ≈ 14 ms); every later frame stays
       under budget (p50 2.5 ms) while the chunks stream in, and the view stays at the caret
-- [ ] Paste frame within budget: measure on the reference Windows machine; if it is still over,
+- [ ] Paste frame within budget. The reference Windows machine shows the Linux pattern: one
+      paste frame over budget (25-40 ms at 4K @ 30 Hz, 25-27 ms at 1440p @ 59 Hz), every later
+      frame p50 1.5-2.8 ms; the bench's UI-thread part is 15 ms there (6 ms on Linux). Next:
       shape only the visible lines of raw placeholder blocks and pre-segment off the UI thread
 - [x] Save / Save As with atomic writes; unsaved-changes prompt on close and quit
 - [x] Keyboard support in prompts on Linux (own in-window prompt; Windows and macOS keep native
