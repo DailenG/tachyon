@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 
 use gpui::{
     App, Bounds, ClipboardItem, Context, EntityInputHandler, FocusHandle, Focusable, KeyBinding,
-    ListAlignment, ListState, Pixels, Point, PromptLevel, Task, TextLayout, UTF16Selection, Window,
-    actions, point, px,
+    ListAlignment, ListOffset, ListState, Pixels, Point, PromptLevel, Task, TextLayout,
+    UTF16Selection, Window, actions, point, px,
 };
 use tachyon_doc::{BlockId, Document};
 use tachyon_md::{BlockKind, ParsedBlock};
@@ -153,6 +153,12 @@ pub struct Editor {
     /// The cursor moved without typing since the last edit.
     moved_since_edit: bool,
     pub(crate) selecting: bool,
+    /// The caret should be scrolled into view at the next paint.
+    reveal: bool,
+    /// Block indices the list rendered in the last frame, and the ones it
+    /// is rendering in the current one.
+    pub(crate) rendered: Range<usize>,
+    pub(crate) rendering: Option<Range<usize>>,
     file: Option<PathBuf>,
     /// Buffer version last written to (or loaded from) `file`.
     saved_version: u64,
@@ -190,6 +196,9 @@ impl Editor {
             last_edit: None,
             moved_since_edit: false,
             selecting: false,
+            reveal: false,
+            rendered: 0..0,
+            rendering: None,
             file: None,
             saved_version: 0,
             shown_title: None,
@@ -424,10 +433,39 @@ impl Editor {
         self.active_layout = None;
     }
 
-    fn reveal_cursor(&self) {
-        if let Some(index) = self.active_block() {
+    /// Keeps the caret in view. If its block is off screen (or not measured
+    /// yet) the list scrolls to the block; the caret's line is then brought
+    /// into view when the block paints (`reveal_caret_at`). Scrolling by
+    /// block alone would jump to the top of a tall block on every keystroke.
+    fn reveal_cursor(&mut self) {
+        self.reveal = true;
+        if let Some(index) = self.active_block()
+            && !self.rendered.contains(&index)
+        {
             self.list.scroll_to_reveal_item(index);
         }
+    }
+
+    /// Called while painting the caret (window coordinates). Scrolls so the
+    /// caret's line is visible with a line of margin if a reveal is pending.
+    /// Returns whether it scrolled.
+    pub(crate) fn reveal_caret_at(&mut self, top: Pixels, line_height: Pixels) -> bool {
+        if !std::mem::take(&mut self.reveal) {
+            return false;
+        }
+        let viewport = self.list.viewport_bounds();
+        let margin = line_height.min(viewport.size.height / 4.);
+        let above = top - margin - viewport.top();
+        let below = top + line_height + margin - viewport.bottom();
+        let distance = if above < px(0.) {
+            above
+        } else if below > px(0.) {
+            below
+        } else {
+            return false;
+        };
+        self.list.scroll_by(distance);
+        true
     }
 
     // ---- editing --------------------------------------------------------
@@ -486,8 +524,36 @@ impl Editor {
                 });
             }));
         }
-        for splice in self.doc.take_splices() {
+        self.apply_splices();
+    }
+
+    /// Mirrors block-list changes into the list. `ListState::splice` resets
+    /// the scroll offset to the top of a replaced item, so an edit inside a
+    /// tall block scrolled half out of view would jump; for a one-for-one
+    /// replacement keep the pixel offset instead.
+    fn apply_splices(&mut self) {
+        let splices = self.doc.take_splices();
+        if splices.is_empty() {
+            return;
+        }
+        let top = self.list.logical_scroll_top();
+        let (mut item, mut offset) = (top.item_ix, top.offset_in_item);
+        for splice in splices {
+            if splice.old.contains(&item) {
+                item = splice.old.start;
+                // Only a one-for-one replacement (an edit inside the block)
+                // is the same content; after a split or merge the offset
+                // may not fit the new item.
+                if splice.old.len() != 1 || splice.new_len != 1 {
+                    offset = px(0.);
+                }
+            } else if splice.old.end <= item {
+                item = item - splice.old.len() + splice.new_len;
+            }
             self.list.splice(splice.old, splice.new_len);
+        }
+        if offset > px(0.) && item < self.list.item_count() {
+            self.list.scroll_to(ListOffset { item_ix: item, offset_in_item: offset });
         }
     }
 

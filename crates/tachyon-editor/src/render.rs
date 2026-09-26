@@ -18,6 +18,9 @@ const INDENT: f32 = 22.;
 impl Render for Editor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_title(window);
+        if let Some(rendered) = self.rendering.take() {
+            self.rendered = rendered;
+        }
         let editor = cx.entity();
         let focus = self.focus.clone();
         div()
@@ -110,6 +113,10 @@ impl Editor {
         let Some(block) = self.doc.blocks().get(index) else {
             return div().into_any_element();
         };
+        self.rendering = Some(match self.rendering.take() {
+            Some(r) => r.start.min(index)..r.end.max(index + 1),
+            None => index..index + 1,
+        });
         let range = self.doc.block_range(index);
         let parsed = block.parsed_shared();
         let active = self.active_block() == Some(index);
@@ -185,9 +192,17 @@ impl Editor {
                 canvas(
                     |_, _, _| {},
                     move |_, _, window, cx| {
-                        editor.update(cx, |editor, _| {
-                            editor.active_layout = Some((paint_layout.clone(), base))
+                        let caret_position =
+                            caret.and_then(|caret| paint_layout.position_for_index(caret));
+                        let line_height = paint_layout.line_height();
+                        let scrolled = editor.update(cx, |editor, _| {
+                            editor.active_layout = Some((paint_layout.clone(), base));
+                            caret_position.is_some_and(|p| editor.reveal_caret_at(p.y, line_height))
                         });
+                        if scrolled {
+                            // The caret was out of view: draw again.
+                            window.request_animation_frame();
+                        }
                         if focused
                             && let Some(caret) = caret
                             && let Some(position) = paint_layout.position_for_index(caret)

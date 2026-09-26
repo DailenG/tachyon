@@ -78,6 +78,8 @@ lines including markers, from `BlockIr::leaves`) renders raw and the rest of the
 rendered; other active blocks render raw entirely. Every other block renders its IR. Hit testing maps a click through the text layout to a
 visible offset and through the block's source map to a document offset. The active block's text
 layout from the last paint drives caret painting, vertical movement and IME candidate placement.
+Scrolling follows the caret's line: a block off screen is scrolled to first, then the caret's line
+is brought into view when it paints, so typing in a tall block never jumps to its top.
 Selections are drawn as highlight backgrounds, so they span raw and rendered blocks alike.
 
 ## Concurrency
