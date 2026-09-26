@@ -55,7 +55,9 @@ the end of 512 KiB 7 ms. All corpus tests pass.
       undo/redo with typing-run grouping
 - [x] Clicks and drag selection through rendered blocks via source maps (implemented; not yet
       covered by an automated test)
-- [ ] Scroll anchoring when a swap changes a block's height above the viewport
+- [x] Scroll anchoring: the list scrolls by item offset, so blocks changing height above the
+      viewport do not move it; the view follows the caret's line (not its block) and edits inside
+      the top block keep their pixel offset
 - [x] IME through GPUI's input handler (composition is one undo step)
 - [ ] IME verified with a Japanese or Chinese IME on Windows
 - [x] Paste path: large pastes show unparsed blocks and parse on the background executor

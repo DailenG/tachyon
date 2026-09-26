@@ -215,3 +215,25 @@ fn unsaved_close_prompt_works_from_the_keyboard(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert!(cx.windows().is_empty(), "window closed");
 }
+
+#[gpui::test]
+fn typing_in_a_tall_block_keeps_the_scroll_position(cx: &mut TestAppContext) {
+    let lines: String = (0..300).map(|i| format!("line {i}\n")).collect();
+    let text = format!("```\n{lines}```\n\nafter\n");
+    let (editor, cx) = open(&text, cx);
+    // Caret on line 150 of the code block, scrolled so the block's top is
+    // far above the viewport.
+    let caret = text.find("line 150").unwrap();
+    editor.update(cx, |e, cx| e.move_to(caret, false, cx));
+    cx.run_until_parked();
+    let before = editor.read_with(cx, |e, _| e.list.logical_scroll_top());
+    assert_eq!(before.item_ix, 0);
+    assert!(before.offset_in_item > gpui::px(100.), "caret revealed inside the block: {before:?}");
+
+    cx.simulate_input("x");
+    cx.run_until_parked();
+    let after = editor.read_with(cx, |e, _| e.list.logical_scroll_top());
+    assert_eq!(after.item_ix, 0);
+    let drift = (after.offset_in_item - before.offset_in_item).abs();
+    assert!(drift < gpui::px(40.), "scroll jumped from {before:?} to {after:?}");
+}
