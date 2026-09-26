@@ -63,11 +63,12 @@ converges against the window's blocks, as for any edit.
 
 - Measured on a 1 MB document (`cargo bench -p tachyon-doc`): keystroke-to-clean p99 ≈ 45 µs, full
   parse ≈ 20 ms, 10 MB ≈ 220 ms, an unclosed fence reaching the end of 512 KB ≈ 7 ms. A 5 MB paste
-  costs ≈ 6 ms on the UI thread (rope insert, pre-segmenting into IR-free placeholders of ≥ 8 KiB),
-  ≈ 170 ms of background parsing (twice ≈ 80 ms: the paste defines the references it uses), and
-  ≈ 9 ms to apply the result. Streamed in 128 KiB chunks it takes 38 jobs; the one at the caret is
-  parsed in ≈ 4 ms and applied in ≈ 0.1 ms, each later one is applied in ≤ 7 ms (p50 3 ms, mostly
-  rebuilding the definition table, which is O(definitions) per changed window).
+  costs ≈ 6 ms as a plain edit (rope insert, pre-segmenting into IR-free placeholders), or 0.4 ms
+  on the UI thread when prepared off it (`PreparedInsert`, ≈ 5 ms elsewhere); then ≈ 170 ms of
+  background parsing unchunked (twice ≈ 80 ms: the paste defines the references it uses) and
+  ≈ 7 ms to apply the result. Streamed in 128 KiB chunks it takes 38 jobs; the one at the caret is
+  parsed in ≈ 4.5 ms and applied in ≈ 13 µs, the others are applied in p50 ≈ 80 µs, the last one
+  ≈ 5 ms (the one deferred rebuild of the definition table).
 - Documents without blank lines between blocks get larger reparse windows (slower keystrokes, same
   results).
 - The invariant is checked by property tests (random documents, edits, undo, interleaved jobs,

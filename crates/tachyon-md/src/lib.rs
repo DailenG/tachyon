@@ -23,7 +23,7 @@ use pulldown_cmark::{
 
 pub use crate::defs::{DefTable, LinkTarget};
 pub use crate::ir::{BlockIr, LineInfo, LineKind, LinkSpan, Marker, SourceSpan, Style, StyleRun};
-pub use crate::presegment::presegment;
+pub use crate::presegment::{ends_in_fence, presegment};
 
 /// Markdown dialect: CommonMark plus the GFM extensions LLM output relies on
 /// (tables, task lists, strikethrough, footnotes, alerts) and `$` math.

@@ -5,11 +5,11 @@ use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use gpui::{
-    App, Bounds, ClipboardItem, Context, EntityInputHandler, FocusHandle, Focusable, KeyBinding,
-    ListAlignment, ListOffset, ListState, Pixels, Point, PromptLevel, Task, TextLayout,
-    UTF16Selection, Window, actions, point, px,
+    App, Bounds, ClipboardItem, Context, EntityInputHandler, FocusHandle, Focusable, Font,
+    FontStyle, FontWeight, KeyBinding, ListAlignment, ListOffset, ListState, Pixels, Point,
+    PromptLevel, Task, TextLayout, TextRun, UTF16Selection, Window, actions, point, px,
 };
-use tachyon_doc::{BlockId, Document, Splice};
+use tachyon_doc::{BlockId, Document, PreparedInsert, Splice};
 use tachyon_md::{BlockKind, ParsedBlock};
 
 use crate::movement;
@@ -151,6 +151,9 @@ pub struct Editor {
     /// document offset of its first byte.
     pub(crate) active_layout: Option<(TextLayout, usize)>,
     parse_task: Option<Task<()>>,
+    /// A large paste being prepared off the UI thread; applied when ready,
+    /// or right away (from `text`) before any other input.
+    pending_paste: Option<PendingPaste>,
     last_edit: Option<Instant>,
     /// The cursor moved without typing since the last edit.
     moved_since_edit: bool,
@@ -197,6 +200,7 @@ impl Editor {
             active: None,
             active_layout: None,
             parse_task: None,
+            pending_paste: None,
             last_edit: None,
             moved_since_edit: false,
             selecting: false,
@@ -275,6 +279,7 @@ impl Editor {
 
     /// Unsaved changes: ask first. Returns whether the window may close now.
     fn should_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        self.flush_pending_paste(cx);
         if !self.is_modified() {
             return true;
         }
@@ -345,8 +350,9 @@ impl Editor {
     }
 
     /// Picks the first installed monospace family once the window exists,
-    /// off the startup path.
+    /// off the startup path, and loads the fonts the editor draws with.
     fn resolve_code_font(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        warm_fonts(window, &self.theme, installed_code_font(window));
         if let Some(family) = installed_code_font(window)
             && self.theme.code_font != family
         {
@@ -483,14 +489,14 @@ impl Editor {
     /// Replaces `range` with `text` and puts the caret after it.
     pub(crate) fn replace(&mut self, range: Range<usize>, text: &str, cx: &mut Context<Self>) {
         let now = Instant::now();
-        self.replace_at(now, range, text, cx);
+        self.replace_at(now, range, Insert::Text(text), cx);
         self.charge_work(now);
     }
 
     /// Charges the time since `started` to the frame-time overlay.
     fn charge_work(&mut self, started: Instant) {
         if let Some(stats) = &mut self.frame_stats {
-            stats.work(started.elapsed());
+            stats.work(started);
         }
     }
 
@@ -498,7 +504,7 @@ impl Editor {
         &mut self,
         now: Instant,
         range: Range<usize>,
-        text: &str,
+        text: Insert,
         cx: &mut Context<Self>,
     ) {
         // Undo groups: typing runs group together; navigation, pauses, line
@@ -507,11 +513,16 @@ impl Editor {
         let paused = self.last_edit.is_none_or(|t| now - t > UNDO_GROUP_PAUSE);
         let composing = self.marked.as_ref() == Some(&range);
         let replaces_selection = range.len() > 1 && !composing;
-        if self.moved_since_edit || paused || text.contains('\n') || replaces_selection {
+        let multiline = text.as_str().contains('\n');
+        if self.moved_since_edit || paused || multiline || replaces_selection {
             self.doc.seal_undo_group();
         }
-        let Ok(edit) = self.doc.edit(range, text) else { return };
-        if text.contains('\n') {
+        let edited = match text {
+            Insert::Text(text) => self.doc.edit(range, text),
+            Insert::Prepared(insert) => self.doc.edit_prepared(range, insert),
+        };
+        let Ok(edit) = edited else { return };
+        if multiline {
             self.doc.seal_undo_group();
         }
         self.last_edit = Some(now);
@@ -648,6 +659,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.flush_pending_paste(cx);
         window.focus(&self.focus, cx);
         self.goal_x = None;
         if click_count >= 2 && !extend {
@@ -785,12 +797,39 @@ impl Editor {
         }
     }
     pub(crate) fn paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
+        self.flush_pending_paste(cx);
         let started = Instant::now();
         let text = cx.read_from_clipboard().and_then(|item| item.text());
         self.charge_work(started);
-        if let Some(text) = text {
-            self.moved_since_edit = true;
+        let Some(text) = text else { return };
+        self.moved_since_edit = true;
+        if text.len() <= tachyon_doc::UNPARSED_SPLIT_THRESHOLD {
             self.replace(self.selection.clone(), &text, cx);
+            return;
+        }
+        // Normalizing, building the rope and pre-segmenting megabytes take
+        // milliseconds: do them off the UI thread, then splice the result in.
+        let text: Arc<str> = text.into();
+        let shared = Arc::clone(&text);
+        let task = cx.spawn(async move |this, cx| {
+            let insert =
+                cx.background_executor().spawn(async move { PreparedInsert::new(&shared) }).await;
+            let _ = this.update(cx, |editor, cx| {
+                if editor.pending_paste.take().is_some() {
+                    let now = Instant::now();
+                    editor.replace_at(now, editor.selection.clone(), Insert::Prepared(insert), cx);
+                    editor.charge_work(now);
+                }
+            });
+        });
+        self.pending_paste = Some(PendingPaste { text, _task: task });
+    }
+
+    /// Applies a paste still being prepared, from its text on this thread.
+    /// Called before any other input so edits keep their order.
+    pub(crate) fn flush_pending_paste(&mut self, cx: &mut Context<Self>) {
+        if let Some(paste) = self.pending_paste.take() {
+            self.replace(self.selection.clone(), &paste.text, cx);
         }
     }
     pub(crate) fn undo(&mut self, _: &Undo, _: &mut Window, cx: &mut Context<Self>) {
@@ -849,6 +888,7 @@ impl Editor {
         cx: &mut Context<Self>,
         after: impl FnOnce(&mut Window, &mut App) + 'static,
     ) {
+        self.flush_pending_paste(cx);
         match self.file.clone() {
             Some(path) => self.write_to(path, window, cx, after),
             None => self.prompt_path_then_save(window, cx, after),
@@ -950,6 +990,39 @@ impl Editor {
     }
 }
 
+/// Lays out a sample line in every face the editor draws with, once per
+/// process. A face's first use costs milliseconds (loading it and setting up
+/// shaping), and in a new scratch window the first text drawn is often a
+/// large paste, whose frame would pay for it.
+fn warm_fonts(window: &Window, theme: &Theme, code_font: Option<&'static str>) {
+    static WARMED: std::sync::Once = std::sync::Once::new();
+    WARMED.call_once(|| {
+        let sample = "The quick brown fox, 0123456789 ([{<*_`~|>}]).";
+        let base = window.text_style().font();
+        let mut faces = vec![
+            base.clone(),
+            Font { weight: FontWeight::BOLD, ..base.clone() },
+            Font { style: FontStyle::Italic, ..base.clone() },
+            Font { weight: FontWeight::BOLD, style: FontStyle::Italic, ..base.clone() },
+        ];
+        if let Some(family) = code_font {
+            faces.push(Font { family: family.into(), ..base.clone() });
+            faces.push(Font { family: family.into(), weight: FontWeight::BOLD, ..base });
+        }
+        for font in faces {
+            let run = TextRun {
+                len: sample.len(),
+                font,
+                color: theme.foreground,
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            };
+            window.text_system().layout_line(sample, theme.text_size, &[run], None);
+        }
+    });
+}
+
 /// The first installed monospace candidate, looked up once per process:
 /// listing the system fonts walks the whole font collection, and a resident
 /// instance opens many windows.
@@ -962,6 +1035,29 @@ fn installed_code_font(window: &Window) -> Option<&'static str> {
             .find(|family| installed.iter().any(|name| name == *family))
             .copied()
     })
+}
+
+/// A large paste whose text is being prepared off the UI thread.
+struct PendingPaste {
+    text: Arc<str>,
+    /// Applies the prepared text when ready; dropped (cancelled) when the
+    /// paste is applied from `text` instead.
+    _task: Task<()>,
+}
+
+/// Text to insert: as is, or prepared off the UI thread.
+enum Insert<'a> {
+    Text(&'a str),
+    Prepared(PreparedInsert),
+}
+
+impl Insert<'_> {
+    fn as_str(&self) -> &str {
+        match self {
+            Insert::Text(text) => text,
+            Insert::Prepared(insert) => insert.as_str(),
+        }
+    }
 }
 
 /// Maps the block indices drawn last frame through a splice replacing `old`
@@ -1064,6 +1160,7 @@ impl EntityInputHandler for Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.flush_pending_paste(cx);
         let range = range_utf16
             .map(|r| self.range_from_utf16(&r))
             .or_else(|| self.marked.clone())
@@ -1079,6 +1176,7 @@ impl EntityInputHandler for Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.flush_pending_paste(cx);
         let range = range_utf16
             .map(|r| self.range_from_utf16(&r))
             .or_else(|| self.marked.clone())

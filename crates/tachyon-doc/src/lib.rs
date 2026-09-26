@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use ropey::Rope;
 use tachyon_md::{self as md, DefTable, ParsedBlock};
-use tachyon_text::{Buffer, Edit, EditError};
+use tachyon_text::{Buffer, Edit, EditError, PreparedText};
 
 /// Jobs whose window is at most this many bytes are cheap enough to run on
 /// the UI thread (tens of microseconds).
@@ -31,6 +31,15 @@ pub const UNPARSED_SPLIT_THRESHOLD: usize = 64 * 1024;
 
 /// Minimum size of those provisional blocks.
 pub const UNPARSED_CHUNK: usize = 8 * 1024;
+
+/// Within this distance of either end of the changed range, provisional
+/// blocks are at least [`UNPARSED_EDGE_CHUNK`] instead. The caret lands at
+/// the end of a paste, so the first frame lays out the last blocks; each is
+/// laid out whole even if only part of it is visible.
+pub const UNPARSED_EDGE: usize = 32 * 1024;
+
+/// Minimum size of provisional blocks near the ends of the changed range.
+pub const UNPARSED_EDGE_CHUNK: usize = 1024;
 
 /// Window size for streaming a large dirty range back in pieces with
 /// [`Document::parse_job_near`]: a few milliseconds of parsing, so the text
@@ -214,7 +223,21 @@ impl Document {
 
     pub fn edit(&mut self, range: Range<usize>, text: &str) -> Result<Edit, EditError> {
         let edit = self.buffer.edit(range, text)?;
-        self.on_edit(&edit);
+        self.on_edit(&edit, None);
+        Ok(edit)
+    }
+
+    /// [`Document::edit`] with text prepared off the UI thread
+    /// ([`PreparedInsert::new`]): the result is the same, but the rope is
+    /// spliced in and the provisional blocks reuse the prepared boundaries,
+    /// so a multi-megabyte paste costs well under a millisecond here.
+    pub fn edit_prepared(
+        &mut self,
+        range: Range<usize>,
+        insert: PreparedInsert,
+    ) -> Result<Edit, EditError> {
+        let edit = self.buffer.edit_prepared(range, insert.text)?;
+        self.on_edit(&edit, Some(&insert.cuts));
         Ok(edit)
     }
 
@@ -224,13 +247,13 @@ impl Document {
 
     pub fn undo(&mut self) -> Option<Vec<Edit>> {
         let edits = self.buffer.undo()?;
-        edits.iter().for_each(|e| self.on_edit(e));
+        edits.iter().for_each(|e| self.on_edit(e, None));
         Some(edits)
     }
 
     pub fn redo(&mut self) -> Option<Vec<Edit>> {
         let edits = self.buffer.redo()?;
-        edits.iter().for_each(|e| self.on_edit(e));
+        edits.iter().for_each(|e| self.on_edit(e, None));
         Some(edits)
     }
 
@@ -464,7 +487,8 @@ impl Document {
         self.splices.push(Splice { old, new_len });
     }
 
-    fn on_edit(&mut self, edit: &Edit) {
+    /// `cuts`: pre-segmenter boundaries of the inserted text alone, if known.
+    fn on_edit(&mut self, edit: &Edit, cuts: Option<&[usize]>) {
         for range in &mut self.dirty {
             *range = shift_range(range, edit);
         }
@@ -472,7 +496,7 @@ impl Document {
         let new_total = self.buffer.len();
         if self.blocks.is_empty() {
             if new_total > 0 {
-                let block = self.stale_block(0..new_total, None);
+                let block = self.stale_block(0..new_total, None, cuts.map(|c| (0, c)));
                 self.splice(0..0, block);
                 self.mark_dirty(0..new_total);
             }
@@ -496,7 +520,8 @@ impl Document {
         let replacement = if len == 0 {
             Vec::new()
         } else {
-            self.stale_block(start..start + len, Some(self.blocks[first].clone()))
+            let cuts = cuts.map(|cuts| (edit.range.start - start, cuts));
+            self.stale_block(start..start + len, Some(self.blocks[first].clone()), cuts)
         };
         self.splice(first..last + 1, replacement);
         self.mark_dirty(start..start + len);
@@ -504,21 +529,30 @@ impl Document {
 
     /// Blocks for a changed range `range` (current coordinates): one stale
     /// block keeping `keep`'s identity, or provisional unparsed blocks when
-    /// the range is large.
-    fn stale_block(&mut self, range: Range<usize>, keep: Option<Block>) -> Vec<Block> {
+    /// the range is large. `inserted`: where in `range` inserted text starts,
+    /// and its pre-segmenter boundaries.
+    fn stale_block(
+        &mut self,
+        range: Range<usize>,
+        keep: Option<Block>,
+        inserted: Option<(usize, &[usize])>,
+    ) -> Vec<Block> {
         let len = range.len();
         if len > UNPARSED_SPLIT_THRESHOLD {
-            let text = self.buffer.rope().byte_slice(range).to_string();
-            // Chunks of at least UNPARSED_CHUNK bytes, cut only where the
-            // pre-segmenter allows (never inside fenced code): small enough
-            // that showing one raw is cheap, few enough to create quickly.
+            let boundaries = self.boundaries(range, inserted);
+            // Chunks of at least UNPARSED_CHUNK bytes (UNPARSED_EDGE_CHUNK
+            // near the ends), cut only where the pre-segmenter allows (never
+            // inside fenced code): small enough that showing one raw is
+            // cheap, few enough to create quickly.
             let mut starts = vec![0];
-            for cut in md::presegment(&text) {
-                if cut - starts[starts.len() - 1] >= UNPARSED_CHUNK {
+            for cut in boundaries {
+                let near_edge = cut <= UNPARSED_EDGE || len - cut <= UNPARSED_EDGE;
+                let min = if near_edge { UNPARSED_EDGE_CHUNK } else { UNPARSED_CHUNK };
+                if cut - starts[starts.len() - 1] >= min {
                     starts.push(cut);
                 }
             }
-            starts.push(text.len());
+            starts.push(len);
             let mut blocks: Vec<Block> = starts
                 .windows(2)
                 .map(|w| self.new_block(md::unparsed(w[1] - w[0]), true))
@@ -532,6 +566,22 @@ impl Document {
             Some(block) => vec![Block { len, stale: true, ..block }],
             None => vec![self.new_block(md::unparsed(len), true)],
         }
+    }
+
+    /// Pre-segmenter boundaries of `range`, relative to its start. Boundaries
+    /// computed for inserted text alone are reused when they mean the same
+    /// in place: the insert starts a line and nothing before it in `range`
+    /// leaves a fence open. Boundaries in the text after the insert are left
+    /// out (fewer, larger provisional blocks; still correct).
+    fn boundaries(&self, range: Range<usize>, inserted: Option<(usize, &[usize])>) -> Vec<usize> {
+        let rope = self.buffer.rope();
+        if let Some((at, cuts)) = inserted {
+            let prefix = rope.byte_slice(range.start..range.start + at).to_string();
+            if (prefix.is_empty() || prefix.ends_with('\n')) && !md::ends_in_fence(&prefix) {
+                return cuts.iter().map(|cut| at + cut).collect();
+            }
+        }
+        md::presegment(&rope.byte_slice(range).to_string())
     }
 
     fn mark_dirty(&mut self, range: Range<usize>) {
@@ -630,6 +680,26 @@ fn shift_range(range: &Range<usize>, edit: &Edit) -> Range<usize> {
     let start = map(range.start, old.start);
     let end = map(range.end, old.start + new_len);
     start..end.max(start)
+}
+
+/// Text prepared for [`Document::edit_prepared`]: normalized, as a rope, and
+/// pre-segmented. `Send`; build it off the UI thread.
+pub struct PreparedInsert {
+    text: PreparedText,
+    cuts: Vec<usize>,
+}
+
+impl PreparedInsert {
+    pub fn new(text: &str) -> Self {
+        let text = PreparedText::new(text);
+        let cuts = md::presegment(text.as_str());
+        Self { text, cuts }
+    }
+
+    /// The text as it will be inserted.
+    pub fn as_str(&self) -> &str {
+        self.text.as_str()
+    }
 }
 
 /// An immutable reparse of a window of whole blocks. `Send`; run it anywhere.

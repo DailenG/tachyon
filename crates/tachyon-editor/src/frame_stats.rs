@@ -1,8 +1,11 @@
 //! Frame-time overlay (toggle with `ctrl-alt-f`): how long the editor kept
 //! the UI thread busy per frame over recent frames, against the 60 Hz budget.
-//! A frame's time is its render, layout and paint plus the editor work done
-//! since the previous frame (applying an edit or paste, applying a
-//! background parse result), which delays the frame just the same.
+//! A frame's time is its render, layout and paint plus the editor work
+//! (applying an edit or paste, applying a background parse result) that ran
+//! back to back with it: work that ends less than [`CONTIGUOUS`] before the
+//! frame (or before other such work) delays the frame. Work followed by an
+//! idle gap, such as reading the clipboard before a paste lands in the next
+//! frame, does not.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -13,11 +16,14 @@ const WINDOW: usize = 240;
 /// One 60 Hz frame.
 pub const FRAME_BUDGET: Duration = Duration::from_micros(16_667);
 
+/// Gaps shorter than this between pieces of UI-thread work count as none.
+pub const CONTIGUOUS: Duration = Duration::from_millis(1);
+
 #[derive(Default)]
 pub struct FrameStats {
     started: Option<Instant>,
-    /// Editor work since the last frame, charged to the next one.
-    work: Duration,
+    /// Editor work since the last frame, `(start, end)` in order.
+    work: Vec<(Instant, Instant)>,
     samples: VecDeque<Duration>,
     over_budget: usize,
 }
@@ -25,19 +31,33 @@ pub struct FrameStats {
 impl FrameStats {
     /// The editor started rendering a frame.
     pub fn begin(&mut self) {
-        self.started = Some(Instant::now());
+        self.begin_at(Instant::now());
     }
 
     /// The editor finished painting the frame begun last.
     pub fn end(&mut self) {
-        let Some(started) = self.started.take() else { return };
-        let work = std::mem::take(&mut self.work);
-        self.record(started.elapsed() + work);
+        self.end_at(Instant::now());
     }
 
-    /// Editor work outside rendering that took `elapsed`.
-    pub fn work(&mut self, elapsed: Duration) {
-        self.work += elapsed;
+    /// Editor work outside rendering that ran from `started` until now.
+    pub fn work(&mut self, started: Instant) {
+        self.work.push((started, Instant::now()));
+    }
+
+    fn begin_at(&mut self, now: Instant) {
+        self.started = Some(now);
+    }
+
+    fn end_at(&mut self, now: Instant) {
+        let Some(mut start) = self.started.take() else { return };
+        for &(work_start, work_end) in self.work.iter().rev() {
+            if work_end + CONTIGUOUS < start {
+                break;
+            }
+            start = start.min(work_start);
+        }
+        self.work.clear();
+        self.record(now - start);
     }
 
     fn record(&mut self, frame: Duration) {
@@ -91,15 +111,26 @@ mod tests {
     }
 
     #[test]
-    fn work_between_frames_is_charged_to_the_next_frame_only() {
+    fn work_counts_toward_the_frame_it_runs_into() {
+        let ms = Duration::from_millis;
+        let t0 = Instant::now();
         let mut stats = FrameStats::default();
-        stats.work(FRAME_BUDGET);
-        stats.begin();
-        stats.end();
-        stats.begin();
-        stats.end();
-        let (_, max, over, n) = stats.summary().unwrap();
-        assert!(max > FRAME_BUDGET);
-        assert_eq!((over, n), (1, 2));
+        // Read the clipboard (8 ms), idle 5 ms, apply the paste (4 ms) right
+        // before a 3 ms frame: the frame took 7 ms, not 15.
+        stats.work.push((t0, t0 + ms(8)));
+        stats.work.push((t0 + ms(13), t0 + ms(17)));
+        stats.begin_at(t0 + ms(17));
+        stats.end_at(t0 + ms(20));
+        // The same work back to back, then the frame: one 23 ms stretch.
+        stats.work.push((t0 + ms(30), t0 + ms(38)));
+        stats.work.push((t0 + ms(38), t0 + ms(50)));
+        stats.begin_at(t0 + ms(50));
+        stats.end_at(t0 + ms(53));
+        // Nothing carries over to the next frame.
+        stats.begin_at(t0 + ms(60));
+        stats.end_at(t0 + ms(62));
+
+        assert_eq!(Vec::from(stats.samples.clone()), vec![ms(7), ms(23), ms(2)]);
+        assert_eq!(stats.over_budget, 1);
     }
 }

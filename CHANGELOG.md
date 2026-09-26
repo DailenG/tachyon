@@ -19,10 +19,11 @@ All notable user-visible changes are recorded here. The format follows
 - The view follows the caret's line, so typing in a long code block keeps the scroll position; it
   also stays at the caret after a long paste and jumps with `Ctrl+End` in long documents.
 - Frame-time overlay, toggled with `Ctrl+Alt+F`: UI-thread time per frame, including edits,
-  pastes and applied parse results.
+  pastes and applied parse results that run back to back with it.
 - Incremental Markdown parsing: keystrokes reparse only the affected blocks; large pastes are
   parsed in the background in 128 KiB chunks, starting at the caret, so the visible text is
-  formatted first. Only blocks whose reference links now resolve differently are reparsed when
+  formatted first. Large pastes are also prepared off the UI thread, so a 5 MB paste no longer
+  holds up a frame. Only blocks whose reference links now resolve differently are reparsed when
   definitions change.
 - Save (`Ctrl+S`) and Save As (`Ctrl+Shift+S`): atomic writes that keep the file's line endings
   and permissions; the title shows unsaved changes. Closing a window or quitting with unsaved

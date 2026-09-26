@@ -132,6 +132,21 @@ fn main() {
         black_box(doc.parse_job());
     })
     .print(&format!("paste {} KiB: UI-thread part", paste.len() >> 10));
+    // The editor prepares large pastes off the UI thread and splices them in.
+    time(runs, || drop(black_box(tachyon_doc::PreparedInsert::new(black_box(&paste)))))
+        .print(&format!("paste {} KiB: prepared off-thread", paste.len() >> 10));
+    let mut prepared = Vec::with_capacity(runs);
+    for _ in 0..runs {
+        prepared.push(tachyon_doc::PreparedInsert::new(&paste));
+    }
+    time(runs, || {
+        let mut doc = Document::new("start\n");
+        let end = doc.len();
+        let insert = prepared.pop().expect("one prepared insert per run");
+        doc.edit_prepared(end..end, black_box(insert)).expect("end is a char boundary");
+        black_box(doc.parse_job());
+    })
+    .print(&format!("paste {} KiB: UI-thread part, prepared", paste.len() >> 10));
     let mut pasted = Document::new("start\n");
     let end = pasted.len();
     pasted.edit(end..end, &paste).expect("end is a char boundary");

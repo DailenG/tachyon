@@ -245,3 +245,48 @@ fn streamed_chunks_of_a_large_paste_equal_full_parse() {
         panic!("{e}");
     }
 }
+
+/// A large paste inserted through [`Document::edit_prepared`] (at a line
+/// start or mid-line, into any document) splits only where the plain path
+/// could, and reparses to the full parse. Fixed case count, like the
+/// streaming test above.
+#[test]
+fn prepared_pastes_split_where_plain_ones_may() {
+    let config =
+        ProptestConfig { cases: 64, failure_persistence: None, ..ProptestConfig::default() };
+    let strategy = (document(), prop::collection::vec(document(), 1..6), any::<usize>());
+    let result =
+        proptest::test_runner::TestRunner::new(config).run(&strategy, |(initial, parts, at)| {
+            let mut paste = String::new();
+            while paste.len() <= tachyon_doc::UNPARSED_SPLIT_THRESHOLD {
+                for part in &parts {
+                    paste.push_str(part);
+                    paste.push('\n');
+                }
+            }
+            let at = floor_boundary(&initial, at % (initial.len() + 1));
+            let mut plain = Document::new(&initial);
+            plain.edit(at..at, &paste).unwrap();
+            let mut prepared = Document::new(&initial);
+            prepared.edit_prepared(at..at, tachyon_doc::PreparedInsert::new(&paste)).unwrap();
+
+            let text = prepared.buffer().text();
+            prop_assert_eq!(&text, &plain.buffer().text());
+            let starts = |doc: &Document| -> Vec<usize> {
+                (0..doc.blocks().len()).map(|i| doc.block_range(i).start).collect()
+            };
+            let allowed: std::collections::HashSet<usize> =
+                tachyon_md::presegment(&text).into_iter().chain(starts(&plain)).collect();
+            for start in starts(&prepared) {
+                prop_assert!(start == 0 || allowed.contains(&start), "block starts at {}", start);
+            }
+
+            prepared.reparse_now();
+            let fresh = Document::new(&text);
+            prop_assert_eq!(parsed(&prepared), parsed(&fresh));
+            Ok(())
+        });
+    if let Err(e) = result {
+        panic!("{e}");
+    }
+}
