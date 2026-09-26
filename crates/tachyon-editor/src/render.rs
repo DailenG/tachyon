@@ -21,9 +21,6 @@ impl Render for Editor {
         if let Some(stats) = &mut self.frame_stats {
             stats.begin();
         }
-        if let Some(rendered) = self.rendering.take() {
-            self.rendered = rendered;
-        }
         let editor = cx.entity();
         let focus = self.focus.clone();
         div()
@@ -101,6 +98,7 @@ impl Render for Editor {
                         );
                         // Painted after the list: the editor's frame ends here.
                         editor.update(cx, |editor, _| {
+                            editor.rendered = editor.rendering.take().unwrap_or(0..0);
                             if let Some(stats) = &mut editor.frame_stats {
                                 stats.end();
                             }

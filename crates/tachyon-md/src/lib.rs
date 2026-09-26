@@ -21,7 +21,7 @@ use pulldown_cmark::{
     TagEnd,
 };
 
-pub use crate::defs::{DefChanges, DefTable, LinkTarget};
+pub use crate::defs::{DefTable, LinkTarget};
 pub use crate::ir::{BlockIr, LineInfo, LineKind, LinkSpan, Marker, SourceSpan, Style, StyleRun};
 pub use crate::presegment::presegment;
 
@@ -89,15 +89,26 @@ pub struct ParsedBlock {
     pub ir: BlockIr,
     /// Link reference definitions made in this block, in source order.
     pub defs: Vec<(String, LinkTarget)>,
-    /// Reference labels this block's rendering looked up in the [`DefTable`].
-    pub refs: Vec<String>,
+    /// Reference labels this block's rendering looked up in the
+    /// [`DefTable`], with the entry it found. The rendering is stale exactly
+    /// when the table now answers differently for one of them.
+    pub refs: Vec<LinkLookup>,
     /// Footnote labels defined in this block.
     pub footnotes: Vec<String>,
-    /// The source contains `[^`, so the rendering may depend on which
-    /// footnotes the document defines.
-    pub mentions_footnotes: bool,
+    /// Set when the source contains `[^`, so the rendering may depend on
+    /// which footnotes the document defines: the [`DefTable::footnote_key`]
+    /// it rendered against. The rendering is stale when the key changes.
+    pub footnotes_seen: Option<u64>,
     /// Hash of the block's source text.
     pub source_hash: u64,
+}
+
+/// A reference label looked up in the [`DefTable`] and the entry found
+/// (`None`: undefined, which is a dependency too).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LinkLookup {
+    pub label: String,
+    pub target: Option<LinkTarget>,
 }
 
 /// Splits `src` into blocks whose `len`s sum to `src.len()` and builds their
@@ -254,7 +265,7 @@ pub fn parse(src: &str, defs: &DefTable) -> Vec<ParsedBlock> {
         }
     }
 
-    tile(src, pending)
+    tile(src, pending, defs)
 }
 
 /// Parses a complete document and returns its blocks together with the
@@ -264,9 +275,17 @@ pub fn parse(src: &str, defs: &DefTable) -> Vec<ParsedBlock> {
 /// it so the blocks are exactly what windowed reparses would produce.
 pub fn parse_document(src: &str) -> (Vec<ParsedBlock>, DefTable) {
     let initial = DefTable::from_source(src, options());
-    let blocks = parse(src, &initial);
+    let mut blocks = parse(src, &initial);
     let table = DefTable::from_blocks(&blocks);
     if table.links_equal(&initial) {
+        // The whole document resolves its own footnotes, so the blocks
+        // render as they would against `table`'s footnotes: record those.
+        let key = table.footnote_key();
+        for block in &mut blocks {
+            if block.footnotes_seen.is_some() {
+                block.footnotes_seen = Some(key);
+            }
+        }
         return (blocks, table);
     }
     let blocks = parse(src, &table);
@@ -328,7 +347,7 @@ pub fn unparsed(len: usize) -> ParsedBlock {
         defs: Vec::new(),
         refs: Vec::new(),
         footnotes: Vec::new(),
-        mentions_footnotes: false,
+        footnotes_seen: None,
         source_hash: 0,
     }
 }
@@ -450,7 +469,24 @@ impl Pending {
 /// the content itself: pulldown-cmark reports e.g. indented code without its
 /// indentation, and a block cut mid-line would parse differently on its own
 /// ("    code" is code, "code" is a paragraph).
-fn tile(src: &str, pending: Vec<Pending>) -> Vec<ParsedBlock> {
+/// Leading indentation of `line` in columns (tabs stop every 4), counted up
+/// to 4.
+fn indent_columns(line: &str) -> usize {
+    let mut columns = 0;
+    for byte in line.bytes() {
+        match byte {
+            b' ' => columns += 1,
+            b'\t' => columns = (columns / 4 + 1) * 4,
+            _ => break,
+        }
+        if columns >= 4 {
+            break;
+        }
+    }
+    columns
+}
+
+fn tile(src: &str, pending: Vec<Pending>, defs: &DefTable) -> Vec<ParsedBlock> {
     if pending.is_empty() {
         return vec![ParsedBlock {
             kind: BlockKind::Blank,
@@ -460,13 +496,16 @@ fn tile(src: &str, pending: Vec<Pending>) -> Vec<ParsedBlock> {
             defs: Vec::new(),
             refs: Vec::new(),
             footnotes: Vec::new(),
-            mentions_footnotes: false,
+            footnotes_seen: None,
             source_hash: hash(src),
         }];
     }
     // Blocks start at the beginning of their content's line. Two blocks
     // on one line (an empty footnote definition followed by another) become
-    // one block: a mid-line cut would parse differently on its own.
+    // one block: a mid-line cut would parse differently on its own. So does
+    // a block indented like code that is not code: it continues a container
+    // (a footnote definition nested in another's continuation lines), and
+    // alone it would be indented code.
     let mut starts: Vec<usize> = Vec::with_capacity(pending.len() + 1);
     let mut merged: Vec<Pending> = Vec::with_capacity(pending.len());
     let mut previous_end = 0;
@@ -481,7 +520,9 @@ fn tile(src: &str, pending: Vec<Pending>) -> Vec<ParsedBlock> {
             Some(last)
                 if starts
                     .last()
-                    .is_some_and(|&s| start <= s.max(line_start(src, last.content.start))) =>
+                    .is_some_and(|&s| start <= s.max(line_start(src, last.content.start)))
+                    || (indent_columns(&src[start..]) >= 4
+                        && !matches!(p.kind, BlockKind::CodeBlock { fenced: false, .. })) =>
             {
                 last.absorb(p)
             }
@@ -492,6 +533,7 @@ fn tile(src: &str, pending: Vec<Pending>) -> Vec<ParsedBlock> {
         }
     }
     let pending = merged;
+    let footnote_key = defs.footnote_key();
     starts.push(src.len());
     pending
         .into_iter()
@@ -529,15 +571,20 @@ fn tile(src: &str, pending: Vec<Pending>) -> Vec<ParsedBlock> {
             let content_end = p.content.end.min(end);
             p.refs.sort();
             p.refs.dedup();
+            let refs = p
+                .refs
+                .into_iter()
+                .map(|label| LinkLookup { target: defs.get(&label).cloned(), label })
+                .collect();
             ParsedBlock {
                 kind: p.kind,
                 len: end - start,
                 content: p.content.start - start..content_end - start,
                 ir: p.ir,
                 defs: block_defs(&src[start..end]),
-                refs: p.refs,
+                refs,
                 footnotes: p.footnotes,
-                mentions_footnotes: src[start..end].contains("[^"),
+                footnotes_seen: src[start..end].contains("[^").then_some(footnote_key),
                 source_hash: hash(&src[start..end]),
             }
         })

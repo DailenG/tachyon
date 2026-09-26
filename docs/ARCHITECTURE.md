@@ -58,7 +58,9 @@ offsets mean an edit only changes the edited block's length; absolute positions 
 Swap unit: leaf block (paragraph, list item, fence, table). Resync unit: top-level block.
 Link reference definitions and footnotes are document-wide: a `DefTable` built from all blocks
 resolves them (reference links through the broken-link callback, footnotes through a prefix of
-definitions), and changing a definition invalidates the blocks that depend on it. The rules that
+definitions). Each block records the entry it found for every label it looked up, and is reparsed
+only when the table now answers differently; a job that changes definitions parses its window
+against the table as it will be, so pasted text does not come back block by block. The rules that
 make every block parse identically alone and in context are in
 [ADR 0005](adr/0005-incremental-reparse-by-block-windows.md).
 
@@ -106,8 +108,10 @@ flowchart LR
 - **Paste.** The rope insert and a fence-aware line scan happen in the same frame; an insert over
   64 KiB appears immediately as IR-free placeholder blocks of at least 8 KiB, shown as raw source
   (only visible ones are shaped). A background job then parses the window; the job wraps its blocks
-  in `Arc`s so applying the result on the UI thread is a merge and a splice. Streaming chunked
-  results back viewport-first is still open.
+  in `Arc`s so applying the result on the UI thread is a merge and a splice. Large dirty ranges
+  stream back in `PARSE_CHUNK` (128 KiB) windows, the caret's or viewport's first
+  (`Document::parse_job_near`, ADR 0005), so the visible text is formatted after one chunk and a
+  keystroke's reparse waits at most one chunk.
 - **Executors.** GPUI's background and foreground executors only; no tokio. `Document` is
   executor-agnostic: the caller decides where each `ParseJob` runs.
 - **Correctness invariant.** Property and corpus tests: after any sequence of edits, undo, streamed

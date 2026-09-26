@@ -16,10 +16,14 @@ All notable user-visible changes are recorded here. The format follows
   undo/redo, IME composition.
 - In lists, quotes and footnotes only the item or paragraph under the caret switches to raw
   Markdown; the rest stays rendered.
-- The view follows the caret's line, so typing in a long code block keeps the scroll position.
-- Frame-time overlay, toggled with `Ctrl+Alt+F`.
+- The view follows the caret's line, so typing in a long code block keeps the scroll position; it
+  also stays at the caret after a long paste and jumps with `Ctrl+End` in long documents.
+- Frame-time overlay, toggled with `Ctrl+Alt+F`: UI-thread time per frame, including edits,
+  pastes and applied parse results.
 - Incremental Markdown parsing: keystrokes reparse only the affected blocks; large pastes are
-  parsed in the background.
+  parsed in the background in 128 KiB chunks, starting at the caret, so the visible text is
+  formatted first. Only blocks whose reference links now resolve differently are reparsed when
+  definitions change.
 - Save (`Ctrl+S`) and Save As (`Ctrl+Shift+S`): atomic writes that keep the file's line endings
   and permissions; the title shows unsaved changes. Closing a window or quitting with unsaved
   changes asks first. On Linux the prompt works from the keyboard (Tab/arrows, Enter, Escape).
