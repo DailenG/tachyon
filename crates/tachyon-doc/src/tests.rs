@@ -131,7 +131,7 @@ fn large_paste_shows_unparsed_blocks_until_parsed() {
     let paste = chunk.repeat(UNPARSED_SPLIT_THRESHOLD / chunk.len() + 1);
     doc.edit(doc.len()..doc.len(), &paste).unwrap();
 
-    assert!(doc.blocks().len() > 10);
+    assert!(doc.blocks().len() >= UNPARSED_SPLIT_THRESHOLD / UNPARSED_CHUNK / 2);
     assert!(doc.blocks().iter().all(|b| b.is_stale()));
     assert!(doc.blocks().iter().any(|b| b.parsed().kind == BlockKind::Unparsed));
     let job = doc.parse_job().unwrap();

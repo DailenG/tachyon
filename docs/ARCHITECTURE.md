@@ -99,13 +99,15 @@ flowchart LR
   M --> F
 ```
 
-- **Reparse window.** One block of look-behind, the dirty blocks, one block of look-ahead. The
+- **Reparse window.** Look-behind to the last blank line, the dirty blocks, one block of look-ahead. The
   window has converged when its last block equals the old block at that place (length, source hash,
   kind) or it reaches the end of the text; otherwise it grows geometrically. An unclosed fence grows
   it to the end, which is why large jobs go to the background.
 - **Paste.** The rope insert and a fence-aware line scan happen in the same frame; an insert over
-  64 KiB appears immediately as unparsed plain blocks (only visible ones are shaped). A background
-  job then parses the window. Streaming chunked results back viewport-first is Phase 3 work.
+  64 KiB appears immediately as IR-free placeholder blocks of at least 8 KiB, shown as raw source
+  (only visible ones are shaped). A background job then parses the window; the job wraps its blocks
+  in `Arc`s so applying the result on the UI thread is a merge and a splice. Streaming chunked
+  results back viewport-first is still open.
 - **Executors.** GPUI's background and foreground executors only; no tokio. `Document` is
   executor-agnostic: the caller decides where each `ParseJob` runs.
 - **Correctness invariant.** Property and corpus tests: after any sequence of edits, undo, streamed

@@ -13,8 +13,10 @@ what a full parse would give, since rendered blocks must never disagree with the
 
 The document is a list of top-level blocks that tile the text. An edit merges the blocks it
 touches into one *stale* block and marks its range dirty. A reparse job parses a **window** of
-whole blocks: one block of look-behind (an edit can change how the preceding block ends: setext
-underlines, lazy continuation), the dirty blocks, and one block of look-ahead. The window grows
+whole blocks: look-behind back to the last blank line (an edit can change how preceding blocks end:
+setext underlines, lazy continuation, and lines that continue a paragraph only if the *next* line
+does not start a table, which reaches more than one block back; no construct continues across a
+blank line into a separate block), the dirty blocks, and one block of look-ahead. The window grows
 geometrically until the parse **converges**: its last block equals the old block at the same place
 (same length, source hash and kind) or the window reaches the end of the text.
 
@@ -45,7 +47,11 @@ window is marked dirty again. One job is outstanding at a time.
 ## Consequences
 
 - Measured on a 1 MB document (`cargo bench -p tachyon-doc`): keystroke-to-clean p99 ≈ 45 µs, full
-  parse ≈ 20 ms, 10 MB ≈ 220 ms, an unclosed fence reaching the end of 512 KB ≈ 7 ms.
+  parse ≈ 20 ms, 10 MB ≈ 220 ms, an unclosed fence reaching the end of 512 KB ≈ 7 ms. A 5 MB paste
+  costs ≈ 6 ms on the UI thread (rope insert, pre-segmenting into IR-free placeholders of ≥ 8 KiB),
+  ≈ 70 ms of background parsing, and ≈ 8 ms to apply the result.
+- Documents without blank lines between blocks get larger reparse windows (slower keystrokes, same
+  results).
 - The invariant is checked by property tests (random documents, edits, undo, interleaved jobs,
   streamed input) against `tachyon_md::parse_document`, and by corpus tests that try every
   keystroke position. Any rule above that is removed makes those tests fail.

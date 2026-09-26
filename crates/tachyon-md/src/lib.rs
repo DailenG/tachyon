@@ -21,7 +21,7 @@ use pulldown_cmark::{
     TagEnd,
 };
 
-pub use crate::defs::{DefChanges, DefTable, LinkTarget, labels_match};
+pub use crate::defs::{DefChanges, DefTable, LinkTarget};
 pub use crate::ir::{BlockIr, LineInfo, LineKind, LinkSpan, Marker, SourceSpan, Style, StyleRun};
 pub use crate::presegment::presegment;
 
@@ -315,9 +315,26 @@ fn line_start(src: &str, offset: usize) -> usize {
     src[..offset].rfind('\n').map_or(0, |nl| nl + 1)
 }
 
-/// A provisional block for `src` that shows it as plain text, one visible
-/// line per source line, until the real parse replaces it.
-pub fn unparsed(src: &str) -> ParsedBlock {
+/// A placeholder for `len` bytes of source not parsed yet (a large paste
+/// waiting for its background parse). It has no IR: until the parse lands,
+/// the editor shows it as raw source, which it takes from the document.
+/// Costs nothing per byte, so a multi-megabyte paste stays within a frame.
+pub fn unparsed(len: usize) -> ParsedBlock {
+    ParsedBlock {
+        kind: BlockKind::Unparsed,
+        len,
+        content: 0..len,
+        ir: BlockIr::default(),
+        defs: Vec::new(),
+        refs: Vec::new(),
+        footnotes: Vec::new(),
+        mentions_footnotes: false,
+        source_hash: 0,
+    }
+}
+
+/// IR showing `src` verbatim, one visible line per source line.
+fn plain_lines_ir(src: &str) -> BlockIr {
     let mut ir = BlockIr::default();
     let mut offset = 0;
     for line in src.split_inclusive('\n') {
@@ -347,17 +364,7 @@ pub fn unparsed(src: &str) -> ParsedBlock {
     if !src.is_empty() {
         ir.leaves.push(0..src.len());
     }
-    ParsedBlock {
-        kind: BlockKind::Unparsed,
-        len: src.len(),
-        content: 0..src.len(),
-        ir,
-        defs: Vec::new(),
-        refs: Vec::new(),
-        footnotes: Vec::new(),
-        mentions_footnotes: src.contains("[^"),
-        source_hash: hash(src),
-    }
+    ir
 }
 
 /// A block before tiling: content range still absolute in the window.
@@ -421,8 +428,7 @@ impl Pending {
 
     /// Link reference definitions in `span`, shown verbatim line by line.
     fn definitions(src: &str, span: Range<usize>) -> Self {
-        let mut ir = unparsed(&src[span.clone()]).ir;
-        ir.lines.iter_mut().for_each(|l| l.kind = LineKind::Text);
+        let ir = plain_lines_ir(&src[span.clone()]);
         Pending {
             kind: BlockKind::LinkDefinition,
             origin: span.start,

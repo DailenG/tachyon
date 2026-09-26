@@ -23,15 +23,29 @@ pub struct DefTable {
     footnotes: HashSet<UniCase<String>>,
     /// Footnote labels in first-definition order (for the parse prefix).
     footnote_order: Vec<String>,
+    /// Build-time only: the label inserted last (always `None` afterwards).
+    last_link: Option<String>,
 }
 
 /// Difference between two tables, as far as block rendering is concerned.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct DefChanges {
     /// Link labels added, removed or retargeted.
-    pub links: Vec<String>,
+    links: HashSet<UniCase<String>>,
     /// The set of defined footnotes changed.
     pub footnotes: bool,
+}
+
+impl DefChanges {
+    /// Whether a block that looked up `label` must be rendered again.
+    pub fn link_changed(&self, label: &str) -> bool {
+        !self.links.is_empty() && self.links.contains(&UniCase::new(label.to_owned()))
+    }
+
+    /// The changed link labels, in unspecified order.
+    pub fn links(&self) -> impl Iterator<Item = &str> {
+        self.links.iter().map(|label| label.as_str())
+    }
 }
 
 impl DefTable {
@@ -42,8 +56,14 @@ impl DefTable {
     ) -> Self {
         let mut table = DefTable::default();
         for (label, target) in links {
+            // Documents often repeat a label; skip those before allocating.
+            if table.last_link.as_deref() == Some(label.as_str()) {
+                continue;
+            }
             table.links.entry(UniCase::new(label.clone())).or_insert_with(|| target.clone());
+            table.last_link = Some(label.clone());
         }
+        table.last_link = None;
         for label in footnotes {
             if table.footnotes.insert(UniCase::new(label.clone())) {
                 table.footnote_order.push(label.clone());
@@ -79,11 +99,10 @@ impl DefTable {
     pub fn from_blocks<'a>(
         blocks: impl IntoIterator<Item = &'a crate::ParsedBlock> + Clone,
     ) -> Self {
-        let links: Vec<(String, LinkTarget)> =
-            blocks.clone().into_iter().flat_map(|b| b.defs.iter().cloned()).collect();
-        let footnotes: Vec<String> =
-            blocks.into_iter().flat_map(|b| b.footnotes.iter().cloned()).collect();
-        Self::new(&links, &footnotes)
+        Self::new(
+            blocks.clone().into_iter().flat_map(|b| &b.defs),
+            blocks.into_iter().flat_map(|b| &b.footnotes),
+        )
     }
 
     /// Same link definitions (footnotes ignored).
@@ -119,26 +138,15 @@ impl DefTable {
 
     /// What differs between `self` and `other`.
     pub fn changes(&self, other: &DefTable) -> DefChanges {
-        let mut links: Vec<String> = self
+        let mut links: HashSet<UniCase<String>> = self
             .links
             .iter()
             .filter(|(label, target)| other.links.get(*label) != Some(target))
-            .map(|(label, _)| label.to_string())
+            .map(|(label, _)| label.clone())
             .collect();
-        links.extend(
-            other
-                .links
-                .keys()
-                .filter(|label| !self.links.contains_key(*label))
-                .map(|label| label.to_string()),
-        );
+        links.extend(other.links.keys().filter(|label| !self.links.contains_key(*label)).cloned());
         DefChanges { links, footnotes: self.footnotes != other.footnotes }
     }
-}
-
-/// Whether two labels match under CommonMark label comparison.
-pub fn labels_match(a: &str, b: &str) -> bool {
-    UniCase::new(a) == UniCase::new(b)
 }
 
 #[cfg(test)]
@@ -164,12 +172,12 @@ mod tests {
             &[("A".into(), target("/a")), ("c".into(), target("/c"))],
             &["n".to_owned()],
         );
-        let mut changes = old.changes(&new);
-        changes.links.sort();
-        assert_eq!(
-            changes,
-            DefChanges { links: vec!["b".to_owned(), "c".to_owned()], footnotes: true }
-        );
+        let changes = old.changes(&new);
+        let mut links: Vec<&str> = changes.links().collect();
+        links.sort();
+        assert_eq!(links, vec!["b", "c"]);
+        assert!(changes.footnotes);
+        assert!(changes.link_changed("B") && !changes.link_changed("a"));
         assert_eq!(old.changes(&old.clone()), DefChanges::default());
     }
 }

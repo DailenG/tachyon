@@ -22,11 +22,15 @@ pub fn presegment(src: &str) -> Vec<usize> {
                 previous_blank = false;
             }
             None => {
-                let blank = line.trim().is_empty();
+                // Byte checks: this runs over every line of a large paste.
+                let first = line.bytes().find(|b| !matches!(b, b' ' | b'\t' | b'\r' | b'\n'));
+                let blank = first.is_none();
                 if previous_blank && !blank && start > 0 {
                     boundaries.push(start);
                 }
-                fence = opens_fence(line);
+                if matches!(first, Some(b'`' | b'~')) {
+                    fence = opens_fence(line);
+                }
                 previous_blank = blank;
             }
         }

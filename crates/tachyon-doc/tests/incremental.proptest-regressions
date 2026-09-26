@@ -22,3 +22,4 @@ cc 8709b322865f45ca9afd4a8313639d780597a625845266fadcf4280b1f03a237 # shrinks to
 cc 550e90e756ee40ce824d0177e1abc30f0cbd55733a1aa0806fff42d014841479 # shrinks to text = "    indented\n[x]: /u\n[^1]:[^1]: x\n# heading\n", chunk = 1
 cc c5a911545f8386bc5ba3544e46b01932d3daab18bd71c10bbdbd541bf2d78382 # shrinks to initial = "\n[^1]:[^1]: x\n[x]: /u\n# heading\n[^1]:[^1]: x\n[x]: /u\nmore *em* **strong** `code`\n", steps = [Delete { at: 10274885693174250616, len: 0 }]
 cc eeb1821c91db238a3c5cd77a64d3de69a87c09a757b77881b2b6b9378674ca5e # shrinks to initial = "[x]\n\n[x]: /u\n[^1]:[^1]: x\n- item\n<div>\n", steps = [Delete { at: 14440640030864706507, len: 0 }]
+cc 96d2290519e175487eda07a8b5817314cb3d37146a0349bf5aad9114291043bf # shrinks to initial = "> > deep\n[x]\n|---|:-:|\n$a$\n", steps = [Insert { at: 17039446420093367189, text: "=\n>>" }, Insert { at: 3894900383364062008, text: "\n==a" }, Reparse, Insert { at: 11521675030368707011, text: "text" }]

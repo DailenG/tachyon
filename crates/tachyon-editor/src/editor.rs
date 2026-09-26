@@ -50,6 +50,7 @@ actions!(
         Redo,
         Save,
         SaveAs,
+        ToggleFrameStats,
         CloseWindow,
     ]
 );
@@ -106,6 +107,7 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("ctrl-y", Redo, c),
         KeyBinding::new("secondary-s", Save, c),
         KeyBinding::new("secondary-shift-s", SaveAs, c),
+        KeyBinding::new("ctrl-alt-f", ToggleFrameStats, c),
         KeyBinding::new("secondary-w", CloseWindow, c),
     ]
 }
@@ -164,6 +166,8 @@ pub struct Editor {
     saved_version: u64,
     /// Window title last set, to avoid resetting it every frame.
     shown_title: Option<String>,
+    /// Frame-time overlay, when shown.
+    pub(crate) frame_stats: Option<crate::frame_stats::FrameStats>,
 }
 
 impl Editor {
@@ -202,6 +206,7 @@ impl Editor {
             file: None,
             saved_version: 0,
             shown_title: None,
+            frame_stats: None,
         };
         editor.doc.take_splices();
         editor.update_active();
@@ -749,6 +754,19 @@ impl Editor {
         if self.should_close(window, cx) {
             window.remove_window();
         }
+    }
+
+    pub(crate) fn toggle_frame_stats(
+        &mut self,
+        _: &ToggleFrameStats,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.frame_stats = match self.frame_stats {
+            Some(_) => None,
+            None => Some(Default::default()),
+        };
+        cx.notify();
     }
 
     pub(crate) fn save(&mut self, _: &Save, window: &mut Window, cx: &mut Context<Self>) {
