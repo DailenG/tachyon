@@ -227,7 +227,7 @@ impl Editor {
         let mut element = div()
             .relative()
             .my_1()
-            .px_2()
+            .px(RAW_INSET)
             .rounded_md()
             .bg(theme.raw_background)
             .cursor_text()
@@ -502,6 +502,10 @@ impl Editor {
         with_mouse(div().cursor_text().child(styled), layout, target, cx).into_any_element()
     }
 }
+
+/// Horizontal padding of the active block's card: raw text sits this much to
+/// the right of the same text rendered.
+pub(crate) const RAW_INSET: gpui::Pixels = px(8.);
 
 /// Attaches click and drag-select handlers mapping pointer positions in
 /// `layout` to document offsets through `target`.

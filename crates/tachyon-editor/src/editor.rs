@@ -879,7 +879,7 @@ impl Editor {
         buffer.byte_to_utf16(range.start)..buffer.byte_to_utf16(range.end)
     }
 
-    fn position_for_offset(&self, offset: usize) -> Option<Point<Pixels>> {
+    pub(crate) fn position_for_offset(&self, offset: usize) -> Option<Point<Pixels>> {
         let (layout, base) = self.active_layout.as_ref()?;
         let local = offset.checked_sub(*base).filter(|&l| l <= layout.len())?;
         layout.position_for_index(local)

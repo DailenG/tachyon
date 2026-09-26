@@ -237,3 +237,85 @@ fn typing_in_a_tall_block_keeps_the_scroll_position(cx: &mut TestAppContext) {
     let drift = (after.offset_in_item - before.offset_in_item).abs();
     assert!(drift < gpui::px(40.), "scroll jumped from {before:?} to {after:?}");
 }
+
+/// Window position inside the glyph starting at `offset` once its block is
+/// rendered. Measured on the raw layout (the caret is moved into the block),
+/// then shifted by the raw card's inset. Valid while every block above keeps
+/// its layout: a raw block is taller than rendered, so after measuring only
+/// blocks below may become raw.
+fn rendered_glyph_point(
+    editor: &Entity<Editor>,
+    offset: usize,
+    cx: &mut VisualTestContext,
+) -> gpui::Point<gpui::Pixels> {
+    editor.update(cx, |e, cx| e.move_to(offset, false, cx));
+    cx.run_until_parked();
+    editor.read_with(cx, |e, _| {
+        let at = e.position_for_offset(offset).expect("offset is in the raw block");
+        let line_height = e.active_layout.as_ref().expect("raw block is laid out").0.line_height();
+        at + gpui::point(gpui::px(1.) - crate::render::RAW_INSET, line_height / 2.)
+    })
+}
+
+fn selection(editor: &Entity<Editor>, cx: &mut VisualTestContext) -> std::ops::Range<usize> {
+    editor.read_with(cx, |e, _| e.selection.clone())
+}
+
+const THREE_PARAGRAPHS: &str = "alpha beta\n\ngamma delta\n\nepsilon zeta\n";
+
+fn find(needle: &str) -> usize {
+    THREE_PARAGRAPHS.find(needle).expect("fixture contains the needle")
+}
+
+#[gpui::test]
+fn clicking_a_rendered_block_moves_the_caret_into_it(cx: &mut TestAppContext) {
+    let (editor, cx) = open(THREE_PARAGRAPHS, cx);
+    let target = rendered_glyph_point(&editor, find("delta"), cx);
+    editor.update(cx, |e, cx| e.move_to(find("epsilon"), false, cx));
+    cx.run_until_parked();
+    assert_eq!(editor.read_with(cx, |e, _| e.active_block()), Some(2));
+
+    cx.simulate_click(target, gpui::Modifiers::none());
+    cx.run_until_parked();
+    assert_eq!(selection(&editor, cx), find("delta")..find("delta"));
+    assert_eq!(editor.read_with(cx, |e, _| e.active_block()), Some(1));
+}
+
+#[gpui::test]
+fn dragging_selects_across_blocks_until_the_button_is_released(cx: &mut TestAppContext) {
+    let (editor, cx) = open(THREE_PARAGRAPHS, cx);
+    let gamma = rendered_glyph_point(&editor, find("gamma"), cx);
+    let delta = rendered_glyph_point(&editor, find("delta"), cx);
+    // Leaves the caret in the last block, which stays raw for the press.
+    let zeta = rendered_glyph_point(&editor, find("zeta"), cx)
+        + gpui::point(crate::render::RAW_INSET, gpui::px(0.));
+
+    let (left, none) = (gpui::MouseButton::Left, gpui::Modifiers::none());
+    cx.simulate_mouse_down(zeta, left, none);
+    cx.simulate_mouse_move(delta, left, none);
+    cx.run_until_parked();
+    assert_eq!(selection(&editor, cx), find("delta")..find("zeta"));
+
+    cx.simulate_mouse_up(delta, left, none);
+    cx.simulate_mouse_move(gamma, None, none);
+    cx.run_until_parked();
+    assert_eq!(selection(&editor, cx), find("delta")..find("zeta"), "moved after release");
+}
+
+#[gpui::test]
+fn double_click_selects_a_word(cx: &mut TestAppContext) {
+    let (editor, cx) = open(THREE_PARAGRAPHS, cx);
+    let inside = rendered_glyph_point(&editor, find("gamma") + 2, cx);
+    editor.update(cx, |e, cx| e.move_to(find("epsilon"), false, cx));
+    cx.run_until_parked();
+
+    cx.simulate_event(gpui::MouseDownEvent {
+        position: inside,
+        modifiers: gpui::Modifiers::none(),
+        button: gpui::MouseButton::Left,
+        click_count: 2,
+        first_mouse: false,
+    });
+    cx.run_until_parked();
+    assert_eq!(selection(&editor, cx), find("gamma")..find("gamma") + "gamma".len());
+}
