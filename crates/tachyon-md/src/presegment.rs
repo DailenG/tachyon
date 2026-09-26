@@ -8,6 +8,19 @@
 /// 0 and `src.len()`, in increasing order.
 pub fn presegment(src: &str) -> Vec<usize> {
     let mut boundaries = Vec::new();
+    scan(src, Some(&mut boundaries));
+    boundaries
+}
+
+/// Whether `src` ends inside a fenced code block that it opened. Text
+/// appended after such a `src` cannot use boundaries computed for it alone.
+pub fn ends_in_fence(src: &str) -> bool {
+    scan(src, None).is_some()
+}
+
+/// Scans `src` line by line, pushing chunk boundaries into `boundaries` if
+/// given; returns the fence still open at the end.
+fn scan(src: &str, mut boundaries: Option<&mut Vec<usize>>) -> Option<(u8, usize)> {
     let mut fence: Option<(u8, usize)> = None;
     let mut previous_blank = false;
     let mut offset = 0;
@@ -25,7 +38,11 @@ pub fn presegment(src: &str) -> Vec<usize> {
                 // Byte checks: this runs over every line of a large paste.
                 let first = line.bytes().find(|b| !matches!(b, b' ' | b'\t' | b'\r' | b'\n'));
                 let blank = first.is_none();
-                if previous_blank && !blank && start > 0 {
+                if previous_blank
+                    && !blank
+                    && start > 0
+                    && let Some(boundaries) = boundaries.as_deref_mut()
+                {
                     boundaries.push(start);
                 }
                 if matches!(first, Some(b'`' | b'~')) {
@@ -35,7 +52,7 @@ pub fn presegment(src: &str) -> Vec<usize> {
             }
         }
     }
-    boundaries
+    fence
 }
 
 /// `(fence char, fence length)` if `line` opens a fenced code block.
@@ -70,6 +87,14 @@ fn fence_run(line: &str) -> Option<(u8, usize, &str)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reports_a_fence_left_open() {
+        assert!(ends_in_fence("text\n\n```rust\nlet x = 1;\n\n"));
+        assert!(!ends_in_fence("```\ncode\n```\n\ntext\n"));
+        assert!(!ends_in_fence("inline ``` is not a fence\n"));
+        assert!(ends_in_fence("~~~~\n```\n"), "a shorter or different fence does not close it");
+    }
 
     #[test]
     fn splits_after_blank_lines() {

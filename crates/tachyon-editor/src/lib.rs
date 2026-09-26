@@ -13,9 +13,17 @@ pub use crate::editor::{CloseWindow, Editor, KEY_CONTEXT, Save, SaveAs, key_bind
 pub use crate::prompt::keyboard_prompt;
 pub use crate::theme::Theme;
 
-/// Registers the editor's key bindings.
+/// Registers the editor's key bindings, and applies a large paste still
+/// being prepared before any later keystroke is handled (so a key typed
+/// right after Ctrl+V lands after the pasted text).
 pub fn init(cx: &mut gpui::App) {
     cx.bind_keys(key_bindings());
+    cx.intercept_keystrokes(|_, window, cx| {
+        if let Some(Some(editor)) = window.root::<Editor>() {
+            editor.update(cx, |editor, cx| editor.flush_pending_paste(cx));
+        }
+    })
+    .detach();
 }
 
 #[cfg(test)]

@@ -76,17 +76,22 @@ the end of 512 KiB 7 ms. All corpus tests pass.
       first, ≈ 0.1 ms); a paste that defines its own references no longer triggers a reparse of
       every block that uses them
 - [x] Background parse streamed back in chunks, caret or viewport first (`parse_job_near`)
-- [x] Frame-time overlay (`Ctrl+Alt+F`): p50/max of the editor's UI-thread time per frame (edits,
-      pastes and applied parse results since the previous frame, plus render+layout+paint) and
-      frames over 16.7 ms. On a 5 MB document while scrolling and typing: p50 1.4 ms, max 3.0 ms
+- [x] Frame-time overlay (`Ctrl+Alt+F`): p50/max of the editor's UI-thread time per frame
+      (render+layout+paint plus edits, pastes and applied parse results that ran back to back
+      with it) and frames over 16.7 ms. On a 5 MB document while scrolling and typing: p50
+      1.4 ms, max 3.0 ms
 - [x] Measure a live 5 MB paste with the overlay. Linux (Intel UHD 750, nested Hyprland): the
       paste frame takes ≈ 31 ms (clipboard read inside GPUI ≈ 7 ms, rope insert and pre-segmenting
       ≈ 8 ms, first paint of the raw placeholder under the caret ≈ 14 ms); every later frame stays
       under budget (p50 2.5 ms) while the chunks stream in, and the view stays at the caret
-- [ ] Paste frame within budget. The reference Windows machine shows the Linux pattern: one
-      paste frame over budget (25-40 ms at 4K @ 30 Hz, 25-27 ms at 1440p @ 59 Hz), every later
-      frame p50 1.5-2.8 ms; the bench's UI-thread part is 15 ms there (6 ms on Linux). Next:
-      shape only the visible lines of raw placeholder blocks and pre-segment off the UI thread
+- [x] Paste frame within budget on Linux. A paste over 64 KiB is normalized, built into a rope
+      and pre-segmented off the UI thread (`PreparedInsert`), then spliced in (0.4 ms for 5 MB
+      instead of 6 ms); placeholders within 32 KiB of the caret are ≥ 1 KiB, so the first frame
+      lays out about a screenful; fonts are loaded after the first frame, not by the first
+      paste. Live, 5 MB from an empty scratch window: max frame 6.6-6.9 ms, 0 of 10-11 frames
+      over 16.7 ms (was one ≈ 31 ms frame). A key typed right after Ctrl+V lands after the paste
+- [ ] Re-measure the paste on the reference Windows machine (before: one frame of 25-40 ms at
+      4K @ 30 Hz, 25-27 ms at 1440p @ 59 Hz)
 - [x] Save / Save As with atomic writes; unsaved-changes prompt on close and quit
 - [x] Keyboard support in prompts on Linux (own in-window prompt; Windows and macOS keep native
       dialogs)

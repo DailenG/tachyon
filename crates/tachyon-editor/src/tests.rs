@@ -148,9 +148,9 @@ fn a_large_paste_is_parsed_near_the_caret_first(cx: &mut TestAppContext) {
             e.document().blocks().iter().map(|b| b.parsed().kind == BlockKind::Unparsed).collect()
         })
     };
-    // Step the executors until the first chunk comes back.
-    let pasted = unparsed(cx);
-    while unparsed(cx) == pasted {
+    // Step the executors until the first chunk comes back (the paste itself
+    // lands first, as unparsed blocks).
+    while !unparsed(cx).contains(&false) || unparsed(cx).len() < 2 {
         assert!(cx.executor().tick(), "parse finished without applying a chunk");
     }
     let blocks = unparsed(cx);
@@ -159,6 +159,26 @@ fn a_large_paste_is_parsed_near_the_caret_first(cx: &mut TestAppContext) {
 
     cx.run_until_parked();
     assert!(!unparsed(cx).contains(&true));
+}
+
+#[gpui::test]
+fn keys_typed_right_after_a_large_paste_land_after_it(cx: &mut TestAppContext) {
+    let (editor, cx) = open("start\n", cx);
+    let paste = "Pasted paragraph.\n\n".repeat(tachyon_doc::UNPARSED_SPLIT_THRESHOLD / 10);
+    cx.write_to_clipboard(gpui::ClipboardItem::new_string(paste.clone()));
+    cx.simulate_keystrokes("ctrl-end");
+    // The paste is prepared off the UI thread; type before it is applied.
+    editor.update_in(cx, |e, window, cx| e.paste(&crate::editor::Paste, window, cx));
+    assert_eq!(text(&editor, cx), "start\n", "still being prepared");
+    cx.simulate_input("x");
+    cx.run_until_parked();
+    assert_eq!(text(&editor, cx), format!("start\n{paste}x"));
+
+    // Undo removes the typed key, then the whole paste.
+    cx.simulate_keystrokes("secondary-z");
+    cx.simulate_keystrokes("secondary-z");
+    cx.run_until_parked();
+    assert_eq!(text(&editor, cx), "start\n");
 }
 
 #[gpui::test]

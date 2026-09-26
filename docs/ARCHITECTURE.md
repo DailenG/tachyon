@@ -105,10 +105,15 @@ flowchart LR
   window has converged when its last block equals the old block at that place (length, source hash,
   kind) or it reaches the end of the text; otherwise it grows geometrically. An unclosed fence grows
   it to the end, which is why large jobs go to the background.
-- **Paste.** The rope insert and a fence-aware line scan happen in the same frame; an insert over
-  64 KiB appears immediately as IR-free placeholder blocks of at least 8 KiB, shown as raw source
-  (only visible ones are shaped). A background job then parses the window; the job wraps its blocks
-  in `Arc`s so applying the result on the UI thread is a merge and a splice. Large dirty ranges
+- **Paste.** A paste over 64 KiB is prepared on the background executor (`PreparedInsert`: line
+  endings normalized, rope built, fence-aware pre-segmenting) and spliced into the buffer on the
+  UI thread, O(log n); keystrokes and clicks that arrive first apply the paste synchronously so
+  edits keep their order. The insert appears immediately as IR-free placeholder blocks of at least
+  8 KiB (1 KiB within 32 KiB of either end, where the caret and so the first frame are), shown as
+  raw source (only visible ones are shaped). A background job then parses the window; the job wraps
+  its blocks in `Arc`s so applying the result on the UI thread is a merge and a splice. The faces
+  the editor draws with are loaded right after the first frame, so a paste into a new scratch
+  window does not pay for font loading. Large dirty ranges
   stream back in `PARSE_CHUNK` (128 KiB) windows, the caret's or viewport's first
   (`Document::parse_job_near`, ADR 0005), so the visible text is formatted after one chunk and a
   keystroke's reparse waits at most one chunk.

@@ -99,6 +99,27 @@ impl TextSnapshot {
     }
 }
 
+/// Text made ready for [`Buffer::edit_prepared`]: line endings normalized
+/// (as [`Buffer::edit`] does) and the rope built. `Send`; build it anywhere.
+#[derive(Clone, Debug)]
+pub struct PreparedText {
+    text: String,
+    rope: Rope,
+}
+
+impl PreparedText {
+    pub fn new(text: &str) -> Self {
+        let text = normalize(text.strip_suffix('\r').unwrap_or(text)).into_owned();
+        let rope = Rope::from_str(&text);
+        Self { text, rope }
+    }
+
+    /// The normalized text, as it will be inserted.
+    pub fn as_str(&self) -> &str {
+        &self.text
+    }
+}
+
 /// A replacement recorded for undo: `old` was replaced by `new` at `at`.
 #[derive(Debug)]
 struct Change {
@@ -186,16 +207,39 @@ impl Buffer {
         let text = normalize(text.strip_suffix('\r').unwrap_or(text));
         let old = self.rope.byte_slice(range.clone()).to_string();
         let edit = self.apply(range.clone(), &text);
+        self.record(Change { at: range.start, old, new: text.into_owned() });
+        Ok(edit)
+    }
 
+    /// [`Buffer::edit`] with text prepared elsewhere (usually off the UI
+    /// thread): splicing the prepared rope in is O(log n), where inserting
+    /// megabytes of text costs milliseconds.
+    pub fn edit_prepared(
+        &mut self,
+        range: Range<usize>,
+        prepared: PreparedText,
+    ) -> Result<Edit, EditError> {
+        self.check_range(&range)?;
+        let old = self.rope.byte_slice(range.clone()).to_string();
+        let start = self.rope.byte_to_char(range.start);
+        let end = self.rope.byte_to_char(range.end);
+        self.rope.remove(start..end);
+        let tail = self.rope.split_off(start);
+        self.rope.append(prepared.rope);
+        self.rope.append(tail);
+        let edit = self.log_edit(Edit { range: range.clone(), new_len: prepared.text.len() });
+        self.record(Change { at: range.start, old, new: prepared.text });
+        Ok(edit)
+    }
+
+    fn record(&mut self, change: Change) {
         let history = &mut self.history;
         history.redo.clear();
-        let change = Change { at: range.start, old, new: text.into_owned() };
         match history.undo.last_mut() {
             Some(group) if history.open => group.push(change),
             _ => history.undo.push(vec![change]),
         }
         history.open = true;
-        Ok(edit)
     }
 
     /// Ends the current undo group; the next edit starts a new one. The editor
@@ -266,8 +310,10 @@ impl Buffer {
         let end = self.rope.byte_to_char(range.end);
         self.rope.remove(start..end);
         self.rope.insert(start, text);
+        self.log_edit(Edit { range, new_len: text.len() })
+    }
 
-        let edit = Edit { range, new_len: text.len() };
+    fn log_edit(&mut self, edit: Edit) -> Edit {
         if self.log.len() == EDIT_LOG_CAPACITY {
             self.log.pop_front();
         }
@@ -280,6 +326,25 @@ impl Buffer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_prepared_edit_matches_a_plain_one_and_undoes_the_same() {
+        let text = "pasted\r\nline\n\u{e9}\r";
+        let mut plain = Buffer::new("ab\u{1f600}cd\n");
+        let mut prepared = Buffer::new("ab\u{1f600}cd\n");
+        let at = 2..6; // replaces the emoji
+        let edit = plain.edit(at.clone(), text).unwrap();
+        assert_eq!(prepared.edit_prepared(at, PreparedText::new(text)).unwrap(), edit);
+        assert_eq!(prepared.text(), plain.text());
+        assert_eq!(prepared.version(), plain.version());
+        assert_eq!(prepared.undo(), plain.undo());
+        assert_eq!(prepared.text(), "ab\u{1f600}cd\n");
+        assert_eq!(prepared.redo(), plain.redo());
+        assert_eq!(prepared.text(), plain.text());
+        let mut emoji = Buffer::new("\u{1f600}");
+        assert!(emoji.edit_prepared(1..1, PreparedText::new("x")).is_err(), "inside the emoji");
+        assert_eq!(emoji.text(), "\u{1f600}");
+    }
 
     #[test]
     fn crlf_input_is_normalized_and_restored_on_save() {
