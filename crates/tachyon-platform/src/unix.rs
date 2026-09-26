@@ -4,7 +4,6 @@
 
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{self, Write};
-use std::net::Shutdown;
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
@@ -15,6 +14,10 @@ use crate::protocol;
 /// How long a secondary waits for a primary that holds the lock but has not
 /// bound its socket yet.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Bounds each read on either side, so a stalled peer cannot wedge the
+/// listener thread or leave a secondary waiting forever for its reply.
+const IO_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub enum Acquired {
     Primary(Listener),
@@ -70,16 +73,21 @@ pub fn acquire(app_id: &str) -> io::Result<Acquired> {
 
 pub fn serve(listener: Listener, mut on_message: impl FnMut(Vec<String>)) {
     for stream in listener.socket.incoming() {
-        let Ok(stream) = stream else { continue };
-        if let Ok(Some(args)) = protocol::read_message(stream) {
+        let Ok(mut stream) = stream else { continue };
+        if stream.set_read_timeout(Some(IO_TIMEOUT)).is_err() {
+            continue;
+        }
+        if let Ok(Some(args)) = protocol::read_request(&stream)
+            && stream.write_all(protocol::ACK).is_ok()
+        {
             on_message(args);
         }
     }
 }
 
-pub fn send(client: Client, message: &[u8]) -> io::Result<()> {
+pub fn send(client: Client, request: &[u8]) -> io::Result<()> {
     let deadline = Instant::now() + CONNECT_TIMEOUT;
-    let mut stream = loop {
+    let stream = loop {
         match UnixStream::connect(&client.socket_path) {
             Ok(stream) => break stream,
             Err(e)
@@ -94,6 +102,6 @@ pub fn send(client: Client, message: &[u8]) -> io::Result<()> {
             Err(e) => return Err(e),
         }
     };
-    stream.write_all(message)?;
-    stream.shutdown(Shutdown::Write)
+    stream.set_read_timeout(Some(IO_TIMEOUT))?;
+    protocol::send_request(&stream, request)
 }
