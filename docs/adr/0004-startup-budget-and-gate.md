@@ -1,6 +1,6 @@
 # 0004: 50 ms startup budget and the Phase 1 gate
 
-- **Status:** Proposed. Waiting for Windows measurements.
+- **Status:** Proposed. Windows measured; neither option meets the budget yet, profiling next.
 - **Date:** 2026-09-25
 
 ## Context
@@ -15,11 +15,15 @@ Measured with `cargo xtask bench-startup` (release build, 20 runs):
 |---|---|---|---|---|
 | Linux, Wayland (Hyprland) | Intel UHD 750 | 193 ms | 199 ms | ~180 ms inside GPUI `open_window`; platform init ~10 ms |
 | Windows | GitHub `windows-latest` runner, no GPU (informational) | 142 ms | 161 ms | platform init ~60 ms, window open ~44 ms, first frame ~23 ms, ~16 ms before `main` |
-| Windows | reference machine | not measured | not measured | |
+| Windows 11, 3840x2160 @ 30 Hz | reference: Core Ultra 7 155H, Intel Arc | 447 ms | 511 ms | platform init 288 ms, window open +111 ms, first frame +21 ms, ~27 ms before `main` |
+| Windows 11, 2560x1440 @ 59 Hz | same machine | 280 ms | 324 ms | platform init 180 ms, window open +67 ms, first frame +12 ms |
 
-Both measured platforms miss the budget by 3–4×. On Linux the likely cause is GPU device creation
-through wgpu/Vulkan; on the Windows runner GPUI's platform initialization alone takes longer than
-the whole budget. Neither is profiled yet.
+Every measured platform misses the budget, the reference Windows machine by 6-10×. On Linux the
+likely cause is GPU device creation through wgpu/Vulkan. On Windows, GPUI's platform
+initialization alone (D3D11 device, DirectWrite, before the first window) takes 180-330 ms, three
+to five times what it took on the GPU-less CI runner, and it is slower at 4K @ 30 Hz than at
+1440p @ 59 Hz. Neither is profiled yet. Raw results:
+[`docs/measurements/windows-reference-d28d304.md`](../measurements/windows-reference-d28d304.md).
 
 Warm launches, handed to a running instance (`cargo xtask bench-startup --warm`, release, 20 runs;
 measured from spawning the second process until the running instance has drawn the new window):
@@ -27,6 +31,13 @@ measured from spawning the second process until the running instance has drawn t
 | Platform | Hardware | first | p50 | p95 |
 |---|---|---|---|---|
 | Linux, Wayland (Hyprland) | Intel UHD 750 | 180 ms | 27.6 ms | 29.5 ms |
+| Windows 11, 3840x2160 @ 30 Hz | reference (above) | 109 ms | 145 ms | 188 ms |
+| Windows 11, 2560x1440 @ 59 Hz | reference (above) | 107 ms | 127 ms | 150 ms |
+
+On Windows the resident instance itself needs 86-93 ms (p50) from receiving a launch to the new
+window's first frame, against 27 ms on Linux: opening a window in GPUI's Windows backend creates a
+swap chain, render pipelines and a DirectComposition tree per window, and sizes its buffers to the
+window.
 
 The first launch into a windowless resident instance is cold (GPUI creates the GPU context with
 the first window); after that the context outlives its windows, so every later launch is warm even
@@ -44,8 +55,13 @@ when no window is open. The second process itself (start, hand-off, acknowledgem
 
 Status of the mechanism: resident mode is implemented as an opt-in flag, `tachyon --resident`
 (without files it starts with no window, suitable for login autostart; Ctrl+Q quits for real). It
-meets the budget on Linux. Making it the default, and adding autostart and a way to show the
-process is running, waits for the Windows numbers.
+meets the budget on Linux.
+
+Windows results (step 1): direct launch misses the budget by 6-10×, resident mode by 3-4×, so
+step 2 is ruled out and step 3 alone does not close the gate. Next: attribute the Windows time with
+a timing-instrumented GPUI build (each platform-init and window-open step, and the first frames)
+on the reference machine, then decide which costs Tachyon can avoid (window options, deferred work,
+a resident instance that keeps a window ready) and which need a GPUI change.
 
 ## Consequences
 

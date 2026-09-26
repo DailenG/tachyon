@@ -1,7 +1,7 @@
 use std::io::{self, Write};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use gpui::{
@@ -347,13 +347,10 @@ impl Editor {
     /// Picks the first installed monospace family once the window exists,
     /// off the startup path.
     fn resolve_code_font(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let installed = window.text_system().all_font_names();
-        if let Some(family) = tachyon_platform::monospace_font_candidates()
-            .iter()
-            .find(|family| installed.iter().any(|name| name == *family))
-            && self.theme.code_font != *family
+        if let Some(family) = installed_code_font(window)
+            && self.theme.code_font != family
         {
-            self.theme.code_font = (*family).into();
+            self.theme.code_font = family.into();
             self.list.remeasure();
             cx.notify();
         }
@@ -951,6 +948,20 @@ impl Editor {
         let local = offset.checked_sub(*base).filter(|&l| l <= layout.len())?;
         layout.position_for_index(local)
     }
+}
+
+/// The first installed monospace candidate, looked up once per process:
+/// listing the system fonts walks the whole font collection, and a resident
+/// instance opens many windows.
+fn installed_code_font(window: &Window) -> Option<&'static str> {
+    static FONT: OnceLock<Option<&'static str>> = OnceLock::new();
+    *FONT.get_or_init(|| {
+        let installed = window.text_system().all_font_names();
+        tachyon_platform::monospace_font_candidates()
+            .iter()
+            .find(|family| installed.iter().any(|name| name == *family))
+            .copied()
+    })
 }
 
 /// Maps the block indices drawn last frame through a splice replacing `old`
