@@ -335,7 +335,17 @@ impl Document {
     /// documents and code that is already off the UI thread.
     pub fn reparse_now(&mut self) {
         self.cancel_job();
+        let mut jobs = 0usize;
         while let Some(job) = self.parse_job() {
+            // Every job settles its window; definition changes can re-dirty
+            // dependent blocks a bounded number of times. Far more jobs than
+            // blocks means the dirty set stopped shrinking.
+            jobs += 1;
+            debug_assert!(
+                jobs <= 16 * self.blocks.len() + 1024,
+                "reparse is not converging; dirty = {:?}",
+                self.dirty
+            );
             let result = job.run();
             self.apply(result);
         }

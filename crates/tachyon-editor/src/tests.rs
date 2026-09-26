@@ -178,3 +178,20 @@ fn atomic_write_replaces_content_and_leaves_no_temp_file() {
     assert_eq!(leftovers.len(), 1, "no temporary file left behind");
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[gpui::test]
+fn in_a_list_only_the_item_under_the_caret_is_raw(cx: &mut TestAppContext) {
+    let (editor, cx) = open("- one\n- two\n  - nested\n\nafter\n", cx);
+    let leaf = |cx: &mut VisualTestContext| editor.read_with(cx, |e, _| e.active_leaf());
+    assert_eq!(leaf(cx), Some((0, 0..6)));
+    cx.simulate_keystrokes("down");
+    assert_eq!(leaf(cx), Some((1, 6..12)));
+    cx.simulate_keystrokes("down end");
+    cx.simulate_input("!");
+    assert_eq!(text(&editor, cx), "- one\n- two\n  - nested!\n\nafter\n");
+    assert_eq!(leaf(cx), Some((2, 12..24)));
+    // Outside containers the whole block is raw, as before.
+    cx.simulate_keystrokes("ctrl-end");
+    assert_eq!(leaf(cx), None);
+    assert_eq!(editor.read_with(cx, |e, _| e.active_block()), Some(1));
+}

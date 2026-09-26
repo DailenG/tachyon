@@ -43,6 +43,12 @@ const FRAGMENTS: &[&str] = &[
     "\t tab",
 ];
 
+/// Nested same-line footnote definitions ("[^1]:[^1]: x") make pulldown-cmark
+/// attribute ranges in ways the segmenter cannot keep identical between a
+/// window and the whole document. For them only termination and tiling are
+/// guaranteed, checked separately below.
+const PATHOLOGICAL: &[&str] = &["[^1]:[^1]: x", "[^1]: note", "[x]: /u", "- item", "text", ""];
+
 fn lines() -> impl Strategy<Value = String> {
     prop::collection::vec(prop::sample::select(FRAGMENTS), 0..6).prop_map(|l| l.join("\n"))
 }
@@ -162,5 +168,24 @@ proptest! {
         }
         let fresh = Document::new(&text);
         prop_assert_eq!(parsed(&doc), parsed(&fresh));
+    }
+
+    /// Pathological input still reparses to a clean document whose blocks
+    /// tile the text without empty blocks.
+    #[test]
+    fn pathological_footnotes_terminate(
+        initial in prop::collection::vec(prop::sample::select(PATHOLOGICAL), 0..12),
+        edits in prop::collection::vec((any::<usize>(), prop::sample::select(PATHOLOGICAL)), 1..8),
+    ) {
+        let mut doc = Document::new(&initial.join("\n"));
+        for (at, insert) in edits {
+            let text = doc.buffer().text();
+            let at = floor_boundary(&text, at % (text.len() + 1));
+            doc.edit(at..at, &format!("{insert}\n")).unwrap();
+            doc.reparse_now();
+            prop_assert!(!doc.is_dirty());
+            prop_assert!(doc.blocks().iter().all(|b| !b.is_empty()));
+            prop_assert_eq!(doc.blocks().iter().map(Block::len).sum::<usize>(), doc.len());
+        }
     }
 }

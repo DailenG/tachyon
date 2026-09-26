@@ -14,6 +14,8 @@ All notable user-visible changes are recorded here. The format follows
   UI thread.
 - Editing: arrows, word and line movement, selection (keyboard and mouse), copy/cut/paste,
   undo/redo, IME composition.
+- In lists, quotes and footnotes only the item or paragraph under the caret switches to raw
+  Markdown; the rest stays rendered.
 - Incremental Markdown parsing: keystrokes reparse only the affected blocks; large pastes are
   parsed in the background.
 - Save (`Ctrl+S`) and Save As (`Ctrl+Shift+S`): atomic writes that keep the file's line endings

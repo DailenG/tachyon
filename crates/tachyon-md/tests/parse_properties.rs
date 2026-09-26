@@ -34,6 +34,7 @@ const FRAGMENTS: &[&str] = &[
     "&amp;",
     "[^1]",
     "[^1]: note",
+    "[^1]:[^1]: x",
     "é😀中",
     "\t tab",
 ];
@@ -54,6 +55,7 @@ proptest! {
     fn parse_output_is_well_formed(src in prop_oneof![document(), "\\PC{0,200}"]) {
         let blocks = parse(&src, &DefTable::from_source(&src, options()));
         prop_assert_eq!(blocks.iter().map(|b| b.len).sum::<usize>(), src.len());
+        prop_assert!(blocks.iter().all(|b| b.len > 0), "empty block");
 
         let mut start = 0;
         for block in &blocks {
@@ -73,6 +75,16 @@ proptest! {
                 }
                 last_visible = span.visible.end;
                 last_source = span.source.end;
+            }
+            // Leaves are whole lines, in order, and every line names one.
+            let mut last_leaf_end = 0;
+            for leaf in &ir.leaves {
+                prop_assert!(leaf.start >= last_leaf_end && leaf.end <= block.len, "{:?}", ir.leaves);
+                prop_assert!(leaf.start == 0 || source.as_bytes()[leaf.start - 1] == b'\n');
+                last_leaf_end = leaf.end;
+            }
+            for line in &ir.lines {
+                prop_assert!(line.leaf < ir.leaves.len());
             }
             for run in &ir.runs {
                 prop_assert!(run.range.end <= ir.text.len() && !run.range.is_empty());

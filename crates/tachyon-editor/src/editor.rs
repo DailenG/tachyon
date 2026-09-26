@@ -10,7 +10,7 @@ use gpui::{
     actions, point, px,
 };
 use tachyon_doc::{BlockId, Document};
-use tachyon_md::ParsedBlock;
+use tachyon_md::{BlockKind, ParsedBlock};
 
 use crate::movement;
 use crate::theme::Theme;
@@ -143,7 +143,8 @@ pub struct Editor {
     pub(crate) list: ListState,
     pub(crate) focus: FocusHandle,
     pub(crate) theme: Theme,
-    active: Option<BlockId>,
+    /// Block (and leaf within it) shown raw, as last laid out.
+    active: Option<(BlockId, Option<usize>)>,
     /// Layout of the active block's raw text as last painted, with the
     /// document offset of its first byte.
     pub(crate) active_layout: Option<(TextLayout, usize)>,
@@ -299,9 +300,34 @@ impl Editor {
         if self.reversed { self.selection.end } else { self.selection.start }
     }
 
-    /// Index of the block shown raw (the one holding the caret).
+    /// Index of the block holding the caret; it is shown raw, entirely or
+    /// (in lists, quotes and footnotes) just the leaf under the caret.
     pub fn active_block(&self) -> Option<usize> {
         self.doc.block_at(self.head())
+    }
+
+    /// The leaf of a container block (list, quote, footnote) holding the
+    /// caret: its index and absolute source range. `None` means the whole
+    /// active block is shown raw.
+    pub fn active_leaf(&self) -> Option<(usize, Range<usize>)> {
+        let index = self.active_block()?;
+        let block = &self.doc.blocks()[index];
+        let parsed = block.parsed();
+        if block.is_stale()
+            || !matches!(
+                parsed.kind,
+                BlockKind::List { .. } | BlockKind::BlockQuote(_) | BlockKind::Footnote(_)
+            )
+        {
+            return None;
+        }
+        let start = self.doc.block_range(index).start;
+        let caret = self.head() - start;
+        let leaf = parsed.ir.leaves.iter().position(|leaf| {
+            leaf.contains(&caret) || (caret == leaf.end && leaf.end == parsed.len)
+        })?;
+        let range = &parsed.ir.leaves[leaf];
+        Some((leaf, start + range.start..start + range.end))
     }
 
     /// Picks the first installed monospace family once the window exists,
@@ -380,12 +406,13 @@ impl Editor {
 
     fn update_active(&mut self) {
         let index = self.active_block();
-        let id = index.map(|i| self.doc.blocks()[i].id());
+        let id =
+            index.map(|i| (self.doc.blocks()[i].id(), self.active_leaf().map(|(leaf, _)| leaf)));
         if id == self.active {
             return;
         }
         // Both the block leaving and the block entering raw mode change height.
-        if let Some(old) = self.active
+        if let Some((old, _)) = self.active
             && let Some(old_index) = self.doc.blocks().iter().position(|b| b.id() == old)
         {
             self.list.remeasure_items(old_index..old_index + 1);

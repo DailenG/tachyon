@@ -78,6 +78,8 @@ pub struct LineInfo {
     /// Block quote nesting depth.
     pub quote: u8,
     pub marker: Option<Marker>,
+    /// Index into [`BlockIr::leaves`] of the leaf block this line belongs to.
+    pub leaf: usize,
 }
 
 /// Correspondence between visible text and block source. Visible text not
@@ -106,6 +108,11 @@ pub struct BlockIr {
     /// Sorted by visible offset, non-overlapping.
     pub map: Vec<SourceSpan>,
     pub links: Vec<LinkSpan>,
+    /// Source ranges (block-relative, whole lines, including list and quote
+    /// markers) of the leaf blocks: paragraphs, headings, code blocks,
+    /// tables, rules, list item text. Inside lists and quotes the editor
+    /// swaps a single leaf to raw Markdown instead of the whole block.
+    pub leaves: Vec<Range<usize>>,
 }
 
 impl BlockIr {

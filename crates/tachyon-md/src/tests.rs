@@ -232,3 +232,38 @@ fn footnote_prefix_resolves_even_when_the_window_ends_in_an_open_fence() {
     assert_eq!(blocks[2].ir.text, "unclosed fence");
     assert!(blocks.iter().all(|b| b.footnotes.is_empty()));
 }
+
+/// Source text of each leaf of the first block.
+fn leaves(src: &str) -> Vec<String> {
+    let b = &blocks(src)[0];
+    b.ir.leaves.iter().map(|l| src[l.clone()].to_owned()).collect()
+}
+
+#[test]
+fn list_items_are_leaves_with_their_markers() {
+    let src = "- one\n- two\n  - nested\n-\n3. loose\n";
+    assert_eq!(leaves(src), vec!["- one\n", "- two\n", "  - nested\n", "-\n"]);
+    let b = &blocks(src)[0];
+    let line_leaves: Vec<usize> = b.ir.lines.iter().map(|l| l.leaf).collect();
+    assert_eq!(line_leaves, vec![0, 1, 2, 3]);
+}
+
+#[test]
+fn leaves_cover_multi_line_content_inside_containers() {
+    let src = "> first\n> para\n>\n> ```\n> code\n> ```\n";
+    assert_eq!(leaves(src), vec!["> first\n> para\n", "> ```\n> code\n> ```\n"]);
+
+    let src = "- item\n\n  ```\n  x\n\n  y\n  ```\n";
+    let got = leaves(src);
+    assert_eq!(got, vec!["- item\n", "  ```\n  x\n\n  y\n  ```\n"]);
+    let b = &blocks(src)[0];
+    assert!(b.ir.lines.iter().filter(|l| l.kind == LineKind::Code).all(|l| l.leaf == 1));
+}
+
+#[test]
+fn leafy_top_level_blocks_have_one_leaf() {
+    for src in ["para\ntwo\n", "# h\n", "| a |\n|---|\n| 1 |\n", "***\n", "```\nx\n```\n"] {
+        let b = &blocks(src)[0];
+        assert_eq!(b.ir.leaves, vec![0..src.len()], "{src:?}");
+    }
+}
