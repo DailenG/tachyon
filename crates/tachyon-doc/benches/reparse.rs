@@ -122,6 +122,31 @@ fn main() {
     let keys =
         "Typing a sentence into the middle of a long document. ".repeat(if quick { 1 } else { 20 });
     let middle_paragraph = one_mb.len() / 2;
+    // A large paste: what runs on the UI thread (rope insert, pre-segmenting
+    // into unparsed blocks) before the background parse.
+    let paste = document(if quick { 256 << 10 } else { 5 << 20 });
+    time(runs, || {
+        let mut doc = Document::new("start\n");
+        let end = doc.len();
+        doc.edit(end..end, black_box(&paste)).expect("end is a char boundary");
+        black_box(doc.parse_job());
+    })
+    .print(&format!("paste {} KiB: UI-thread part", paste.len() >> 10));
+    let mut pasted = Document::new("start\n");
+    let end = pasted.len();
+    pasted.edit(end..end, &paste).expect("end is a char boundary");
+    let job = pasted.parse_job().expect("paste is dirty");
+    let start = Instant::now();
+    let result = job.run();
+    let background = start.elapsed();
+    let start = Instant::now();
+    pasted.apply(result);
+    println!(
+        "{:<44} {:>9.1?}  (parse on background thread: {background:.1?})",
+        format!("paste {} KiB: applying the parse", paste.len() >> 10),
+        start.elapsed()
+    );
+
     let mut doc = Document::new(&one_mb);
     let at = doc.buffer().text()[middle_paragraph..]
         .find("This paragraph")

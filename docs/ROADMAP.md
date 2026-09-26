@@ -60,9 +60,12 @@ the end of 512 KiB 7 ms. All corpus tests pass.
       the top block keep their pixel offset
 - [x] IME through GPUI's input handler (composition is one undo step)
 - [ ] IME verified with a Japanese or Chinese IME on Windows
-- [x] Paste path: large pastes show unparsed blocks and parse on the background executor
+- [x] Paste path: large pastes show unparsed blocks and parse on the background executor; a 5 MB
+      paste costs ≈ 6 ms on the UI thread plus ≈ 8 ms when the background parse is applied
 - [ ] Background parse streamed back in chunks, viewport first
-- [ ] Frame-time overlay
+- [x] Frame-time overlay (`Ctrl+Alt+F`): p50/max of the editor's render+layout+paint and frames
+      over 16.7 ms. On a 5 MB document while scrolling and typing: p50 1.4 ms, max 3.0 ms
+- [ ] Measure a live 5 MB paste with the overlay (exit criterion)
 - [x] Save / Save As with atomic writes; unsaved-changes prompt on close and quit
 - [x] Keyboard support in prompts on Linux (own in-window prompt; Windows and macOS keep native
       dialogs)

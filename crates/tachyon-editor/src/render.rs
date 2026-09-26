@@ -18,6 +18,9 @@ const INDENT: f32 = 22.;
 impl Render for Editor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_title(window);
+        if let Some(stats) = &mut self.frame_stats {
+            stats.begin();
+        }
         if let Some(rendered) = self.rendering.take() {
             self.rendered = rendered;
         }
@@ -65,6 +68,7 @@ impl Render for Editor {
             .on_action(cx.listener(Self::save))
             .on_action(cx.listener(Self::save_as))
             .on_action(cx.listener(Self::close_window))
+            .on_action(cx.listener(Self::toggle_frame_stats))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|editor, _: &MouseDownEvent, window, cx| {
@@ -95,11 +99,51 @@ impl Render for Editor {
                             ElementInputHandler::new(bounds, editor.clone()),
                             cx,
                         );
+                        // Painted after the list: the editor's frame ends here.
+                        editor.update(cx, |editor, _| {
+                            if let Some(stats) = &mut editor.frame_stats {
+                                stats.end();
+                            }
+                        });
                     },
                 )
                 .absolute()
                 .size_full(),
             )
+            .children(self.frame_stats_overlay())
+    }
+}
+
+impl Editor {
+    fn frame_stats_overlay(&self) -> Option<AnyElement> {
+        let stats = self.frame_stats.as_ref()?;
+        let ms = |d: std::time::Duration| d.as_secs_f64() * 1000.;
+        let text = match stats.summary() {
+            Some((p50, max, over, n)) => format!(
+                "frame p50 {:.1} ms · max {:.1} ms · {over}/{n} over {:.1} ms",
+                ms(p50),
+                ms(max),
+                ms(crate::frame_stats::FRAME_BUDGET)
+            ),
+            None => "frame stats: waiting for frames".to_owned(),
+        };
+        let over = stats.summary().is_some_and(|(_, _, over, _)| over > 0);
+        Some(
+            div()
+                .absolute()
+                .top_2()
+                .right_2()
+                .px_2()
+                .rounded_md()
+                .bg(self.theme.raw_background)
+                .border_1()
+                .border_color(if over { gpui::red() } else { self.theme.rule })
+                .font_family(self.theme.code_font.clone())
+                .text_size(px(12.))
+                .text_color(self.theme.muted)
+                .child(SharedString::from(text))
+                .into_any_element(),
+        )
     }
 }
 

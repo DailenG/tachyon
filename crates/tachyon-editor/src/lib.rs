@@ -3,6 +3,7 @@
 //! blocks are rendered with their syntax hidden.
 
 mod editor;
+mod frame_stats;
 mod movement;
 mod prompt;
 mod render;

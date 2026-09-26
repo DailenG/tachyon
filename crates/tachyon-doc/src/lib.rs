@@ -29,6 +29,9 @@ pub const SYNC_PARSE_LIMIT: usize = 32 * 1024;
 /// so they can be shown before the background parse finishes.
 pub const UNPARSED_SPLIT_THRESHOLD: usize = 64 * 1024;
 
+/// Minimum size of those provisional blocks.
+pub const UNPARSED_CHUNK: usize = 8 * 1024;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct BlockId(u64);
 
@@ -238,10 +241,16 @@ impl Document {
         }
         let d = self.dirty[0].clone();
         let n = self.blocks.len();
-        // One block of look-behind: an edit can change how the preceding
-        // block ends (setext underline, lazy continuation, table rows). One
-        // block of look-ahead anchors convergence.
-        let first = self.block_at(d.start).unwrap_or(0).saturating_sub(1);
+        // Look-behind: an edit can change how preceding blocks end (setext
+        // underline, lazy continuation, table rows) and, through lines that
+        // are only continuations if the next line allows it, reach further
+        // back. Start after a blank line (or at the top): no construct
+        // continues across one into a separate block. One block of
+        // look-ahead anchors convergence.
+        let mut first = self.block_at(d.start).unwrap_or(0).saturating_sub(1);
+        while first > 0 && !self.follows_blank_line(self.starts[first]) {
+            first -= 1;
+        }
         let last = self.block_at(if d.end > d.start { d.end - 1 } else { d.start }).unwrap_or(0);
         let last = (last + 1).min(n - 1);
         let window = self.starts[first]..self.starts[last + 1];
@@ -260,6 +269,16 @@ impl Document {
             last,
             window,
         })
+    }
+
+    /// Whether the line before `offset` (a line start) is blank.
+    fn follows_blank_line(&self, offset: usize) -> bool {
+        let rope = self.buffer.rope();
+        if offset == 0 {
+            return true;
+        }
+        let line = rope.byte_to_line(offset - 1);
+        rope.line(line).chars().all(char::is_whitespace)
     }
 
     /// Returns the outstanding job's window to the dirty set.
@@ -295,16 +314,21 @@ impl Document {
 
         // A block that starts where an old block started keeps its identity,
         // so the block being typed in stays the same block across reparses.
+        // Both lists are sorted by offset: one merge pass (a large paste
+        // replaces hundreds of placeholders with a hundred thousand blocks).
         let mut offset = window.start;
+        let mut candidate = old.start;
         let mut new_blocks = Vec::with_capacity(result.blocks.len());
         for parsed in result.blocks {
-            let reuse = old.clone().find(|&i| self.starts[i] == offset).map(|i| self.blocks[i].id);
-            offset += parsed.len;
-            let block = match reuse {
-                Some(id) => Block { id, len: parsed.len, parsed: Arc::new(parsed), stale: false },
-                None => self.new_block(parsed, false),
-            };
-            new_blocks.push(block);
+            while candidate < old.end && self.starts[candidate] < offset {
+                candidate += 1;
+            }
+            let reuse = (candidate < old.end && self.starts[candidate] == offset)
+                .then(|| self.blocks[candidate].id);
+            let len = parsed.len;
+            offset += len;
+            let id = reuse.unwrap_or_else(|| self.fresh_id());
+            new_blocks.push(Block { id, len, parsed, stale: false });
         }
         // The table only changes if the window's definitions did.
         let defs_changed = !same_definitions(&self.blocks[old.clone()], &new_blocks);
@@ -351,9 +375,14 @@ impl Document {
         }
     }
 
-    fn new_block(&mut self, parsed: ParsedBlock, stale: bool) -> Block {
+    fn fresh_id(&mut self) -> BlockId {
         let id = BlockId(self.next_block);
         self.next_block += 1;
+        id
+    }
+
+    fn new_block(&mut self, parsed: ParsedBlock, stale: bool) -> Block {
+        let id = self.fresh_id();
         Block { id, len: parsed.len, parsed: Arc::new(parsed), stale }
     }
 
@@ -419,12 +448,19 @@ impl Document {
         let len = range.len();
         if len > UNPARSED_SPLIT_THRESHOLD {
             let text = self.buffer.rope().byte_slice(range).to_string();
-            let mut cuts = md::presegment(&text);
-            cuts.insert(0, 0);
-            cuts.push(text.len());
-            let mut blocks: Vec<Block> = cuts
+            // Chunks of at least UNPARSED_CHUNK bytes, cut only where the
+            // pre-segmenter allows (never inside fenced code): small enough
+            // that showing one raw is cheap, few enough to create quickly.
+            let mut starts = vec![0];
+            for cut in md::presegment(&text) {
+                if cut - starts[starts.len() - 1] >= UNPARSED_CHUNK {
+                    starts.push(cut);
+                }
+            }
+            starts.push(text.len());
+            let mut blocks: Vec<Block> = starts
                 .windows(2)
-                .map(|w| self.new_block(md::unparsed(&text[w[0]..w[1]]), true))
+                .map(|w| self.new_block(md::unparsed(w[1] - w[0]), true))
                 .collect();
             if let (Some(first), Some(keep)) = (blocks.first_mut(), keep) {
                 first.id = keep.id;
@@ -433,10 +469,7 @@ impl Document {
         }
         match keep {
             Some(block) => vec![Block { len, stale: true, ..block }],
-            None => {
-                let text = self.buffer.rope().byte_slice(range).to_string();
-                vec![self.new_block(md::unparsed(&text), true)]
-            }
+            None => vec![self.new_block(md::unparsed(len), true)],
         }
     }
 
@@ -497,10 +530,7 @@ impl Document {
             .enumerate()
             .filter(|(_, b)| {
                 (changes.footnotes && b.parsed.mentions_footnotes)
-                    || b.parsed
-                        .refs
-                        .iter()
-                        .any(|r| changes.links.iter().any(|c| md::labels_match(r, c)))
+                    || b.parsed.refs.iter().any(|r| changes.link_changed(r))
             })
             .map(|(i, _)| self.block_range(i))
             .collect();
@@ -511,12 +541,13 @@ impl Document {
 }
 
 fn same_definitions(old: &[Block], new: &[Block]) -> bool {
-    let links =
-        |blocks: &[Block]| blocks.iter().flat_map(|b| &b.parsed.defs).cloned().collect::<Vec<_>>();
-    let notes = |blocks: &[Block]| {
-        blocks.iter().flat_map(|b| &b.parsed.footnotes).cloned().collect::<Vec<_>>()
-    };
-    links(old) == links(new) && notes(old) == notes(new)
+    fn links(blocks: &[Block]) -> impl Iterator<Item = &(String, md::LinkTarget)> {
+        blocks.iter().flat_map(|b| &b.parsed.defs)
+    }
+    fn notes(blocks: &[Block]) -> impl Iterator<Item = &String> {
+        blocks.iter().flat_map(|b| &b.parsed.footnotes)
+    }
+    links(old).eq(links(new)) && notes(old).eq(notes(new))
 }
 
 /// Maps a range through an edit. Ranges overlapping the edit grow to cover
@@ -576,7 +607,8 @@ impl ParseJob {
                     end - p.len >= self.window.start && self.blocks[last].matches(p)
                 });
             if converged || last + 1 >= n {
-                return ParseResult { id: self.id, window: self.window.start..end, blocks: parsed };
+                let blocks = parsed.into_iter().map(Arc::new).collect();
+                return ParseResult { id: self.id, window: self.window.start..end, blocks };
             }
             // Grow geometrically: an unclosed fence near the top costs
             // O(n log n) parsed bytes, not O(n²).
@@ -591,7 +623,9 @@ impl ParseJob {
 pub struct ParseResult {
     id: u64,
     window: Range<usize>,
-    blocks: Vec<ParsedBlock>,
+    /// Already behind `Arc`s: allocating them is done by whoever ran the job
+    /// (usually a background thread), not by `apply` on the UI thread.
+    blocks: Vec<Arc<ParsedBlock>>,
 }
 
 impl ParseResult {

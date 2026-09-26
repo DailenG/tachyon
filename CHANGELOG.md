@@ -17,6 +17,7 @@ All notable user-visible changes are recorded here. The format follows
 - In lists, quotes and footnotes only the item or paragraph under the caret switches to raw
   Markdown; the rest stays rendered.
 - The view follows the caret's line, so typing in a long code block keeps the scroll position.
+- Frame-time overlay, toggled with `Ctrl+Alt+F`.
 - Incremental Markdown parsing: keystrokes reparse only the affected blocks; large pastes are
   parsed in the background.
 - Save (`Ctrl+S`) and Save As (`Ctrl+Shift+S`): atomic writes that keep the file's line endings
@@ -31,6 +32,10 @@ All notable user-visible changes are recorded here. The format follows
 
 ### Fixed
 
+- Large pastes no longer stall the window: a 5 MB paste now costs a few milliseconds on the UI
+  thread before and after its background parse (it was hundreds).
+- Editing a line after a paragraph-continuation line could leave a block rendered differently
+  from a full reparse (look-behind now reaches the previous blank line).
 - Exit with an error instead of hanging when no display server is available on Linux.
 - Forwarded launches are acknowledged by the running instance; a launch is no longer lost when the
   secondary process exits before the primary has read it (seen as a flaky test on Windows CI), and

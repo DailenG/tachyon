@@ -198,16 +198,14 @@ fn footnotes_and_html() {
 }
 
 #[test]
-fn unparsed_blocks_show_source_lines_verbatim() {
-    let src = "# not\n\n**parsed**\n";
-    let b = unparsed(src);
-    assert_eq!((b.kind.clone(), b.len), (BlockKind::Unparsed, src.len()));
-    assert_eq!(b.ir.text, "# not\n\n**parsed**");
-    assert_eq!(b.ir.lines.len(), 3);
-    assert_eq!(
-        b.ir.visible_to_source(b.ir.text.find("parsed").unwrap()),
-        src.find("parsed").unwrap()
-    );
+fn link_definition_blocks_show_their_source_lines() {
+    let src = "para\n\n[a]: /x\n[b]: /y\n";
+    let b = &blocks(src)[1];
+    assert_eq!(b.kind, BlockKind::LinkDefinition);
+    assert_eq!(b.ir.text, "[a]: /x\n[b]: /y");
+    assert_eq!(b.ir.lines.len(), 2);
+    let at = b.ir.text.find("/y").unwrap();
+    assert_eq!(&src[6 + b.ir.visible_to_source(at)..][..2], "/y");
 }
 
 #[test]
