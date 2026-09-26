@@ -1,0 +1,20 @@
+[package]
+name = "tachyon-md"
+description = "Markdown block segmentation and owned render IR on top of pulldown-cmark"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+pulldown-cmark.workspace = true
+unicase.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

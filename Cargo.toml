@@ -28,6 +28,7 @@ large_futures = "warn"
 
 [workspace.dependencies]
 tachyon-platform = { path = "crates/tachyon-platform" }
+tachyon-md = { path = "crates/tachyon-md" }
 tachyon-text = { path = "crates/tachyon-text" }
 
 # GPUI is consumed straight from the Zed monorepo. Bump `rev` deliberately:
@@ -37,7 +38,9 @@ gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "933d8d93
 
 futures = "0.3"
 lexopt = "0.3"
+pulldown-cmark = { version = "0.13", default-features = false }
 ropey = "1.6"
+unicase = "2.6"
 windows-sys = "0.61"
 
 # Test and benchmark only.
