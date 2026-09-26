@@ -21,7 +21,7 @@ fn sources(src: &str) -> Vec<String> {
         .collect()
 }
 
-fn styled<'a>(ir: &'a BlockIr, style: Style) -> Vec<&'a str> {
+fn styled(ir: &BlockIr, style: Style) -> Vec<&str> {
     ir.runs.iter().filter(|r| r.style.contains(style)).map(|r| &ir.text[r.range.clone()]).collect()
 }
 
@@ -138,7 +138,7 @@ fn quotes_nest_and_alerts_are_recognised() {
 #[test]
 fn reference_links_resolve_through_the_document_table() {
     let target = LinkTarget { dest: "/elsewhere".into(), title: String::new() };
-    let table = DefTable::from_defs(&[("Ref".to_owned(), target)]);
+    let table = DefTable::new(&[("Ref".to_owned(), target)], &[]);
 
     let with = &parse("See [ref] and [text][REF].\n", &table)[0];
     assert_eq!(with.ir.text, "See ref and text.");
@@ -156,7 +156,7 @@ fn document_table_overrides_a_later_local_definition() {
     // In the full document the first definition wins; a window that only
     // sees the second one must still render the first.
     let first = LinkTarget { dest: "/first".into(), title: String::new() };
-    let table = DefTable::from_defs(&[("x".to_owned(), first)]);
+    let table = DefTable::new(&[("x".to_owned(), first)], &[]);
     let window = parse("[x]\n\n[x]: /second\n", &table);
     assert_eq!(window[0].ir.links[0].dest, "/first");
     assert_eq!(window[1].kind, BlockKind::LinkDefinition);
@@ -208,4 +208,27 @@ fn unparsed_blocks_show_source_lines_verbatim() {
         b.ir.visible_to_source(b.ir.text.find("parsed").unwrap()),
         src.find("parsed").unwrap()
     );
+}
+
+#[test]
+fn footnote_references_resolve_through_the_document_table() {
+    let with = DefTable::new(&[], &["1".to_owned()]);
+    let b = &parse("Claim[^1].\n", &with)[0];
+    assert_eq!(b.ir.text, "Claim[1].");
+    assert!(b.mentions_footnotes);
+
+    let without = &parse("Claim[^1].\n", &DefTable::default())[0];
+    assert_eq!(without.ir.text, "Claim[^1].");
+}
+
+#[test]
+fn footnote_prefix_resolves_even_when_the_window_ends_in_an_open_fence() {
+    let table = DefTable::new(&[], &["n".to_owned()]);
+    let src = "    indented\n\ntext[^n]\n\n```\nunclosed fence\n";
+    let blocks = parse(src, &table);
+    assert_eq!(blocks.iter().map(|b| b.len).sum::<usize>(), src.len());
+    assert!(matches!(blocks[0].kind, BlockKind::CodeBlock { fenced: false, .. }));
+    assert_eq!(blocks[1].ir.text, "text[n]");
+    assert_eq!(blocks[2].ir.text, "unclosed fence");
+    assert!(blocks.iter().all(|b| b.footnotes.is_empty()));
 }

@@ -27,6 +27,7 @@ unwrap_used = "deny"
 large_futures = "warn"
 
 [workspace.dependencies]
+tachyon-doc = { path = "crates/tachyon-doc" }
 tachyon-platform = { path = "crates/tachyon-platform" }
 tachyon-md = { path = "crates/tachyon-md" }
 tachyon-text = { path = "crates/tachyon-text" }

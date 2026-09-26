@@ -177,9 +177,13 @@ impl Buffer {
 
     /// Replaces `range` with `text` (line endings normalized) and records the
     /// change in the current undo group. Leaves the buffer untouched on error.
+    ///
+    /// A `\r` at the very end of `text` is dropped: it is almost always the
+    /// first half of a `\r\n` split across two inserts (streamed output), and
+    /// turning it into `\n` would double the line break.
     pub fn edit(&mut self, range: Range<usize>, text: &str) -> Result<Edit, EditError> {
         self.check_range(&range)?;
-        let text = normalize(text);
+        let text = normalize(text.strip_suffix('\r').unwrap_or(text));
         let old = self.rope.byte_slice(range.clone()).to_string();
         let edit = self.apply(range.clone(), &text);
 
@@ -286,6 +290,15 @@ mod tests {
         buffer.edit(buffer.len()..buffer.len(), "pasted\r\nline\n").unwrap();
         assert_eq!(buffer.text(), "# Title\n\nBody\npasted\nline\n");
         assert_eq!(buffer.to_saved_text(), "# Title\r\n\r\nBody\r\npasted\r\nline\r\n");
+    }
+
+    #[test]
+    fn crlf_split_across_inserts_is_one_line_break() {
+        let mut buffer = Buffer::new("");
+        for chunk in ["line one\r", "\nline two\r", "\n"] {
+            buffer.edit(buffer.len()..buffer.len(), chunk).unwrap();
+        }
+        assert_eq!(buffer.text(), "line one\nline two\n");
     }
 
     #[test]

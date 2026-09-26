@@ -8,3 +8,6 @@
 *.otf binary
 
 Cargo.lock linguist-generated=true
+
+# Test fixture that must keep its Windows line endings.
+crates/tachyon-doc/tests/corpus/crlf.md -text

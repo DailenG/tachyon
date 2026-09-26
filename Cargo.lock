@@ -5334,6 +5334,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tachyon-doc"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "ropey",
+ "tachyon-md",
+ "tachyon-text",
+]
+
+[[package]]
 name = "tachyon-md"
 version = "0.1.0"
 dependencies = [

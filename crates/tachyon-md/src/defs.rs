@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use pulldown_cmark::{Options, Parser};
 use unicase::UniCase;
@@ -10,31 +10,53 @@ pub struct LinkTarget {
     pub title: String,
 }
 
-/// Document-wide link reference definitions. Reference links are resolved
-/// against this table rather than against the parse window, so a block
-/// renders the same whether it is parsed alone or as part of the document.
+/// Document-wide definitions a block's rendering can depend on: link
+/// reference definitions and footnote labels. Blocks are rendered against
+/// this table rather than against their parse window, so a block renders the
+/// same whether it is parsed alone or as part of the document.
 ///
 /// Labels compare like CommonMark labels (Unicode case folding; whitespace is
 /// already collapsed by the parser). The first definition of a label wins.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct DefTable {
-    map: HashMap<UniCase<String>, LinkTarget>,
+    links: HashMap<UniCase<String>, LinkTarget>,
+    footnotes: HashSet<UniCase<String>>,
+    /// Footnote labels in first-definition order (for the parse prefix).
+    footnote_order: Vec<String>,
+}
+
+/// Difference between two tables, as far as block rendering is concerned.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DefChanges {
+    /// Link labels added, removed or retargeted.
+    pub links: Vec<String>,
+    /// The set of defined footnotes changed.
+    pub footnotes: bool,
 }
 
 impl DefTable {
     /// Builds the table from definitions in document order.
-    pub fn from_defs<'a>(defs: impl IntoIterator<Item = &'a (String, LinkTarget)>) -> Self {
-        let mut map = HashMap::new();
-        for (label, target) in defs {
-            map.entry(UniCase::new(label.clone())).or_insert_with(|| target.clone());
+    pub fn new<'a>(
+        links: impl IntoIterator<Item = &'a (String, LinkTarget)>,
+        footnotes: impl IntoIterator<Item = &'a String>,
+    ) -> Self {
+        let mut table = DefTable::default();
+        for (label, target) in links {
+            table.links.entry(UniCase::new(label.clone())).or_insert_with(|| target.clone());
         }
-        Self { map }
+        for label in footnotes {
+            if table.footnotes.insert(UniCase::new(label.clone())) {
+                table.footnote_order.push(label.clone());
+            }
+        }
+        table
     }
 
-    /// Collects the definitions of a complete document.
+    /// Collects the link reference definitions of a complete document
+    /// (footnotes need no table when the whole document is parsed at once).
     pub fn from_source(src: &str, options: Options) -> Self {
         let parser = Parser::new_ext(src, options);
-        let mut defs: Vec<_> = parser
+        let mut links: Vec<_> = parser
             .reference_definitions()
             .iter()
             .map(|(label, def)| {
@@ -48,40 +70,69 @@ impl DefTable {
                 )
             })
             .collect();
-        defs.sort_by_key(|(start, ..)| *start);
-        let defs: Vec<_> = defs.into_iter().map(|(_, label, target)| (label, target)).collect();
-        Self::from_defs(&defs)
+        links.sort_by_key(|(start, ..)| *start);
+        let links: Vec<_> = links.into_iter().map(|(_, label, target)| (label, target)).collect();
+        Self::new(&links, &[])
+    }
+
+    /// The definitions made by `blocks`, in order.
+    pub fn from_blocks<'a>(
+        blocks: impl IntoIterator<Item = &'a crate::ParsedBlock> + Clone,
+    ) -> Self {
+        let links: Vec<(String, LinkTarget)> =
+            blocks.clone().into_iter().flat_map(|b| b.defs.iter().cloned()).collect();
+        let footnotes: Vec<String> =
+            blocks.into_iter().flat_map(|b| b.footnotes.iter().cloned()).collect();
+        Self::new(&links, &footnotes)
+    }
+
+    /// Same link definitions (footnotes ignored).
+    pub fn links_equal(&self, other: &DefTable) -> bool {
+        self.links == other.links
     }
 
     pub fn get(&self, label: &str) -> Option<&LinkTarget> {
-        self.map.get(&UniCase::new(label.to_owned()))
+        self.links.get(&UniCase::new(label.to_owned()))
     }
 
-    pub fn len(&self) -> usize {
-        self.map.len()
+    pub fn has_footnote(&self, label: &str) -> bool {
+        self.footnotes.contains(&UniCase::new(label.to_owned()))
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.map.is_empty()
+    /// Source prepended to a parse window so footnote references to
+    /// definitions outside the window resolve: one definition per known
+    /// footnote, then a blank line and a thematic break that closes them off.
+    /// Empty when there are none.
+    pub(crate) fn footnote_prefix(&self) -> String {
+        if self.footnote_order.is_empty() {
+            return String::new();
+        }
+        let mut prefix = String::new();
+        for label in &self.footnote_order {
+            prefix.push_str("[^");
+            prefix.push_str(label);
+            prefix.push_str("]: .\n");
+        }
+        prefix.push_str("\n***\n");
+        prefix
     }
 
-    /// Labels whose target differs between `self` and `other` (added, removed
-    /// or changed), in unspecified order.
-    pub fn changed_labels(&self, other: &DefTable) -> Vec<String> {
-        let mut changed: Vec<String> = self
-            .map
+    /// What differs between `self` and `other`.
+    pub fn changes(&self, other: &DefTable) -> DefChanges {
+        let mut links: Vec<String> = self
+            .links
             .iter()
-            .filter(|(label, target)| other.map.get(*label) != Some(target))
+            .filter(|(label, target)| other.links.get(*label) != Some(target))
             .map(|(label, _)| label.to_string())
             .collect();
-        changed.extend(
+        links.extend(
             other
-                .map
+                .links
                 .keys()
-                .filter(|label| !self.map.contains_key(*label))
+                .filter(|label| !self.links.contains_key(*label))
                 .map(|label| label.to_string()),
         );
-        changed
+        DefChanges { links, footnotes: self.footnotes != other.footnotes }
     }
 }
 
@@ -104,16 +155,21 @@ mod tests {
         let table = DefTable::from_source(src, crate::options());
         assert_eq!(table.get("FOO").map(|t| t.dest.as_str()), Some("/first"));
         assert_eq!(table.get("ß").map(|t| t.dest.as_str()), Some("/sharp-s"));
-        assert_eq!(table.len(), 2);
     }
 
     #[test]
-    fn changed_labels_reports_additions_removals_and_changes() {
-        let old = DefTable::from_defs(&[("a".into(), target("/a")), ("b".into(), target("/b"))]);
-        let new = DefTable::from_defs(&[("A".into(), target("/a")), ("c".into(), target("/c"))]);
-        let mut changed = old.changed_labels(&new);
-        changed.sort();
-        assert_eq!(changed, vec!["b".to_owned(), "c".to_owned()]);
-        assert!(old.changed_labels(&old.clone()).is_empty());
+    fn changes_report_links_and_footnotes() {
+        let old = DefTable::new(&[("a".into(), target("/a")), ("b".into(), target("/b"))], &[]);
+        let new = DefTable::new(
+            &[("A".into(), target("/a")), ("c".into(), target("/c"))],
+            &["n".to_owned()],
+        );
+        let mut changes = old.changes(&new);
+        changes.links.sort();
+        assert_eq!(
+            changes,
+            DefChanges { links: vec!["b".to_owned(), "c".to_owned()], footnotes: true }
+        );
+        assert_eq!(old.changes(&old.clone()), DefChanges::default());
     }
 }

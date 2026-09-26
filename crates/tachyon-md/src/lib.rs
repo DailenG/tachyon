@@ -12,6 +12,7 @@ mod defs;
 mod ir;
 mod presegment;
 
+use std::borrow::Cow;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::ops::Range;
 
@@ -20,7 +21,7 @@ use pulldown_cmark::{
     TagEnd,
 };
 
-pub use crate::defs::{DefTable, LinkTarget, labels_match};
+pub use crate::defs::{DefChanges, DefTable, LinkTarget, labels_match};
 pub use crate::ir::{BlockIr, LineInfo, LineKind, LinkSpan, Marker, SourceSpan, Style, StyleRun};
 pub use crate::presegment::presegment;
 
@@ -90,6 +91,11 @@ pub struct ParsedBlock {
     pub defs: Vec<(String, LinkTarget)>,
     /// Reference labels this block's rendering looked up in the [`DefTable`].
     pub refs: Vec<String>,
+    /// Footnote labels defined in this block.
+    pub footnotes: Vec<String>,
+    /// The source contains `[^`, so the rendering may depend on which
+    /// footnotes the document defines.
+    pub mentions_footnotes: bool,
     /// Hash of the block's source text.
     pub source_hash: u64,
 }
@@ -101,23 +107,60 @@ pub fn parse(src: &str, defs: &DefTable) -> Vec<ParsedBlock> {
         return Vec::new();
     }
 
+    // A footnote reference renders as one only if the document defines the
+    // footnote, and pulldown-cmark resolves footnotes only within its input.
+    // Prepend the document's footnote definitions, closed off by a thematic
+    // break so nothing in the window can continue them; everything parsed
+    // from this prefix is dropped and ranges are shifted back.
+    let prefix = defs.footnote_prefix();
+    let offset = prefix.len();
+    let input: Cow<'_, str> =
+        if prefix.is_empty() { Cow::Borrowed(src) } else { Cow::Owned(prefix + src) };
+    let input = input.as_ref();
+
     let lookups = std::cell::RefCell::new(Vec::<(usize, String)>::new());
     let callback = |link: BrokenLink<'_>| {
-        lookups.borrow_mut().push((link.span.start, link.reference.to_string()));
+        if let Some(at) = link.span.start.checked_sub(offset) {
+            lookups.borrow_mut().push((at, link.reference.to_string()));
+        }
         defs.get(&link.reference)
             .map(|t| (CowStr::from(t.dest.clone()), CowStr::from(t.title.clone())))
     };
     let mut events =
-        Parser::new_with_broken_link_callback(src, options(), Some(callback)).into_offset_iter();
+        Parser::new_with_broken_link_callback(input, options(), Some(callback)).into_offset_iter();
 
     let mut pending: Vec<Pending> = Vec::new();
     let mut depth = 0usize;
     let mut builder: Option<Builder<'_>> = None;
     for (event, range) in events.by_ref() {
+        if range.start < offset {
+            // Prefix: only keep the nesting depth right.
+            match event {
+                Event::Start(_) => depth += 1,
+                Event::End(_) => depth -= 1,
+                _ => {}
+            }
+            continue;
+        }
+        let range = range.start - offset..range.end - offset;
+        // Container ranges can run past their content (over trailing link
+        // definitions); every other event marks real content.
+        let container = matches!(
+            event,
+            Event::Start(Tag::List(_) | Tag::BlockQuote(_) | Tag::FootnoteDefinition(_))
+                | Event::End(TagEnd::List(_) | TagEnd::BlockQuote(_) | TagEnd::FootnoteDefinition)
+        );
+        if !container && let Some(b) = builder.as_mut() {
+            b.extent_end = b.extent_end.max(range.end);
+        }
         match event {
             Event::Start(tag) => {
                 if depth == 0 {
-                    builder = Some(Builder::new(src, range.start, kind_of(&tag), defs));
+                    let mut b = Builder::new(src, range.start, kind_of(&tag), defs);
+                    if !container {
+                        b.extent_end = range.end;
+                    }
+                    builder = Some(b);
                 }
                 depth += 1;
                 if let Some(b) = builder.as_mut() {
@@ -141,6 +184,7 @@ pub fn parse(src: &str, defs: &DefTable) -> Vec<ParsedBlock> {
                 let kind =
                     if matches!(event, Event::Rule) { BlockKind::Rule } else { BlockKind::Html };
                 let mut b = Builder::new(src, range.start, kind, defs);
+                b.extent_end = range.end;
                 b.event(event, range.clone());
                 pending.push(b.finish(range));
             }
@@ -152,41 +196,102 @@ pub fn parse(src: &str, defs: &DefTable) -> Vec<ParsedBlock> {
         }
     }
 
-    let mut defs_found: Vec<(Range<usize>, String, LinkTarget)> = events
-        .reference_definitions()
-        .iter()
-        .map(|(label, def)| {
-            (
-                def.span.clone(),
-                label.to_owned(),
-                LinkTarget {
-                    dest: def.dest.to_string(),
-                    title: def.title.as_deref().unwrap_or_default().to_owned(),
-                },
-            )
-        })
-        .collect();
     drop(events);
-    defs_found.sort_by_key(|(span, ..)| span.start);
 
-    for (span, label, target) in defs_found {
-        match pending
-            .iter_mut()
-            .find(|p| p.content.start <= span.start && span.end <= p.content.end)
-        {
-            Some(owner) => owner.defs.push((label, target)),
-            None => pending.push(Pending::definition(src, span, label, target)),
+    // Source no event covers is link reference definitions (the only
+    // construct pulldown-cmark consumes without events). They become blocks
+    // of their own, found from the gaps rather than from the parser's
+    // definition map, which drops duplicate labels.
+    pending.sort_by_key(|p| p.content.start);
+    let mut cursor = 0;
+    let mut gaps = Vec::new();
+    for p in &pending {
+        if p.content.start > cursor {
+            gaps.push(cursor..p.content.start);
+        }
+        cursor = cursor.max(p.content.end);
+    }
+    if cursor < src.len() {
+        gaps.push(cursor..src.len());
+    }
+    let sorted = pending.len();
+    for gap in gaps {
+        let text = &src[gap.clone()];
+        let Some(first) = text.find(|c: char| !c.is_whitespace()) else { continue };
+        let defs = gap.start + first..gap.start + text.trim_end().len();
+        // Definitions are taken from the start of a paragraph, so without a
+        // blank line they belong to the block that follows it. That block
+        // must include them to parse the same alone: after a definition an
+        // indented line is paragraph text, on its own it is code.
+        let next_idx = pending[..sorted].partition_point(|p| p.content.start < gap.end);
+        let next = pending[..sorted].get_mut(next_idx);
+        match next {
+            Some(next) if src[defs.end..next.content.start].matches('\n').count() <= 1 => {
+                next.content.start = defs.start;
+            }
+            _ => pending.push(Pending::definitions(src, defs)),
         }
     }
     pending.sort_by_key(|p| p.content.start);
+    attach_leading_definitions(src, &mut pending);
 
     for (at, label) in lookups.into_inner() {
-        if let Some(owner) = pending.iter_mut().rev().find(|p| p.content.start <= at) {
+        let owner = pending.partition_point(|p| p.content.start <= at).checked_sub(1);
+        if let Some(owner) = owner.and_then(|i| pending.get_mut(i)) {
             owner.refs.push(label);
         }
     }
 
     tile(src, pending)
+}
+
+/// Parses a complete document and returns its blocks together with the
+/// definition table incremental reparses of it must use. The table is built
+/// from the blocks (as `tachyon-doc` does after every reparse); if it differs
+/// from what the whole-document parse saw, the document is parsed again with
+/// it so the blocks are exactly what windowed reparses would produce.
+pub fn parse_document(src: &str) -> (Vec<ParsedBlock>, DefTable) {
+    let initial = DefTable::from_source(src, options());
+    let blocks = parse(src, &initial);
+    let table = DefTable::from_blocks(&blocks);
+    if table.links_equal(&initial) {
+        return (blocks, table);
+    }
+    let blocks = parse(src, &table);
+    let table = DefTable::from_blocks(&blocks);
+    (blocks, table)
+}
+
+/// A link reference definition leaves the parser in a paragraph-like state:
+/// in "[x]: /u\n2) two" the second line cannot start a list, while alone it
+/// does. pulldown-cmark may attribute such definitions to the *previous*
+/// block's (container) range. Move definition lines that directly precede a
+/// block (no blank line between) into that block so it parses the same alone.
+fn attach_leading_definitions(src: &str, pending: &mut [Pending]) {
+    for i in 1..pending.len() {
+        let start = line_start(src, pending[i].content.start);
+        let after_content = pending[i - 1].extent_end.min(start);
+        let tail = &src[after_content..start];
+        // Only lines after the last blank line touch the block.
+        let tail_start = after_content + tail.rfind("\n\n").map_or(0, |at| at + 2);
+        let tail = &src[tail_start..start];
+        let Some(first) = tail.find(|c: char| !c.is_whitespace()) else { continue };
+        // Definitions produce no events; anything else is not ours to move.
+        if Parser::new_ext(tail, options()).next().is_some() {
+            continue;
+        }
+        let defs_start = tail_start + first;
+        if pending[i].kind == BlockKind::LinkDefinition {
+            // Its IR shows its whole source; rebuild it over the new range.
+            pending[i] = Pending::definitions(src, defs_start..pending[i].content.end);
+        }
+        pending[i].content.start = pending[i].content.start.min(defs_start);
+        pending[i - 1].content.end = pending[i - 1].content.end.min(line_start(src, defs_start));
+    }
+}
+
+fn line_start(src: &str, offset: usize) -> usize {
+    src[..offset].rfind('\n').map_or(0, |nl| nl + 1)
 }
 
 /// A provisional block for `src` that shows it as plain text, one visible
@@ -218,6 +323,8 @@ pub fn unparsed(src: &str) -> ParsedBlock {
         ir,
         defs: Vec::new(),
         refs: Vec::new(),
+        footnotes: Vec::new(),
+        mentions_footnotes: src.contains("[^"),
         source_hash: hash(src),
     }
 }
@@ -226,40 +333,40 @@ pub fn unparsed(src: &str) -> ParsedBlock {
 struct Pending {
     kind: BlockKind,
     content: Range<usize>,
+    /// Offset the IR's source ranges are relative to.
+    origin: usize,
+    /// End of the block's real content (see `Builder::extent_end`).
+    extent_end: usize,
     ir: BlockIr,
-    defs: Vec<(String, LinkTarget)>,
     refs: Vec<String>,
+    footnotes: Vec<String>,
 }
 
 impl Pending {
-    fn definition(src: &str, span: Range<usize>, label: String, target: LinkTarget) -> Self {
-        let raw = src[span.clone()].trim_end_matches('\n');
-        let ir = BlockIr {
-            text: raw.to_owned(),
-            lines: vec![LineInfo {
-                start: 0,
-                kind: LineKind::Text,
-                indent: 0,
-                quote: 0,
-                marker: None,
-            }],
-            runs: Vec::new(),
-            map: vec![SourceSpan { visible: 0..raw.len(), source: 0..raw.len(), verbatim: true }],
-            links: vec![LinkSpan { visible: 0..raw.len(), dest: target.dest.clone() }],
-        };
+    /// Link reference definitions in `span`, shown verbatim line by line.
+    fn definitions(src: &str, span: Range<usize>) -> Self {
+        let mut ir = unparsed(&src[span.clone()]).ir;
+        ir.lines.iter_mut().for_each(|l| l.kind = LineKind::Text);
         Pending {
             kind: BlockKind::LinkDefinition,
+            origin: span.start,
+            extent_end: span.end,
             content: span,
             ir,
-            defs: vec![(label, target)],
             refs: Vec::new(),
+            footnotes: Vec::new(),
         }
     }
 }
 
-/// Assigns each block the source from its content start to the next block's
-/// content start (the first block also takes leading whitespace), then makes
-/// IR source ranges relative to the block start.
+/// Assigns each block the source from its start to the next block's start
+/// (the first block also takes leading whitespace), then makes IR source
+/// ranges relative to the block start.
+///
+/// A block starts at the beginning of the line holding its content, not at
+/// the content itself: pulldown-cmark reports e.g. indented code without its
+/// indentation, and a block cut mid-line would parse differently on its own
+/// ("    code" is code, "code" is a paragraph).
 fn tile(src: &str, pending: Vec<Pending>) -> Vec<ParsedBlock> {
     if pending.is_empty() {
         return vec![ParsedBlock {
@@ -269,15 +376,18 @@ fn tile(src: &str, pending: Vec<Pending>) -> Vec<ParsedBlock> {
             ir: BlockIr::default(),
             defs: Vec::new(),
             refs: Vec::new(),
+            footnotes: Vec::new(),
+            mentions_footnotes: false,
             source_hash: hash(src),
         }];
     }
-    let starts: Vec<usize> = pending
-        .iter()
-        .enumerate()
-        .map(|(i, p)| if i == 0 { 0 } else { p.content.start })
-        .chain(std::iter::once(src.len()))
-        .collect();
+    let mut starts = Vec::with_capacity(pending.len() + 1);
+    let mut previous_end = 0;
+    for (i, p) in pending.iter().enumerate() {
+        starts.push(if i == 0 { 0 } else { line_start(src, p.content.start).max(previous_end) });
+        previous_end = previous_end.max(p.content.end);
+    }
+    starts.push(src.len());
     pending
         .into_iter()
         .enumerate()
@@ -285,7 +395,7 @@ fn tile(src: &str, pending: Vec<Pending>) -> Vec<ParsedBlock> {
             let (start, end) = (starts[i], starts[i + 1]);
             // The block's IR was built with offsets relative to its content
             // start; shift them to be relative to the tiled block start.
-            let shift = p.content.start - start;
+            let shift = p.origin - start;
             if shift > 0 {
                 for span in &mut p.ir.map {
                     span.source = span.source.start + shift..span.source.end + shift;
@@ -299,12 +409,37 @@ fn tile(src: &str, pending: Vec<Pending>) -> Vec<ParsedBlock> {
                 len: end - start,
                 content: p.content.start - start..content_end - start,
                 ir: p.ir,
-                defs: p.defs,
+                defs: block_defs(&src[start..end]),
                 refs: p.refs,
+                footnotes: p.footnotes,
+                mentions_footnotes: src[start..end].contains("[^"),
                 source_hash: hash(&src[start..end]),
             }
         })
         .collect()
+}
+
+/// Link reference definitions made in one block's source. Parsed from the
+/// block alone (it parses identically alone), so duplicates of labels
+/// defined elsewhere are still reported.
+fn block_defs(block_src: &str) -> Vec<(String, LinkTarget)> {
+    if !block_src.contains("]:") {
+        return Vec::new();
+    }
+    let parser = Parser::new_ext(block_src, options());
+    let mut defs: Vec<_> = parser
+        .reference_definitions()
+        .iter()
+        .map(|(label, def)| {
+            let target = LinkTarget {
+                dest: def.dest.to_string(),
+                title: def.title.as_deref().unwrap_or_default().to_owned(),
+            };
+            (def.span.start, label.to_owned(), target)
+        })
+        .collect();
+    defs.sort_by_key(|(start, ..)| *start);
+    defs.into_iter().map(|(_, label, target)| (label, target)).collect()
 }
 
 fn hash(text: &str) -> u64 {
@@ -354,10 +489,14 @@ struct Builder<'a> {
     src: &'a str,
     /// Absolute offset of the block's content start in `src`.
     origin: usize,
+    /// End of the furthest non-container event: where the block's real
+    /// content ends, as opposed to its (possibly longer) container range.
+    extent_end: usize,
     kind: BlockKind,
     defs: &'a DefTable,
     ir: BlockIr,
     refs: Vec<String>,
+    footnotes: Vec<String>,
     styles: Vec<Style>,
     links: Vec<(usize, String)>,
     lists: Vec<Option<u64>>,
@@ -378,10 +517,12 @@ impl<'a> Builder<'a> {
         Builder {
             src,
             origin,
+            extent_end: origin,
             kind,
             defs,
             ir: BlockIr::default(),
             refs: Vec::new(),
+            footnotes: Vec::new(),
             styles: Vec::new(),
             links: Vec::new(),
             lists: Vec::new(),
@@ -400,7 +541,15 @@ impl<'a> Builder<'a> {
             // Empty list item: still show its marker.
             self.open_line(LineKind::Text);
         }
-        Pending { kind: self.kind, content: range, ir: self.ir, defs: Vec::new(), refs: self.refs }
+        Pending {
+            kind: self.kind,
+            content: range,
+            origin: self.origin,
+            extent_end: self.extent_end.max(self.origin),
+            ir: self.ir,
+            refs: self.refs,
+            footnotes: self.footnotes,
+        }
     }
 
     fn style(&self) -> Style {
@@ -580,7 +729,10 @@ impl<'a> Builder<'a> {
                 self.links.push((self.ir.text.len(), dest));
                 self.styles.push(Style::IMAGE);
             }
-            Tag::FootnoteDefinition(_) => self.line_open = false,
+            Tag::FootnoteDefinition(label) => {
+                self.footnotes.push(label.to_string());
+                self.line_open = false;
+            }
             _ => {}
         }
     }

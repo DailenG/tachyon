@@ -1,0 +1,19 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc c0b9ecd4c5ba78056f308b14a136503a126dbbf2794a3dd837d468c1d152f9fd # shrinks to text = "---\n    indented\n\ntext\n", chunk = 1
+cc 8689f64104d3dcdfd874277a5f199f5a4b07fee6c2de34ff44fb96975d2ce2b3 # shrinks to initial = "[^1]: note\n> quote\n\n> quote\n- item\n    indented\n- item\n- item\n| a | b |\n- [x] task\n- item\n| a | b |\n", steps = [Insert { at: 7278895805000560112, text: "[y][x]\n    indented\n\n[^1]" }, Delete { at: 7222693090330225205, len: 3 }, Delete { at: 16562217290549208458, len: 27 }, Insert { at: 11879429, text: "# heading\nmore *em* **strong** `code`\n- [x] task" }, Delete { at: 1564851589863686132, len: 0 }, Insert { at: 3217336317969854981, text: "" }, Insert { at: 5954444141842961204, text: "" }, Insert { at: 3372734965527480245, text: "" }, Insert { at: 35335410030522149, text: "" }, Insert { at: 582818695833561045, text: "" }]
+cc 40e52f0676d3dedbaeb2f63fd9ca2104f53796e53c4cf6a1d072e46613af9300 # shrinks to text = "[^1]: note\n# heading\n[^1]\n\ntext\n", chunk = 1
+cc b4747054159975edfcc415c1e158cd9085b3375a34ee86e36c894f348d20ec1e # shrinks to text = "[y]: /v\n# heading\n[y]: /v\n", chunk = 1
+cc 00d9b8a9855c751d09283a4077d6bcdfd6129dd50c91ac09841f5509259770aa # shrinks to initial = "| a | b |\n> quote\n# heading\n```\n    indented\n", steps = [Delete { at: 9699256556677025373, len: 12 }, Insert { at: 3923941147079420, text: "[^1]: note" }]
+cc b594d8ec25d0aebc6387e63a3683c6f3000bae56abf83ac24678d3f3a75a6768 # shrinks to text = "\n---\n[x]: /u\n    indented\ntext\n- item\n", chunk = 1
+cc d8f8ffe3bf48376e7f400a301e3bdcf783e8ecd508eccec38cb17c7c1a2ec18e # shrinks to text = "~~~\n~~~\n[^1]: note\n- item\n[^1]\n```\n    indented\n", chunk = 1
+cc 30dfa272f568adbe93f99bf9b66c56f7fff77c842815336ba6a89c3c85dde9fe # shrinks to text = "- item\n\n[x]: /u\n2) two\n===\n\n\n\n\n\n1. one\n\n", chunk = 1
+cc 88c3573359b9202bd98e92695083def0374973cb1d5d6676a99d37b010b1307c # shrinks to initial = "[y][x]\n| a | b |\n[^1]: note\n    indented\n- item\n| a | b |\n\n[x]: /u\n2) two\n***\n===\n- item\n1. one\n| a | b |\n===\n", steps = [Delete { at: 5814733093744061510, len: 0 }]
+cc bd7f6ec45ecb9eec0183d869c8a72bfb2aad2d370ae9c6c4390f915eb9d26552 # shrinks to initial = "    indented\n$$\n- [x] task\n| a | b |\n- item\n- item\n| a | b |\n\n\t tab\n[x]: /u\n---\n[x]\n- item\n===\n===\n```rust\n```rust\n# heading\n", steps = [Insert { at: 1134299032588456407, text: "===" }, Insert { at: 2689736068957921945, text: "" }]
+cc ab33e71087d73185d403a3b284bb974c39f64de853f29144d1eba124b8dd4884 # shrinks to text = "- item\n\n\t tab\n[x]\n===\n[x]: /u\n<div>\n", chunk = 1
+cc 9bed8ca03b1a2b27655997d87a65f60374612e82d94abb6c3a92669eca662a83 # shrinks to text = "  - nested\n\n[x]: /u\n[x]: /u\n\n```rust\n```rust\n", chunk = 1
+cc 42f750750c178012053b858e2913bdb7bcbc49f2c7034f653a90f5b73911dbfe # shrinks to initial = "    indented\n~~~\n~~~\n[x]: /u\n===\n| a | b |\n[x]: /u\n===\n", steps = [Insert { at: 69148169590070, text: "===" }, Insert { at: 4884, text: "===" }, Delete { at: 635048891270341962, len: 22 }]
