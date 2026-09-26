@@ -29,7 +29,7 @@ fn secondary(id: &str) -> tachyon_platform::Client {
 fn second_claim_forwards_arguments_to_primary() {
     let id = unique_id("forward");
     let (tx, rx) = mpsc::channel();
-    primary(&id).spawn(move |args| tx.send(args).unwrap());
+    primary(&id).spawn(move |args| tx.send(args).is_ok());
 
     for batch in [vec!["--paste".to_owned()], vec!["--".to_owned(), "/tmp/a b.md".to_owned()]] {
         secondary(&id).send(&batch).unwrap();
@@ -47,7 +47,7 @@ fn launch_sent_before_the_primary_serves_is_still_delivered() {
 
     std::thread::sleep(Duration::from_millis(200));
     let (tx, rx) = mpsc::channel();
-    listener.spawn(move |args| tx.send(args).unwrap());
+    listener.spawn(move |args| tx.send(args).is_ok());
 
     assert_eq!(rx.recv_timeout(Duration::from_secs(5)), Ok(vec!["early.md".to_owned()]));
     sender.join().unwrap().unwrap();
@@ -61,4 +61,12 @@ fn send_fails_when_the_primary_is_gone() {
     drop(listener);
 
     assert!(client.send(&["lost.md".to_owned()]).is_err());
+}
+
+#[test]
+fn launch_rejected_by_the_primary_is_reported_to_the_sender() {
+    let id = unique_id("rejected");
+    primary(&id).spawn(|_| false);
+
+    assert!(secondary(&id).send(&["refused.md".to_owned()]).is_err());
 }

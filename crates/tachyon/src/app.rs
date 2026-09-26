@@ -121,9 +121,8 @@ fn open_window(source: Source, cx: &mut App) -> Option<WindowHandle<RawView>> {
 /// onto the main thread and opens them there.
 fn serve_forwarded_launches(listener: Listener, cx: &mut App) {
     let (tx, mut rx) = futures::channel::mpsc::unbounded::<Vec<String>>();
-    listener.spawn(move |args| {
-        let _ = tx.unbounded_send(args);
-    });
+    // Accepted once queued for the main thread; fails only while quitting.
+    listener.spawn(move |args| tx.unbounded_send(args).is_ok());
     cx.spawn(async move |cx| {
         while let Some(args) = rx.next().await {
             let Ok(cli::Command::Run(cli)) = cli::parse(args) else { continue };
