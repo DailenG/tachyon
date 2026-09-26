@@ -19,3 +19,6 @@ All notable user-visible changes are recorded here. The format follows
 ### Fixed
 
 - Exit with an error instead of hanging when no display server is available on Linux.
+- Forwarded launches are acknowledged by the running instance; a launch is no longer lost when the
+  secondary process exits before the primary has read it (seen as a flaky test on Windows CI), and
+  a secondary whose primary does not reply starts standalone.

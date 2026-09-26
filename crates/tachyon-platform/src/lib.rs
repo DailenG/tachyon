@@ -46,8 +46,13 @@ pub struct Listener {
 
 impl Listener {
     /// Serves forwarded launches on a dedicated thread. `on_message` receives
-    /// each launch's argument list in order. Malformed messages are dropped.
-    pub fn spawn(self, on_message: impl FnMut(Vec<String>) + Send + 'static) -> JoinHandle<()> {
+    /// each launch's argument list in order and returns whether it accepted
+    /// (e.g. queued) the launch; only accepted launches are acknowledged, so
+    /// the sender starts standalone otherwise. Malformed messages are dropped.
+    pub fn spawn(
+        self,
+        on_message: impl FnMut(Vec<String>) -> bool + Send + 'static,
+    ) -> JoinHandle<()> {
         let inner = self.inner;
         std::thread::Builder::new()
             .name("instance-listener".into())
