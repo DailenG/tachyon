@@ -44,15 +44,23 @@ Measured (Linux, release): keystroke-to-clean p99 45 µs on 1 MiB (paragraph, co
 end-of-document typing); full parse 20 ms for 1 MiB, 220 ms for 10 MiB; unclosed fence running to
 the end of 512 KiB 7 ms. All corpus tests pass.
 
-## Phase 3: block-swap editor (`tachyon-editor`, `tachyon-theme`)
+## Phase 3: block-swap editor (`tachyon-editor`) (in progress)
 
-- Editor view on GPUI's virtualized list; rich rendering for headings, emphasis, inline code,
-  links, fences, lists, quotes, basic tables; raw rendering for the active leaf block
-- Swap on cursor movement with scroll anchoring; arrow keys and clicks through rendered blocks via
-  source maps; selections across rendered blocks
-- IME through GPUI's input handler, verified with a Japanese or Chinese IME on Windows
-- Paste path: pending blocks, then background parse streamed in, viewport first
-- Frame-time overlay
+- [x] Editor view on GPUI's virtualized list; rich rendering for headings, emphasis, inline code,
+      links, fences, lists, task lists, quotes, tables, rules, math
+- [x] Raw rendering for the active block; swap on cursor movement
+- [ ] Swap at leaf granularity inside lists and quotes (today the whole top-level block swaps)
+- [x] Arrow keys, words, home/end, document start/end; selections across blocks; copy/cut/paste;
+      undo/redo with typing-run grouping
+- [x] Clicks and drag selection through rendered blocks via source maps (implemented; not yet
+      covered by an automated test)
+- [ ] Scroll anchoring when a swap changes a block's height above the viewport
+- [x] IME through GPUI's input handler (composition is one undo step)
+- [ ] IME verified with a Japanese or Chinese IME on Windows
+- [x] Paste path: large pastes show unparsed blocks and parse on the background executor
+- [ ] Background parse streamed back in chunks, viewport first
+- [ ] Frame-time overlay
+- [ ] Save (`Ctrl+S`) for files opened from disk
 
 **Exit:** pasting 5 MB of LLM output produces no frame over 16.6 ms, with visible text in the same
 frame; typing in a 1 MB document keeps key-to-present p99 within one 60 Hz frame.

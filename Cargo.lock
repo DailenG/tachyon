@@ -1007,6 +1007,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "convert_case"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "affbf0190ed2caf063e3def54ff444b449371d55c58e513a95ab98eca50adb49"
+dependencies = [
+ "unicode-segmentation",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1276,7 +1285,7 @@ version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "799a97264921d8623a957f6c3b9011f3b5492f557bbb7a5a19b7fa6d06ba8dcb"
 dependencies = [
- "convert_case",
+ "convert_case 0.10.0",
  "proc-macro2",
  "quote",
  "rustc_version",
@@ -2041,6 +2050,7 @@ dependencies = [
  "anyhow",
  "async-channel",
  "async-task",
+ "backtrace",
  "bindgen",
  "bitflags 2.13.2",
  "chrono",
@@ -2072,6 +2082,7 @@ dependencies = [
  "pollster 0.4.0",
  "postage",
  "profiling",
+ "proptest 1.10.0",
  "rand 0.9.5",
  "raw-window-handle",
  "refineable",
@@ -4164,6 +4175,25 @@ dependencies = [
 
 [[package]]
 name = "proptest"
+version = "1.10.0"
+source = "git+https://github.com/proptest-rs/proptest?rev=3dca198a8fef1b32e3a66f1e1897c955b4dc5b5b#3dca198a8fef1b32e3a66f1e1897c955b4dc5b5b"
+dependencies = [
+ "bit-set 0.8.0",
+ "bit-vec 0.8.0",
+ "bitflags 2.13.2",
+ "num-traits",
+ "proptest-macro",
+ "rand 0.9.5",
+ "rand_chacha 0.9.0",
+ "rand_xorshift",
+ "regex-syntax",
+ "rusty-fork",
+ "tempfile",
+ "unarray",
+]
+
+[[package]]
+name = "proptest"
 version = "1.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4b45fcc2344c680f5025fe57779faef368840d0bd1f42f216291f0dc4ace4744"
@@ -4179,6 +4209,17 @@ dependencies = [
  "rusty-fork",
  "tempfile",
  "unarray",
+]
+
+[[package]]
+name = "proptest-macro"
+version = "0.5.0"
+source = "git+https://github.com/proptest-rs/proptest?rev=3dca198a8fef1b32e3a66f1e1897c955b4dc5b5b#3dca198a8fef1b32e3a66f1e1897c955b4dc5b5b"
+dependencies = [
+ "convert_case 0.11.0",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -5330,6 +5371,8 @@ dependencies = [
  "gpui",
  "gpui_platform",
  "lexopt",
+ "tachyon-doc",
+ "tachyon-editor",
  "tachyon-platform",
 ]
 
@@ -5337,17 +5380,30 @@ dependencies = [
 name = "tachyon-doc"
 version = "0.1.0"
 dependencies = [
- "proptest",
+ "proptest 1.11.0",
  "ropey",
  "tachyon-md",
  "tachyon-text",
 ]
 
 [[package]]
+name = "tachyon-editor"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "ropey",
+ "tachyon-doc",
+ "tachyon-md",
+ "tachyon-platform",
+ "tachyon-text",
+ "unicode-segmentation",
+]
+
+[[package]]
 name = "tachyon-md"
 version = "0.1.0"
 dependencies = [
- "proptest",
+ "proptest 1.11.0",
  "pulldown-cmark",
  "unicase",
 ]
@@ -5363,7 +5419,7 @@ dependencies = [
 name = "tachyon-text"
 version = "0.1.0"
 dependencies = [
- "proptest",
+ "proptest 1.11.0",
  "ropey",
 ]
 

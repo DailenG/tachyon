@@ -1,0 +1,500 @@
+//! Block rendering: the block holding the caret shows its raw Markdown; every
+//! other block shows its rendered IR with syntax hidden.
+
+use std::ops::Range;
+use std::sync::Arc;
+
+use gpui::{
+    AnyElement, Context, ElementInputHandler, Entity, FontWeight, HighlightStyle, IntoElement,
+    MouseButton, MouseDownEvent, MouseMoveEvent, Render, SharedString, StyledText, TextLayout,
+    UnderlineStyle, Window, canvas, div, fill, list, prelude::*, px, relative, size,
+};
+use tachyon_md::{BlockKind, LineInfo, LineKind, Marker, ParsedBlock};
+
+use crate::editor::{Editor, KEY_CONTEXT, TextTarget};
+
+const INDENT: f32 = 22.;
+
+impl Render for Editor {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let editor = cx.entity();
+        let focus = self.focus.clone();
+        div()
+            .id("editor")
+            .key_context(KEY_CONTEXT)
+            .track_focus(&self.focus)
+            .size_full()
+            .bg(self.theme.background)
+            .text_color(self.theme.foreground)
+            .text_size(self.theme.text_size)
+            .line_height(relative(1.6))
+            .on_action(cx.listener(Self::backspace))
+            .on_action(cx.listener(Self::delete))
+            .on_action(cx.listener(Self::delete_word_left))
+            .on_action(cx.listener(Self::delete_word_right))
+            .on_action(cx.listener(Self::left))
+            .on_action(cx.listener(Self::right))
+            .on_action(cx.listener(Self::up))
+            .on_action(cx.listener(Self::down))
+            .on_action(cx.listener(Self::word_left))
+            .on_action(cx.listener(Self::word_right))
+            .on_action(cx.listener(Self::home))
+            .on_action(cx.listener(Self::end))
+            .on_action(cx.listener(Self::document_start))
+            .on_action(cx.listener(Self::document_end))
+            .on_action(cx.listener(Self::select_left))
+            .on_action(cx.listener(Self::select_right))
+            .on_action(cx.listener(Self::select_up))
+            .on_action(cx.listener(Self::select_down))
+            .on_action(cx.listener(Self::select_word_left))
+            .on_action(cx.listener(Self::select_word_right))
+            .on_action(cx.listener(Self::select_home))
+            .on_action(cx.listener(Self::select_end))
+            .on_action(cx.listener(Self::select_all))
+            .on_action(cx.listener(Self::newline))
+            .on_action(cx.listener(Self::tab))
+            .on_action(cx.listener(Self::copy))
+            .on_action(cx.listener(Self::cut))
+            .on_action(cx.listener(Self::paste))
+            .on_action(cx.listener(Self::undo))
+            .on_action(cx.listener(Self::redo))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|editor, _: &MouseDownEvent, window, cx| {
+                    window.focus(&editor.focus, cx);
+                }),
+            )
+            .on_mouse_up(MouseButton::Left, cx.listener(|editor, _, _, _| editor.selecting = false))
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|editor, _, _, _| editor.selecting = false),
+            )
+            .child(
+                list(
+                    self.list.clone(),
+                    cx.processor(|editor, index, window, cx| {
+                        editor.render_block(index, window, cx)
+                    }),
+                )
+                .size_full()
+                .py_6(),
+            )
+            .child(
+                canvas(
+                    |_, _, _| {},
+                    move |bounds, _, window, cx| {
+                        window.handle_input(
+                            &focus,
+                            ElementInputHandler::new(bounds, editor.clone()),
+                            cx,
+                        );
+                    },
+                )
+                .absolute()
+                .size_full(),
+            )
+    }
+}
+
+impl Editor {
+    fn render_block(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let Some(block) = self.doc.blocks().get(index) else {
+            return div().into_any_element();
+        };
+        let range = self.doc.block_range(index);
+        let parsed = block.parsed_shared();
+        let raw = block.is_stale() || self.active_block() == Some(index);
+        let content = if raw {
+            self.render_raw(range, &parsed, window, cx)
+        } else {
+            self.render_rendered(range.start, parsed, cx)
+        };
+        div()
+            .w_full()
+            .flex()
+            .justify_center()
+            .child(div().w_full().max_w(self.theme.content_width).px_8().child(content))
+            .into_any_element()
+    }
+
+    /// The active block: its source, caret and selection.
+    fn render_raw(
+        &mut self,
+        range: Range<usize>,
+        parsed: &ParsedBlock,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = &self.theme;
+        let source = self.doc.buffer().rope().byte_slice(range.clone()).to_string();
+        let text = source.strip_suffix('\n').unwrap_or(&source).to_owned();
+        let base = range.start;
+        let len = text.len();
+
+        let mut highlights = Vec::new();
+        if let Some(local) = intersect(&self.selection, &range, base, len) {
+            highlights.push((
+                local,
+                HighlightStyle { background_color: Some(theme.selection), ..Default::default() },
+            ));
+        }
+        if let Some(marked) = &self.marked
+            && let Some(local) = intersect(marked, &range, base, len)
+        {
+            highlights.push((
+                local,
+                HighlightStyle {
+                    underline: Some(UnderlineStyle {
+                        thickness: px(1.),
+                        color: Some(theme.foreground),
+                        wavy: false,
+                    }),
+                    ..Default::default()
+                },
+            ));
+        }
+        let styled = StyledText::new(text).with_highlights(highlights);
+        let layout = styled.layout().clone();
+        let head = self.head();
+        let caret = (head >= base && head <= base + len).then(|| head - base);
+        let editor = cx.entity();
+        let focused = self.focus.is_focused(window);
+        let cursor_color = theme.cursor;
+        let paint_layout = layout.clone();
+
+        let code = matches!(parsed.kind, BlockKind::CodeBlock { .. } | BlockKind::Html);
+        let mut element = div()
+            .relative()
+            .my_1()
+            .px_2()
+            .rounded_md()
+            .bg(theme.raw_background)
+            .cursor_text()
+            .child(styled)
+            .child(
+                canvas(
+                    |_, _, _| {},
+                    move |_, _, window, cx| {
+                        editor.update(cx, |editor, _| {
+                            editor.active_layout = Some((paint_layout.clone(), base))
+                        });
+                        if focused
+                            && let Some(caret) = caret
+                            && let Some(position) = paint_layout.position_for_index(caret)
+                        {
+                            let caret = fill(
+                                gpui::Bounds::new(
+                                    position,
+                                    size(px(2.), paint_layout.line_height()),
+                                ),
+                                cursor_color,
+                            );
+                            window.paint_quad(caret);
+                        }
+                    },
+                )
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full(),
+            );
+        if code {
+            element = element.font_family(theme.code_font.clone()).text_size(theme.code_size);
+        }
+        with_mouse(element, layout, TextTarget::Raw { base }, cx).into_any_element()
+    }
+
+    /// An inactive block: rendered lines with syntax hidden.
+    fn render_rendered(
+        &self,
+        block_start: usize,
+        parsed: Arc<ParsedBlock>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = &self.theme;
+        let ir = &parsed.ir;
+        let block_len = parsed.len;
+        // Selection mapped to visible offsets of this block.
+        let selection = intersect(
+            &self.selection,
+            &(block_start..block_start + block_len),
+            block_start,
+            block_len,
+        )
+        .map(|local| ir.source_to_visible(local.start)..ir.source_to_visible(local.end));
+
+        if ir.lines.is_empty() {
+            // Blank or empty block: still clickable, to put the caret in it.
+            let target = TextTarget::Raw { base: block_start };
+            let styled = StyledText::new(" ");
+            let layout = styled.layout().clone();
+            return with_mouse(div().h(px(8.)).child(styled), layout, target, cx)
+                .into_any_element();
+        }
+
+        let mut column = div().flex().flex_col().my_2();
+        for (i, line) in ir.lines.iter().enumerate() {
+            let end = ir.lines.get(i + 1).map_or(ir.text.len(), |next| next.start - 1);
+            column = column.child(self.render_line(
+                line,
+                line.start..end,
+                &parsed,
+                block_start,
+                selection.clone(),
+                cx,
+            ));
+        }
+        if let BlockKind::Heading(1 | 2) = parsed.kind {
+            column = column.pb_1().border_b_1().border_color(theme.rule);
+        }
+        column.into_any_element()
+    }
+
+    fn render_line(
+        &self,
+        line: &LineInfo,
+        visible: Range<usize>,
+        parsed: &Arc<ParsedBlock>,
+        block_start: usize,
+        selection: Option<Range<usize>>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = &self.theme;
+        let content: AnyElement = match line.kind {
+            LineKind::Rule => div().w_full().h(px(1.)).my_3().bg(theme.rule).into_any_element(),
+            LineKind::TableRow { header } => {
+                let mut row = div().flex().w_full();
+                let mut cell_start = visible.start;
+                let text = &parsed.ir.text[visible.clone()];
+                for cell in text.split('\t') {
+                    let range = cell_start..cell_start + cell.len();
+                    let mut cell_el =
+                        div().flex_1().min_w_0().px_2().border_1().border_color(theme.rule).child(
+                            self.rendered_text(
+                                range.clone(),
+                                parsed,
+                                block_start,
+                                selection.clone(),
+                                cx,
+                            ),
+                        );
+                    if header {
+                        cell_el = cell_el.font_weight(FontWeight::BOLD).bg(theme.code_background);
+                    }
+                    row = row.child(cell_el);
+                    cell_start = range.end + 1;
+                }
+                row.into_any_element()
+            }
+            kind => {
+                let mut el = div().flex_1().min_w_0().child(self.rendered_text(
+                    visible,
+                    parsed,
+                    block_start,
+                    selection,
+                    cx,
+                ));
+                match kind {
+                    LineKind::Heading(level) => {
+                        let size = theme.heading_sizes[(level.clamp(1, 6) - 1) as usize];
+                        el = el
+                            .text_size(size)
+                            .font_weight(FontWeight::BOLD)
+                            .line_height(relative(1.3));
+                    }
+                    LineKind::Code => {
+                        el = el
+                            .font_family(theme.code_font.clone())
+                            .text_size(theme.code_size)
+                            .line_height(relative(1.45))
+                            .bg(theme.code_background)
+                            .px_3();
+                    }
+                    LineKind::Html => {
+                        el = el
+                            .font_family(theme.code_font.clone())
+                            .text_size(theme.code_size)
+                            .text_color(theme.muted);
+                    }
+                    _ => {}
+                }
+                el.into_any_element()
+            }
+        };
+
+        let mut row = div().flex().w_full();
+        if line.quote > 0 {
+            row = row
+                .border_l_2()
+                .border_color(theme.quote_bar)
+                .pl(px(12. * f32::from(line.quote)))
+                .text_color(theme.muted);
+        }
+        let depth = line.indent.saturating_sub(u8::from(line.marker.is_some()));
+        if depth > 0 {
+            row = row.pl(px(INDENT * f32::from(depth)));
+        }
+        if let Some(marker) = line.marker {
+            row = row.child(self.marker(marker));
+        } else if line.indent > 0 {
+            row = row.pl(px(INDENT * f32::from(line.indent)));
+        }
+        row.child(content).into_any_element()
+    }
+
+    fn marker(&self, marker: Marker) -> AnyElement {
+        let theme = &self.theme;
+        let el = div().w(px(INDENT)).flex_none().text_color(theme.muted);
+        match marker {
+            Marker::Bullet => el.child("•").into_any_element(),
+            Marker::Ordered(n) => el.child(SharedString::from(format!("{n}."))).into_any_element(),
+            Marker::Task { checked } => el
+                .flex()
+                .items_center()
+                .child(
+                    div()
+                        .size(px(13.))
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(theme.muted)
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_size(px(11.))
+                        .line_height(px(11.))
+                        .when(checked, |d| {
+                            d.bg(theme.accent).text_color(theme.background).child("✓")
+                        }),
+                )
+                .into_any_element(),
+        }
+    }
+
+    /// Rendered text for `visible` (a range of the block's IR text) with
+    /// inline styles, selection and click handling.
+    fn rendered_text(
+        &self,
+        visible: Range<usize>,
+        parsed: &Arc<ParsedBlock>,
+        block_start: usize,
+        selection: Option<Range<usize>>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let ir = &parsed.ir;
+        let text = &ir.text[visible.clone()];
+        let mut highlights: Vec<(Range<usize>, HighlightStyle)> = ir
+            .runs
+            .iter()
+            .filter_map(|run| {
+                let start = run.range.start.max(visible.start);
+                let end = run.range.end.min(visible.end);
+                (start < end).then(|| {
+                    (start - visible.start..end - visible.start, self.theme.highlight(run.style))
+                })
+            })
+            .collect();
+        if let Some(selection) = selection {
+            let start = selection.start.max(visible.start);
+            let end = selection.end.min(visible.end);
+            if start < end {
+                highlights = overlay(
+                    highlights,
+                    start - visible.start..end - visible.start,
+                    HighlightStyle {
+                        background_color: Some(self.theme.selection),
+                        ..Default::default()
+                    },
+                );
+            }
+        }
+        // An empty line still needs a line box to be visible and clickable.
+        let shown = if text.is_empty() { " ".to_owned() } else { text.to_owned() };
+        let styled = StyledText::new(shown).with_highlights(highlights);
+        let layout = styled.layout().clone();
+        let target = TextTarget::Rendered {
+            block_start,
+            visible_base: visible.start,
+            parsed: Arc::clone(parsed),
+        };
+        with_mouse(div().cursor_text().child(styled), layout, target, cx).into_any_element()
+    }
+}
+
+/// Attaches click and drag-select handlers mapping pointer positions in
+/// `layout` to document offsets through `target`.
+fn with_mouse(
+    el: gpui::Div,
+    layout: TextLayout,
+    target: TextTarget,
+    cx: &mut Context<Editor>,
+) -> gpui::Div {
+    let editor: Entity<Editor> = cx.entity();
+    let (down_layout, down_target, down_editor) = (layout.clone(), target.clone(), editor.clone());
+    el.on_mouse_down(MouseButton::Left, move |event: &MouseDownEvent, window, cx| {
+        let (Ok(index) | Err(index)) = down_layout.index_for_position(event.position);
+        let index = index.min(down_layout.len());
+        let offset = down_target.offset(index);
+        down_editor.update(cx, |editor, cx| {
+            editor.mouse_down(offset, event.modifiers.shift, event.click_count, window, cx)
+        });
+        cx.stop_propagation();
+    })
+    .on_mouse_move(move |event: &MouseMoveEvent, _window, cx| {
+        if event.pressed_button != Some(MouseButton::Left) {
+            return;
+        }
+        let (Ok(index) | Err(index)) = layout.index_for_position(event.position);
+        let offset = target.offset(index.min(layout.len()));
+        editor.update(cx, |editor, cx| editor.mouse_drag(offset, cx));
+    })
+}
+
+/// `range ∩ block`, relative to `base`, clamped to `len`.
+fn intersect(
+    range: &Range<usize>,
+    block: &Range<usize>,
+    base: usize,
+    len: usize,
+) -> Option<Range<usize>> {
+    let start = range.start.max(block.start);
+    let end = range.end.min(block.end);
+    (start < end).then(|| (start - base).min(len)..(end - base).min(len)).filter(|r| !r.is_empty())
+}
+
+/// Adds `style` over `range` on top of existing non-overlapping highlights.
+fn overlay(
+    highlights: Vec<(Range<usize>, HighlightStyle)>,
+    range: Range<usize>,
+    style: HighlightStyle,
+) -> Vec<(Range<usize>, HighlightStyle)> {
+    let mut out = Vec::with_capacity(highlights.len() + 2);
+    let mut cursor = range.start;
+    for (r, h) in highlights {
+        if r.end <= range.start || r.start >= range.end {
+            out.push((r, h));
+            continue;
+        }
+        if r.start < range.start {
+            out.push((r.start..range.start, h));
+        }
+        if cursor < r.start.max(range.start) {
+            out.push((cursor..r.start.max(range.start), style));
+        }
+        let inner = r.start.max(range.start)..r.end.min(range.end);
+        out.push((inner.clone(), h.highlight(style)));
+        cursor = inner.end;
+        if r.end > range.end {
+            out.push((range.end..r.end, h));
+        }
+    }
+    if cursor < range.end {
+        out.push((cursor..range.end, style));
+    }
+    out.sort_by_key(|(r, _)| r.start);
+    out
+}

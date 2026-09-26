@@ -19,6 +19,27 @@ use windows as imp;
 use std::io;
 use std::thread::JoinHandle;
 
+/// Monospace font families to try for code, most preferred first. The first
+/// entry ships with the OS on Windows and macOS; Linux has no universal one,
+/// so callers should pick the first installed family.
+pub fn monospace_font_candidates() -> &'static [&'static str] {
+    if cfg!(target_os = "windows") {
+        &["Cascadia Mono", "Consolas", "Courier New"]
+    } else if cfg!(target_os = "macos") {
+        &["SF Mono", "Menlo", "Monaco"]
+    } else {
+        &[
+            "JetBrains Mono",
+            "DejaVu Sans Mono",
+            "Noto Sans Mono",
+            "Liberation Mono",
+            "Ubuntu Mono",
+            "Adwaita Mono",
+            "Cascadia Mono",
+        ]
+    }
+}
+
 /// Outcome of claiming the per-user, per-session application instance.
 pub enum Instance {
     /// This process owns the instance and receives forwarded launches.

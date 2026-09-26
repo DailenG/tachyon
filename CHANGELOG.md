@@ -8,8 +8,14 @@ All notable user-visible changes are recorded here. The format follows
 
 ### Added
 
-- GPUI window showing Markdown as raw text: the built-in sample, files given on the command line
-  (read off the UI thread, CRLF normalized), or the clipboard with `--paste`.
+- Block-swap Markdown editor: the block holding the caret shows and edits its raw Markdown, every
+  other block is rendered (headings, emphasis, code, links, lists, task lists, quotes, tables,
+  rules, math). Files and the clipboard (`--paste`) open in it; files are read and parsed off the
+  UI thread.
+- Editing: arrows, word and line movement, selection (keyboard and mouse), copy/cut/paste,
+  undo/redo, IME composition.
+- Incremental Markdown parsing: keystrokes reparse only the affected blocks; large pastes are
+  parsed in the background.
 - Single-instance handoff: a second launch forwards its files to the running instance and exits
   (named pipe on Windows, Unix socket on Linux/macOS). `-n` / `--new-instance` opts out.
 - `--startup-report` and `cargo xtask bench-startup` for measuring launch-to-first-frame latency

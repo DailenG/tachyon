@@ -12,14 +12,15 @@ follows from that.
 
 ## Crates
 
-Implemented today: `tachyon`, `tachyon-platform`, `tachyon-text`, `tachyon-md`, `tachyon-doc`,
-`xtask`. The others arrive with the phase that needs them ([ROADMAP](ROADMAP.md)); empty placeholder
+Implemented: `tachyon`, `tachyon-platform`, `tachyon-text`, `tachyon-md`, `tachyon-doc`,
+`tachyon-editor`, `xtask`. The theme lives in `tachyon-editor` (`theme.rs`) until themes become
+user-configurable; a separate crate for one compiled-in theme would be ceremony. Empty placeholder
 crates are not allowed.
 
 ```mermaid
 flowchart LR
   text[tachyon-text] --> md[tachyon-md] --> doc[tachyon-doc] --> editor[tachyon-editor] --> bin[tachyon]
-  theme[tachyon-theme] --> editor
+  platform[tachyon-platform] --> editor
   platform[tachyon-platform] --> bin
 ```
 
@@ -31,8 +32,7 @@ flowchart LR
 | `tachyon-text` | exists | **never** | Rope buffer, edit log, grouped undo, offset mapping, UTF-8↔UTF-16, line endings |
 | `tachyon-md` | exists | **never** | `pulldown-cmark` wrapper → owned block IR with source maps |
 | `tachyon-doc` | exists | **never** | Document state, block map, incremental reparse, parse jobs |
-| `tachyon-theme` | Phase 3 | yes | Style tokens → GPUI text styles, built-in theme |
-| `tachyon-editor` | Phase 3 | yes | Editor view, block elements, layout cache, input/IME, scrolling |
+| `tachyon-editor` | exists | yes | Editor view, block rendering, theme, input/IME, selection, clipboard |
 
 GPUI dominates compile time. Keeping it out of the core crates keeps their tests in the seconds
 range and means editing them never recompiles GPUI.
@@ -69,10 +69,14 @@ rope clone, the block list `Arc` and the table `Arc`; it is `Send` and runs anyw
 Blocks keep a `BlockId` across reparses (untouched blocks, and any block that still starts at the
 same offset); the editor gets `Splice`s describing each change to the block list.
 
-**Render state (`tachyon-editor`).** GPUI's variable-height virtualized `list`, spliced when the
-block map changes; a layout cache keyed by block content hash, wrap width and theme revision;
-estimated heights for off-screen blocks; a scroll anchor that pins the cursor's block on screen
-when a swap changes its height.
+**Render state (`tachyon-editor`).** GPUI's variable-height virtualized `list`, spliced from the
+document's `Splice`s; items entering or leaving raw mode are remeasured. Visible blocks are rebuilt
+each frame from their IR (GPUI caches shaped lines), so there is no separate layout cache yet. The
+caret is a byte offset; the *active* block is the top-level block holding it and renders its raw
+source, every other block renders its IR. Hit testing maps a click through the text layout to a
+visible offset and through the block's source map to a document offset. The active block's text
+layout from the last paint drives caret painting, vertical movement and IME candidate placement.
+Selections are drawn as highlight backgrounds, so they span raw and rendered blocks alike.
 
 ## Concurrency
 

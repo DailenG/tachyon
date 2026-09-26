@@ -28,6 +28,7 @@ large_futures = "warn"
 
 [workspace.dependencies]
 tachyon-doc = { path = "crates/tachyon-doc" }
+tachyon-editor = { path = "crates/tachyon-editor" }
 tachyon-platform = { path = "crates/tachyon-platform" }
 tachyon-md = { path = "crates/tachyon-md" }
 tachyon-text = { path = "crates/tachyon-text" }
@@ -42,6 +43,7 @@ lexopt = "0.3"
 pulldown-cmark = { version = "0.13", default-features = false }
 ropey = "1.6"
 unicase = "2.6"
+unicode-segmentation = "1.10"
 windows-sys = "0.61"
 
 # Test and benchmark only.

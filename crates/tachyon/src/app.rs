@@ -2,13 +2,14 @@ use std::path::PathBuf;
 
 use futures::StreamExt as _;
 use gpui::{
-    App, Bounds, KeyBinding, SharedString, TitlebarOptions, WindowBounds, WindowHandle,
+    App, Bounds, Context, KeyBinding, SharedString, TitlebarOptions, WindowBounds, WindowHandle,
     WindowOptions, actions, prelude::*, px, size,
 };
+use tachyon_doc::Document;
+use tachyon_editor::Editor;
 use tachyon_platform::Listener;
 
 use crate::cli::{self, Cli};
-use crate::raw_view::RawView;
 use crate::startup::Startup;
 
 actions!(tachyon, [Quit, CloseWindow]);
@@ -56,7 +57,13 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
             KeyBinding::new("secondary-q", Quit, None),
             KeyBinding::new("secondary-w", CloseWindow, None),
         ]);
+        tachyon_editor::init(cx);
         cx.on_action(|_: &Quit, cx| cx.quit());
+        cx.on_action(|_: &CloseWindow, cx| {
+            if let Some(window) = cx.active_window() {
+                let _ = window.update(cx, |_, window, _| window.remove_window());
+            }
+        });
         cx.on_window_closed(|cx, _| {
             if cx.windows().is_empty() {
                 cx.quit();
@@ -86,7 +93,7 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
     });
 }
 
-fn open_window(source: Source, cx: &mut App) -> Option<WindowHandle<RawView>> {
+fn open_window(source: Source, cx: &mut App) -> Option<WindowHandle<Editor>> {
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
             None,
@@ -99,13 +106,17 @@ fn open_window(source: Source, cx: &mut App) -> Option<WindowHandle<RawView>> {
     };
     let result = cx.open_window(options, move |window, cx| {
         cx.new(|cx| match source {
-            Source::Sample => RawView::new(SAMPLE.into(), window, cx),
+            Source::Sample => Editor::new(SAMPLE, window, cx),
             Source::Clipboard => {
                 let text =
                     cx.read_from_clipboard().and_then(|item| item.text()).unwrap_or_default();
-                RawView::new(text.into(), window, cx)
+                Editor::new(&text, window, cx)
             }
-            Source::File(path) => RawView::load(path, window, cx),
+            Source::File(path) => {
+                let editor = Editor::new("", window, cx);
+                load_file(path, cx);
+                editor
+            }
         })
     });
     match result {
@@ -115,6 +126,24 @@ fn open_window(source: Source, cx: &mut App) -> Option<WindowHandle<RawView>> {
             None
         }
     }
+}
+
+/// Reads and parses the file on the background executor so window creation
+/// never waits on disk I/O or a large parse, then hands the document over.
+fn load_file(path: PathBuf, cx: &mut Context<Editor>) {
+    cx.spawn(async move |editor, cx| {
+        let read_path = path.clone();
+        let doc = cx
+            .background_executor()
+            .spawn(async move {
+                let text = std::fs::read_to_string(&read_path)
+                    .unwrap_or_else(|e| format!("Could not read {}: {e}\n", read_path.display()));
+                Document::new(&text)
+            })
+            .await;
+        editor.update(cx, |editor, cx| editor.set_document(doc, cx))
+    })
+    .detach();
 }
 
 /// Moves launches forwarded by secondary processes from the listener thread

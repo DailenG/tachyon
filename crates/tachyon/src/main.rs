@@ -3,7 +3,6 @@
 
 mod app;
 mod cli;
-mod raw_view;
 mod startup;
 
 use std::process::ExitCode;
