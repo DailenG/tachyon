@@ -28,6 +28,7 @@ criteria: [docs/ROADMAP.md](docs/ROADMAP.md). Decisions: [docs/adr/](docs/adr/).
 cargo xtask ci                     # must pass before you claim a change is done
 cargo run -- --startup-report      # needs a display; prints startup milestones then exits
 cargo xtask bench-startup          # required evidence for any startup-path change
+cargo xtask bench-startup --warm   # same, for launches into a resident instance
 cargo bench -p tachyon-doc         # reparse latency; required evidence for parser/doc changes
 PROPTEST_CASES=1000000 cargo test --release -p tachyon-doc --test incremental
                                    # run before merging any change to segmentation or reparse

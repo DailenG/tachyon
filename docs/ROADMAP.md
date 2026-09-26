@@ -24,6 +24,9 @@ Measured so far (release, 20 runs, `cargo xtask bench-startup`):
 Both miss the 50 ms budget. The runner numbers only show that on Windows platform
 initialization alone can exceed the budget; the gate still needs a real machine.
 
+Warm launches into a resident instance (`--resident`, `cargo xtask bench-startup --warm`) meet it
+on Linux: p50 27.6 ms, p95 29.5 ms (first launch into a windowless instance 180 ms). See ADR 0004.
+
 ## Phase 2: headless core (`tachyon-text`, `tachyon-md`, `tachyon-doc`) (done)
 
 - [x] Buffer: edits, grouped undo, UTF-16 mapping, line-ending round trip, edit log

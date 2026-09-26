@@ -11,7 +11,11 @@ use tachyon_platform::{Instance, Listener};
 
 use crate::cli::{Cli, Command};
 
-const INSTANCE_ID: &str = "tachyon";
+/// Name of the single-instance channel. `TACHYON_INSTANCE_ID` overrides it
+/// so benchmarks and tests do not talk to the user's running instance.
+fn instance_id() -> String {
+    std::env::var("TACHYON_INSTANCE_ID").unwrap_or_else(|_| "tachyon".to_owned())
+}
 
 fn main() -> ExitCode {
     let startup = startup::Startup::begin();
@@ -62,8 +66,13 @@ enum Claim {
 /// Forwards this launch to a running instance if there is one. Any IPC
 /// failure degrades to a standalone process instead of losing the launch.
 fn claim_instance(cli: &Cli) -> Claim {
-    match Instance::acquire(INSTANCE_ID) {
+    match Instance::acquire(&instance_id()) {
         Ok(Instance::Primary(listener)) => Claim::Primary(listener),
+        // A resident launch with nothing to open (login autostart) has
+        // nothing to forward when an instance already runs.
+        Ok(Instance::Secondary(_)) if cli.resident && cli.files.is_empty() && !cli.paste => {
+            Claim::Forwarded
+        }
         Ok(Instance::Secondary(client)) => match cli.forward_args().and_then(|a| client.send(&a)) {
             Ok(()) => Claim::Forwarded,
             Err(e) => {

@@ -63,6 +63,7 @@ process. `tachyon --help` lists all options.
 ```sh
 cargo xtask ci              # fmt, clippy, tests, cargo-deny: what CI requires
 cargo xtask bench-startup   # release build + startup latency vs. the 50 ms budget
+cargo xtask bench-startup --warm   # launches handed to a resident instance
 ```
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a PR. Architecture:
