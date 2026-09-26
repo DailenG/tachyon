@@ -16,9 +16,10 @@ criteria: [docs/ROADMAP.md](docs/ROADMAP.md). Decisions: [docs/adr/](docs/adr/).
 - `crates/tachyon-platform`: OS integration GPUI lacks (single-instance IPC). The only crate besides
   `main.rs` allowed to contain `#[cfg(target_os)]`/`#[cfg(windows)]` code.
 - `crates/tachyon-text`: rope buffer, edit log, undo, UTF-16 mapping. No GPUI dependency, ever.
+- `crates/tachyon-md`: Markdown → blocks with owned render IR. No GPUI dependency, ever.
+- `crates/tachyon-doc`: document state and incremental reparse (`ParseJob`s). No GPUI dependency.
 - `xtask`: `cargo xtask ci` (required checks), `cargo xtask bench-startup` (startup budget).
-- Planned (do not create early; empty crates are not allowed): `tachyon-md`, `tachyon-doc` (no
-  GPUI dependency, ever), `tachyon-theme`, `tachyon-editor`.
+- Planned (do not create early; empty crates are not allowed): `tachyon-theme`, `tachyon-editor`.
 
 ## Commands
 
@@ -26,6 +27,9 @@ criteria: [docs/ROADMAP.md](docs/ROADMAP.md). Decisions: [docs/adr/](docs/adr/).
 cargo xtask ci                     # must pass before you claim a change is done
 cargo run -- --startup-report      # needs a display; prints startup milestones then exits
 cargo xtask bench-startup          # required evidence for any startup-path change
+cargo bench -p tachyon-doc         # reparse latency; required evidence for parser/doc changes
+PROPTEST_CASES=1000000 cargo test --release -p tachyon-doc --test incremental
+                                   # run before merging any change to segmentation or reparse
 cargo clippy --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings
                                    # required after touching Windows code from a non-Windows host
 ```
@@ -39,6 +43,8 @@ cargo clippy --workspace --all-targets --target x86_64-pc-windows-msvc -- -D war
   that must match that commit's workspace. Never bump casually; follow ADR 0001.
 - `unsafe` blocks: one operation each, preceded by `// SAFETY:` explaining why it holds.
 - User input (files, pastes, IPC messages) must not panic the process.
+- Every block must parse identically alone and inside the document; incremental reparse depends on
+  it (ADR 0005). The property tests in `crates/tachyon-doc/tests/incremental.rs` are the arbiter.
 
 ## Working rules
 

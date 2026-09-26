@@ -1,8 +1,10 @@
 # Roadmap
 
-Each phase has exit criteria that must be met, with evidence, before the next one starts.
+Each phase has exit criteria that must be met, with evidence, before the phase is called done. A
+later phase may start early only when it does not depend on the open criterion (Phase 2's core
+crates are needed whichever way the startup gate goes).
 
-## Phase 1: skeleton and startup gate (current)
+## Phase 1: skeleton and startup gate (open: needs reference Windows hardware)
 
 - [x] Workspace, pinned toolchain and GPUI revision, release profile, lints
 - [x] GPUI window showing Markdown as raw text (sample, files, clipboard)
@@ -12,20 +14,35 @@ Each phase has exit criteria that must be met, with evidence, before the next on
 - [ ] **Gate:** p95 cold and warm startup measured on reference Windows hardware, and the
       direct-launch vs resident-mode decision recorded in [ADR 0004](adr/0004-startup-budget-and-gate.md)
 
-Measured so far (release, 20 runs): Linux, Intel UHD 750, Wayland: p50 193 ms, p95 199 ms, of
-which about 180 ms is inside GPUI's `open_window`. Windows: not yet measured.
+Measured so far (release, 20 runs, `cargo xtask bench-startup`):
 
-## Phase 2: headless core (`tachyon-text`, `tachyon-md`, `tachyon-doc`)
+| Machine | p50 | p95 | Breakdown (p50, from `main`) |
+|---|---|---|---|
+| Linux, Intel UHD 750, Wayland | 193 ms | 199 ms | platform 10 ms, window open +180 ms |
+| Windows, GitHub `windows-latest` runner (no GPU; not reference hardware) | 142 ms | 161 ms | platform 60 ms, window open +44 ms, first frame +23 ms; ~16 ms before `main` |
 
-- Buffer: edits, grouped undo, UTF-16 mapping, line-ending round trip, edit log
-- Block segmentation, owned IR with source maps, `RefDefs`, fence-aware pre-segmenter
-- Incremental reparse with the convergence rule; executor-agnostic parse scheduler
-- Property test: incremental parse == full parse for random edit sequences
-- Corpus of real LLM output: fences in lists, nested lists, tables, math, output truncated inside
-  a fence, CRLF input
-- Criterion benches: keystroke reparse on 1 MB, full parse of 1 MB and 10 MB
+Both miss the 50 ms budget. The runner numbers only show that on Windows platform
+initialization alone can exceed the budget; the gate still needs a real machine.
+
+## Phase 2: headless core (`tachyon-text`, `tachyon-md`, `tachyon-doc`) (done)
+
+- [x] Buffer: edits, grouped undo, UTF-16 mapping, line-ending round trip, edit log
+- [x] Block segmentation, owned IR with source maps, `DefTable` (links and footnotes),
+      fence-aware pre-segmenter
+- [x] Incremental reparse with the convergence rule; executor-agnostic `ParseJob`s
+      ([ADR 0005](adr/0005-incremental-reparse-by-block-windows.md))
+- [x] Property tests: incremental parse == full parse for random edits, undo, interleaved jobs
+      and streamed input (run with `PROPTEST_CASES=1000000` before changing the segmenter)
+- [x] LLM-style corpus: fences in lists, nested lists, tables, alerts, references, footnotes, math,
+      HTML, output truncated inside a fence, CRLF. Hand-written; extend it with captured model
+      output when a rendering bug shows up.
+- [x] Latency bench: `cargo bench -p tachyon-doc`
 
 **Exit:** keystroke reparse p99 < 0.5 ms on a 1 MB document; every corpus file matches a full parse.
+
+Measured (Linux, release): keystroke-to-clean p99 45 µs on 1 MiB (paragraph, code block and
+end-of-document typing); full parse 20 ms for 1 MiB, 220 ms for 10 MiB; unclosed fence running to
+the end of 512 KiB 7 ms. All corpus tests pass.
 
 ## Phase 3: block-swap editor (`tachyon-editor`, `tachyon-theme`)
 

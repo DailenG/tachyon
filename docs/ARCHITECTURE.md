@@ -12,8 +12,9 @@ follows from that.
 
 ## Crates
 
-Implemented today: `tachyon`, `tachyon-platform`, `tachyon-text`, `xtask`. The others arrive with the
-phase that needs them ([ROADMAP](ROADMAP.md)); empty placeholder crates are not allowed.
+Implemented today: `tachyon`, `tachyon-platform`, `tachyon-text`, `tachyon-md`, `tachyon-doc`,
+`xtask`. The others arrive with the phase that needs them ([ROADMAP](ROADMAP.md)); empty placeholder
+crates are not allowed.
 
 ```mermaid
 flowchart LR
@@ -28,8 +29,8 @@ flowchart LR
 | `tachyon-platform` | exists | no | OS integration GPUI lacks: single-instance IPC (later: hotkey, backdrop) |
 | `xtask` | exists | no | `ci`, `bench-startup` |
 | `tachyon-text` | exists | **never** | Rope buffer, edit log, grouped undo, offset mapping, UTF-8↔UTF-16, line endings |
-| `tachyon-md` | Phase 2 | **never** | `pulldown-cmark` wrapper → owned block IR with source maps |
-| `tachyon-doc` | Phase 2 | **never** | Document state, block map, incremental reparse, parse scheduling |
+| `tachyon-md` | exists | **never** | `pulldown-cmark` wrapper → owned block IR with source maps |
+| `tachyon-doc` | exists | **never** | Document state, block map, incremental reparse, parse jobs |
 | `tachyon-theme` | Phase 3 | yes | Style tokens → GPUI text styles, built-in theme |
 | `tachyon-editor` | Phase 3 | yes | Editor view, block elements, layout cache, input/IME, scrolling |
 
@@ -50,16 +51,23 @@ conversion goes byte → char → UTF-16 in O(log n).
 
 **Block IR (`tachyon-md`).** `pulldown-cmark` events borrow the source `&str`, so each parse window
 is copied out of the rope, parsed with `into_offset_iter()`, and converted to an owned IR with
-**block-relative** offsets: visible text, inline style runs, and a source map pairing visible
+**block-relative** offsets: visible text with syntax removed, one `LineInfo` per visible line (kind,
+list depth and marker, quote depth), inline style runs, links, and a source map pairing visible
 ranges with source ranges (click → source offset; cursor placement on swap). Block-relative
 offsets mean an edit only changes the edited block's length; absolute positions are prefix sums.
-Swap unit: leaf block (paragraph, list item, fence, table). Resync unit: top-level block. Link
-reference definitions are global: a `RefDefs` table resolves them through
-`Parser::new_with_broken_link_callback`, and changing a label invalidates the blocks that use it.
+Swap unit: leaf block (paragraph, list item, fence, table). Resync unit: top-level block.
+Link reference definitions and footnotes are document-wide: a `DefTable` built from all blocks
+resolves them (reference links through the broken-link callback, footnotes through a prefix of
+definitions), and changing a definition invalidates the blocks that depend on it. The rules that
+make every block parse identically alone and in context are in
+[ADR 0005](adr/0005-incremental-reparse-by-block-windows.md).
 
-**Document (`tachyon-doc`).** Buffer + `Vec<Block>` with lazy prefix sums (a sum tree only if
-profiling asks for it) + dirty ranges + a cancellation generation. `DocSnapshot` (rope clone,
-version, `Arc<[Block]>`) is what crosses threads.
+**Document (`tachyon-doc`).** Buffer + `Arc<Vec<Block>>` with prefix sums (a sum tree only if
+profiling asks for it) + sorted dirty ranges + at most one outstanding `ParseJob`. A job carries a
+rope clone, the block list `Arc` and the table `Arc`; it is `Send` and runs anywhere. Its
+`ParseResult` is applied back on the owning thread, or discarded if an edit touched its window.
+Blocks keep a `BlockId` across reparses (untouched blocks, and any block that still starts at the
+same offset); the editor gets `Splice`s describing each change to the block list.
 
 **Render state (`tachyon-editor`).** GPUI's variable-height virtualized `list`, spliced when the
 block map changes; a layout cache keyed by block content hash, wrap width and theme revision;
@@ -73,28 +81,27 @@ flowchart LR
   K[Keystroke / IME] --> E[Main: rope edit]
   E --> A[Reshape active block's raw lines]
   A --> F[Frame]
-  E --> D{dirty window ≤ 32 KiB?}
-  D -- yes --> S[Main: synchronous local reparse]
-  D -- no --> B[Background: chunked parse of snapshot]
-  P[Paste / load] --> R[Main: rope insert + memchr pre-segment → pending blocks]
+  E --> D{job.is_small? ≤ 32 KiB}
+  D -- yes --> S[Main: run job inline]
+  D -- no --> B[Background: run job on snapshot]
+  P[Paste / load] --> R[Main: rope insert + fence-aware pre-segment → unparsed blocks]
   R --> B
-  B -->|blocks + base version| M[Main: rebase through edit log, splice]
+  B -->|ParseResult| M[Main: apply unless the window was touched, splice]
   S --> M
   M --> F
 ```
 
-- **Reparse window.** Start from the dirty top-level blocks and parse. The window has converged
-  when its last produced block ends at the window edge, is in a clean exit state (not inside a fence
-  or HTML block), and lines up with an old block boundary. Otherwise add the next block and repeat.
-  An unclosed fence grows the window to EOF, so that case goes to the background.
-- **Paste.** The rope insert and a fence-aware line scan happen in the same frame; the pasted text
-  appears immediately as pending plain blocks, and only visible ones are shaped. The background then
-  parses ~64 KiB chunks, viewport first, and streams results back. Stale results are rebased through
-  the edit log; blocks that overlap newer edits are marked dirty again.
-- **Executors.** GPUI's background and foreground executors only; no tokio. Dropping a task cancels
-  it; long jobs also check a generation counter between chunks.
-- **Correctness invariant.** Property test: after any sequence of edits, incremental parse output
-  equals a full parse of the final text.
+- **Reparse window.** One block of look-behind, the dirty blocks, one block of look-ahead. The
+  window has converged when its last block equals the old block at that place (length, source hash,
+  kind) or it reaches the end of the text; otherwise it grows geometrically. An unclosed fence grows
+  it to the end, which is why large jobs go to the background.
+- **Paste.** The rope insert and a fence-aware line scan happen in the same frame; an insert over
+  64 KiB appears immediately as unparsed plain blocks (only visible ones are shaped). A background
+  job then parses the window. Streaming chunked results back viewport-first is Phase 3 work.
+- **Executors.** GPUI's background and foreground executors only; no tokio. `Document` is
+  executor-agnostic: the caller decides where each `ParseJob` runs.
+- **Correctness invariant.** Property and corpus tests: after any sequence of edits, undo, streamed
+  input and interleaved jobs, a clean document equals `tachyon_md::parse_document` of its text.
 
 ## Platform layer
 

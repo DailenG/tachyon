@@ -14,10 +14,12 @@ Measured with `cargo xtask bench-startup` (release build, 20 runs):
 | Platform | Hardware | p50 | p95 | Where the time goes |
 |---|---|---|---|---|
 | Linux, Wayland (Hyprland) | Intel UHD 750 | 193 ms | 199 ms | ~180 ms inside GPUI `open_window`; platform init ~10 ms |
+| Windows | GitHub `windows-latest` runner, no GPU (informational) | 142 ms | 161 ms | platform init ~60 ms, window open ~44 ms, first frame ~23 ms, ~16 ms before `main` |
 | Windows | reference machine | not measured | not measured | |
 
-The Linux result misses the budget by about 4×. The likely cause is GPU device creation through
-wgpu/Vulkan, but that is not profiled yet.
+Both measured platforms miss the budget by 3–4×. On Linux the likely cause is GPU device creation
+through wgpu/Vulkan; on the Windows runner GPUI's platform initialization alone takes longer than
+the whole budget. Neither is profiled yet.
 
 ## Decision (proposed)
 

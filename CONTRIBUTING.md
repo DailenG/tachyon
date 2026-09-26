@@ -43,8 +43,11 @@ cargo clippy --workspace --all-targets --target x86_64-pc-windows-msvc -- -D war
 
 These are enforced in review; [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) explains why.
 
-- **GPUI stays at the edge.** Core crates (`tachyon-text`, `tachyon-md`, `tachyon-doc` once they
-  exist) must not depend on `gpui`. They are tested headless and compile in seconds.
+- **GPUI stays at the edge.** Core crates (`tachyon-text`, `tachyon-md`, `tachyon-doc`) must not
+  depend on `gpui`. They are tested headless and compile in seconds.
+- **Incremental equals full.** Changes to segmentation or reparsing must keep the property tests in
+  `crates/tachyon-doc/tests/incremental.rs` green at `PROPTEST_CASES=1000000`, and include
+  `cargo bench -p tachyon-doc` numbers ([ADR 0005](docs/adr/0005-incremental-reparse-by-block-windows.md)).
 - **Platform code is quarantined.** `#[cfg(target_os = …)]` / `#[cfg(windows)]` only in
   `tachyon-platform` and `crates/tachyon/src/main.rs`. Each backend exposes the same functions;
   no trait objects for OS dispatch.

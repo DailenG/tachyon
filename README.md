@@ -14,15 +14,16 @@ start as fast as a scratchpad and edit like Typora: one pane, inline WYSIWYG, no
   shows rendered rich text.
 - **Platforms:** Windows first, then Linux and macOS.
 
-> **Status: Phase 1 (skeleton and startup gate).** The window shows Markdown as raw text; the
-> block-swap editor is not built yet. See [ROADMAP](docs/ROADMAP.md).
+> **Status:** the headless core (buffer, incremental Markdown parser, document model) is done; the
+> window still shows Markdown as raw text until the block-swap editor lands in Phase 3. The startup
+> gate is open. See [ROADMAP](docs/ROADMAP.md).
 
 ## Performance budgets
 
 | Budget | Target | Measured by |
 |---|---|---|
 | Launch → first frame | p95 < 50 ms | `cargo xtask bench-startup` |
-| Keystroke reparse, 1 MB document | p99 < 0.5 ms | criterion benches (Phase 2) |
+| Keystroke reparse, 1 MB document | p99 < 0.5 ms | `cargo bench -p tachyon-doc` |
 | Paste of 5 MB | no frame over 16.6 ms | frame-time overlay (Phase 3) |
 
 Budgets are requirements, not goals: a change that regresses one needs a recorded decision
