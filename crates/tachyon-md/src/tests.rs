@@ -196,3 +196,16 @@ fn footnotes_and_html() {
     assert_eq!(b[0].ir.text, "Claim[1].");
     assert_eq!(b[2].ir.text, "<div>\n raw\n</div>");
 }
+
+#[test]
+fn unparsed_blocks_show_source_lines_verbatim() {
+    let src = "# not\n\n**parsed**\n";
+    let b = unparsed(src);
+    assert_eq!((b.kind.clone(), b.len), (BlockKind::Unparsed, src.len()));
+    assert_eq!(b.ir.text, "# not\n\n**parsed**");
+    assert_eq!(b.ir.lines.len(), 3);
+    assert_eq!(
+        b.ir.visible_to_source(b.ir.text.find("parsed").unwrap()),
+        src.find("parsed").unwrap()
+    );
+}

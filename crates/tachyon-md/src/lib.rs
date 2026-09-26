@@ -71,6 +71,9 @@ pub enum BlockKind {
     LinkDefinition,
     /// Whitespace-only source.
     Blank,
+    /// Source not parsed yet (large insertions awaiting a background parse),
+    /// shown as plain lines.
+    Unparsed,
 }
 
 /// One top-level block of a parse window.
@@ -184,6 +187,39 @@ pub fn parse(src: &str, defs: &DefTable) -> Vec<ParsedBlock> {
     }
 
     tile(src, pending)
+}
+
+/// A provisional block for `src` that shows it as plain text, one visible
+/// line per source line, until the real parse replaces it.
+pub fn unparsed(src: &str) -> ParsedBlock {
+    let mut ir = BlockIr::default();
+    let mut offset = 0;
+    for line in src.split_inclusive('\n') {
+        let content = line.strip_suffix('\n').unwrap_or(line);
+        if !ir.lines.is_empty() {
+            ir.text.push('\n');
+        }
+        let start = ir.text.len();
+        ir.lines.push(LineInfo { start, kind: LineKind::Text, indent: 0, quote: 0, marker: None });
+        ir.text.push_str(content);
+        if !content.is_empty() {
+            ir.map.push(SourceSpan {
+                visible: start..start + content.len(),
+                source: offset..offset + content.len(),
+                verbatim: true,
+            });
+        }
+        offset += line.len();
+    }
+    ParsedBlock {
+        kind: BlockKind::Unparsed,
+        len: src.len(),
+        content: 0..src.len(),
+        ir,
+        defs: Vec::new(),
+        refs: Vec::new(),
+        source_hash: hash(src),
+    }
 }
 
 /// A block before tiling: content range still absolute in the window.
