@@ -56,8 +56,8 @@ the end of 512 KiB 7 ms. All corpus tests pass.
       block); other blocks swap whole
 - [x] Arrow keys, words, home/end, document start/end; selections across blocks; copy/cut/paste;
       undo/redo with typing-run grouping
-- [x] Clicks and drag selection through rendered blocks via source maps (implemented; not yet
-      covered by an automated test)
+- [x] Clicks, double-click word selection and drag selection through rendered blocks via source
+      maps (covered by `gpui::test` mouse tests)
 - [x] Scroll anchoring: the list scrolls by item offset, so blocks changing height above the
       viewport do not move it; the view follows the caret's line (not its block) and edits inside
       the top block keep their pixel offset
