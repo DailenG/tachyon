@@ -58,6 +58,8 @@ allow-git = [
     # Forks Zed patches into its graph; mirrored in our [patch.crates-io].
     "https://github.com/zed-industries/calloop",
     "https://github.com/smol-rs/async-task.git",
+    # GPUI's `test-support` feature (editor tests only).
+    "https://github.com/proptest-rs/proptest",
 ]
 
 [sources.allow-org]

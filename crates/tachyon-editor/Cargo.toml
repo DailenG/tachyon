@@ -1,6 +1,6 @@
 [package]
-name = "tachyon"
-description = "GPU-accelerated native Markdown editor"
+name = "tachyon-editor"
+description = "Block-swap Markdown editor view on GPUI"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -13,10 +13,13 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
-futures.workspace = true
 gpui.workspace = true
-gpui_platform.workspace = true
-lexopt.workspace = true
+ropey.workspace = true
 tachyon-doc.workspace = true
-tachyon-editor.workspace = true
+tachyon-md.workspace = true
 tachyon-platform.workspace = true
+tachyon-text.workspace = true
+unicode-segmentation.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }

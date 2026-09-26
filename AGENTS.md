@@ -19,7 +19,8 @@ criteria: [docs/ROADMAP.md](docs/ROADMAP.md). Decisions: [docs/adr/](docs/adr/).
 - `crates/tachyon-md`: Markdown → blocks with owned render IR. No GPUI dependency, ever.
 - `crates/tachyon-doc`: document state and incremental reparse (`ParseJob`s). No GPUI dependency.
 - `xtask`: `cargo xtask ci` (required checks), `cargo xtask bench-startup` (startup budget).
-- Planned (do not create early; empty crates are not allowed): `tachyon-theme`, `tachyon-editor`.
+- `crates/tachyon-editor`: GPUI editor view (block swap, rendering, theme, input/IME). Behaviour
+  tests run headless with `gpui::test`.
 
 ## Commands
 

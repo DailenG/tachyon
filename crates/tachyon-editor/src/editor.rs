@@ -1,0 +1,910 @@
+use std::io::{self, Write};
+use std::ops::Range;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use gpui::{
+    App, Bounds, ClipboardItem, Context, EntityInputHandler, FocusHandle, Focusable, KeyBinding,
+    ListAlignment, ListState, Pixels, Point, PromptLevel, Task, TextLayout, UTF16Selection, Window,
+    actions, point, px,
+};
+use tachyon_doc::{BlockId, Document};
+use tachyon_md::ParsedBlock;
+
+use crate::movement;
+use crate::theme::Theme;
+
+actions!(
+    editor,
+    [
+        Backspace,
+        Delete,
+        DeleteWordLeft,
+        DeleteWordRight,
+        Left,
+        Right,
+        Up,
+        Down,
+        WordLeft,
+        WordRight,
+        Home,
+        End,
+        DocumentStart,
+        DocumentEnd,
+        SelectLeft,
+        SelectRight,
+        SelectUp,
+        SelectDown,
+        SelectWordLeft,
+        SelectWordRight,
+        SelectHome,
+        SelectEnd,
+        SelectAll,
+        Newline,
+        Tab,
+        Copy,
+        Cut,
+        Paste,
+        Undo,
+        Redo,
+        Save,
+        SaveAs,
+        CloseWindow,
+    ]
+);
+
+/// Key context the bindings below apply in.
+pub const KEY_CONTEXT: &str = "Editor";
+
+/// Default key bindings. `secondary` is Cmd on macOS and Ctrl elsewhere.
+pub fn key_bindings() -> Vec<KeyBinding> {
+    let c = Some(KEY_CONTEXT);
+    vec![
+        KeyBinding::new("backspace", Backspace, c),
+        KeyBinding::new("shift-backspace", Backspace, c),
+        KeyBinding::new("delete", Delete, c),
+        KeyBinding::new("ctrl-backspace", DeleteWordLeft, c),
+        KeyBinding::new("alt-backspace", DeleteWordLeft, c),
+        KeyBinding::new("ctrl-delete", DeleteWordRight, c),
+        KeyBinding::new("alt-delete", DeleteWordRight, c),
+        KeyBinding::new("left", Left, c),
+        KeyBinding::new("right", Right, c),
+        KeyBinding::new("up", Up, c),
+        KeyBinding::new("down", Down, c),
+        KeyBinding::new("ctrl-left", WordLeft, c),
+        KeyBinding::new("alt-left", WordLeft, c),
+        KeyBinding::new("ctrl-right", WordRight, c),
+        KeyBinding::new("alt-right", WordRight, c),
+        KeyBinding::new("home", Home, c),
+        KeyBinding::new("cmd-left", Home, c),
+        KeyBinding::new("end", End, c),
+        KeyBinding::new("cmd-right", End, c),
+        KeyBinding::new("ctrl-home", DocumentStart, c),
+        KeyBinding::new("cmd-up", DocumentStart, c),
+        KeyBinding::new("ctrl-end", DocumentEnd, c),
+        KeyBinding::new("cmd-down", DocumentEnd, c),
+        KeyBinding::new("shift-left", SelectLeft, c),
+        KeyBinding::new("shift-right", SelectRight, c),
+        KeyBinding::new("shift-up", SelectUp, c),
+        KeyBinding::new("shift-down", SelectDown, c),
+        KeyBinding::new("ctrl-shift-left", SelectWordLeft, c),
+        KeyBinding::new("alt-shift-left", SelectWordLeft, c),
+        KeyBinding::new("ctrl-shift-right", SelectWordRight, c),
+        KeyBinding::new("alt-shift-right", SelectWordRight, c),
+        KeyBinding::new("shift-home", SelectHome, c),
+        KeyBinding::new("shift-end", SelectEnd, c),
+        KeyBinding::new("secondary-a", SelectAll, c),
+        KeyBinding::new("enter", Newline, c),
+        KeyBinding::new("shift-enter", Newline, c),
+        KeyBinding::new("tab", Tab, c),
+        KeyBinding::new("secondary-c", Copy, c),
+        KeyBinding::new("secondary-x", Cut, c),
+        KeyBinding::new("secondary-v", Paste, c),
+        KeyBinding::new("secondary-z", Undo, c),
+        KeyBinding::new("secondary-shift-z", Redo, c),
+        KeyBinding::new("ctrl-y", Redo, c),
+        KeyBinding::new("secondary-s", Save, c),
+        KeyBinding::new("secondary-shift-s", SaveAs, c),
+        KeyBinding::new("secondary-w", CloseWindow, c),
+    ]
+}
+
+/// Typing pauses longer than this start a new undo group.
+const UNDO_GROUP_PAUSE: Duration = Duration::from_millis(1000);
+
+/// Maps an index into a laid-out piece of text to a document offset.
+#[derive(Clone)]
+pub(crate) enum TextTarget {
+    /// Raw block source: `base + index`.
+    Raw { base: usize },
+    /// Rendered text: the index is a visible offset from `visible_base` in
+    /// the block's IR, mapped back to source through its source map.
+    Rendered { block_start: usize, visible_base: usize, parsed: Arc<ParsedBlock> },
+}
+
+impl TextTarget {
+    pub(crate) fn offset(&self, index: usize) -> usize {
+        match self {
+            TextTarget::Raw { base } => base + index,
+            TextTarget::Rendered { block_start, visible_base, parsed } => {
+                block_start + parsed.ir.visible_to_source(visible_base + index)
+            }
+        }
+    }
+}
+
+pub struct Editor {
+    pub(crate) doc: Document,
+    pub(crate) selection: Range<usize>,
+    pub(crate) reversed: bool,
+    pub(crate) marked: Option<Range<usize>>,
+    goal_x: Option<Pixels>,
+    pub(crate) list: ListState,
+    pub(crate) focus: FocusHandle,
+    pub(crate) theme: Theme,
+    active: Option<BlockId>,
+    /// Layout of the active block's raw text as last painted, with the
+    /// document offset of its first byte.
+    pub(crate) active_layout: Option<(TextLayout, usize)>,
+    parse_task: Option<Task<()>>,
+    last_edit: Option<Instant>,
+    /// The cursor moved without typing since the last edit.
+    moved_since_edit: bool,
+    pub(crate) selecting: bool,
+    file: Option<PathBuf>,
+    /// Buffer version last written to (or loaded from) `file`.
+    saved_version: u64,
+    /// Window title last set, to avoid resetting it every frame.
+    shown_title: Option<String>,
+}
+
+impl Editor {
+    pub fn new(text: &str, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        Self::with_document(Document::new(text), window, cx)
+    }
+
+    /// Takes a document parsed elsewhere (e.g. on a background thread).
+    pub fn with_document(doc: Document, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let focus = cx.focus_handle();
+        window.focus(&focus, cx);
+        let editor = cx.entity().downgrade();
+        window.on_window_should_close(cx, move |window, cx| {
+            editor.update(cx, |editor, cx| editor.should_close(window, cx)).unwrap_or(true)
+        });
+        cx.on_next_frame(window, |editor, window, cx| editor.resolve_code_font(window, cx));
+        let list = ListState::new(doc.blocks().len(), ListAlignment::Top, px(1000.));
+        let mut editor = Editor {
+            doc,
+            selection: 0..0,
+            reversed: false,
+            marked: None,
+            goal_x: None,
+            list,
+            focus,
+            theme: Theme::dark(),
+            active: None,
+            active_layout: None,
+            parse_task: None,
+            last_edit: None,
+            moved_since_edit: false,
+            selecting: false,
+            file: None,
+            saved_version: 0,
+            shown_title: None,
+        };
+        editor.doc.take_splices();
+        editor.update_active();
+        editor.reparse(cx);
+        editor
+    }
+
+    /// Replaces the whole document (file load finished, new paste).
+    pub fn set_document(&mut self, doc: Document, cx: &mut Context<Self>) {
+        self.saved_version = doc.buffer().version();
+        self.doc = doc;
+        self.doc.take_splices();
+        self.selection = 0..0;
+        self.reversed = false;
+        self.marked = None;
+        self.active = None;
+        self.active_layout = None;
+        self.parse_task = None;
+        self.list.reset(self.doc.blocks().len());
+        self.update_active();
+        self.reparse(cx);
+        cx.notify();
+    }
+
+    pub fn document(&self) -> &Document {
+        &self.doc
+    }
+
+    /// Associates the editor with a file: saves go there and the current
+    /// text counts as saved.
+    pub fn set_file(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        self.file = Some(path);
+        self.saved_version = self.doc.buffer().version();
+        cx.notify();
+    }
+
+    pub fn file(&self) -> Option<&Path> {
+        self.file.as_deref()
+    }
+
+    /// Edited since the last save or load.
+    pub fn is_modified(&self) -> bool {
+        self.doc.buffer().version() != self.saved_version
+    }
+
+    /// Window title: file name (or "Tachyon" for a scratch buffer), with a
+    /// leading dot while there are unsaved changes.
+    pub fn title(&self) -> String {
+        let name = self
+            .file
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .map(|n| format!("{} - Tachyon", n.to_string_lossy()))
+            .unwrap_or_else(|| "Tachyon".to_owned());
+        if self.is_modified() { format!("• {name}") } else { name }
+    }
+
+    pub(crate) fn sync_title(&mut self, window: &mut Window) {
+        let title = self.title();
+        if self.shown_title.as_ref() != Some(&title) {
+            window.set_window_title(&title);
+            window.set_window_edited(self.is_modified());
+            self.shown_title = Some(title);
+        }
+    }
+
+    /// Unsaved changes: ask first. Returns whether the window may close now.
+    fn should_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if !self.is_modified() {
+            return true;
+        }
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            "Save changes before closing?",
+            Some("Unsaved changes will be lost."),
+            &["Save", "Don't Save", "Cancel"],
+            cx,
+        );
+        cx.spawn_in(window, async move |this, cx| {
+            let choice = answer.await.ok();
+            let _ = this.update_in(cx, |editor, window, cx| match choice {
+                Some(0) => editor.save_then(window, cx, |window, _| window.remove_window()),
+                Some(1) => window.remove_window(),
+                _ => {}
+            });
+        })
+        .detach();
+        false
+    }
+
+    pub fn text(&self) -> String {
+        self.doc.buffer().text()
+    }
+
+    pub fn selection(&self) -> Range<usize> {
+        self.selection.clone()
+    }
+
+    /// The caret: the moving end of the selection.
+    pub fn head(&self) -> usize {
+        if self.reversed { self.selection.start } else { self.selection.end }
+    }
+
+    fn tail(&self) -> usize {
+        if self.reversed { self.selection.end } else { self.selection.start }
+    }
+
+    /// Index of the block shown raw (the one holding the caret).
+    pub fn active_block(&self) -> Option<usize> {
+        self.doc.block_at(self.head())
+    }
+
+    /// Picks the first installed monospace family once the window exists,
+    /// off the startup path.
+    fn resolve_code_font(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let installed = window.text_system().all_font_names();
+        if let Some(family) = tachyon_platform::monospace_font_candidates()
+            .iter()
+            .find(|family| installed.iter().any(|name| name == *family))
+            && self.theme.code_font != *family
+        {
+            self.theme.code_font = (*family).into();
+            self.list.remeasure();
+            cx.notify();
+        }
+    }
+
+    // ---- cursor ---------------------------------------------------------
+
+    pub(crate) fn move_to(&mut self, offset: usize, select: bool, cx: &mut Context<Self>) {
+        let offset = offset.min(self.doc.len());
+        if select {
+            let tail = self.tail();
+            self.reversed = offset < tail;
+            self.selection = offset.min(tail)..offset.max(tail);
+        } else {
+            self.selection = offset..offset;
+            self.reversed = false;
+        }
+        self.marked = None;
+        self.moved_since_edit = true;
+        self.update_active();
+        self.reveal_cursor();
+        cx.notify();
+    }
+
+    fn move_by(
+        &mut self,
+        select: bool,
+        cx: &mut Context<Self>,
+        f: fn(&ropey::Rope, usize) -> usize,
+    ) {
+        self.goal_x = None;
+        let head = self.head();
+        let target = if !select && !self.selection.is_empty() {
+            // Collapse a selection towards the direction of motion.
+            let moved = f(self.doc.buffer().rope(), head);
+            if moved < head { self.selection.start } else { self.selection.end }
+        } else {
+            f(self.doc.buffer().rope(), head)
+        };
+        self.move_to(target, select, cx);
+    }
+
+    fn vertical(&mut self, lines: isize, select: bool, cx: &mut Context<Self>) {
+        let head = self.head();
+        if let Some((layout, base)) = self.active_layout.clone()
+            && head >= base
+            && head - base <= layout.len()
+            && let Some(position) = layout.position_for_index(head - base)
+        {
+            let line_height = layout.line_height();
+            let x = self.goal_x.unwrap_or(position.x);
+            let target = point(x, position.y + line_height * (lines as f32) + line_height / 2.);
+            self.goal_x = Some(x);
+            let bounds = layout.bounds();
+            if target.y >= bounds.top() && target.y < bounds.bottom() {
+                let (Ok(index) | Err(index)) = layout.index_for_position(target);
+                return self.move_to(base + index, select, cx);
+            }
+        }
+        // Leaving the laid-out block: continue by source lines.
+        let target = movement::vertical(self.doc.buffer().rope(), head, lines);
+        self.move_to(target, select, cx);
+    }
+
+    fn update_active(&mut self) {
+        let index = self.active_block();
+        let id = index.map(|i| self.doc.blocks()[i].id());
+        if id == self.active {
+            return;
+        }
+        // Both the block leaving and the block entering raw mode change height.
+        if let Some(old) = self.active
+            && let Some(old_index) = self.doc.blocks().iter().position(|b| b.id() == old)
+        {
+            self.list.remeasure_items(old_index..old_index + 1);
+        }
+        if let Some(index) = index {
+            self.list.remeasure_items(index..index + 1);
+        }
+        self.active = id;
+        self.active_layout = None;
+    }
+
+    fn reveal_cursor(&self) {
+        if let Some(index) = self.active_block() {
+            self.list.scroll_to_reveal_item(index);
+        }
+    }
+
+    // ---- editing --------------------------------------------------------
+
+    /// Replaces `range` with `text` and puts the caret after it.
+    pub(crate) fn replace(&mut self, range: Range<usize>, text: &str, cx: &mut Context<Self>) {
+        // Undo groups: typing runs group together; navigation, pauses, line
+        // breaks and replacing a selection start new ones. An IME
+        // composition (replacing its own marked text) stays one group.
+        let now = Instant::now();
+        let paused = self.last_edit.is_none_or(|t| now - t > UNDO_GROUP_PAUSE);
+        let composing = self.marked.as_ref() == Some(&range);
+        let replaces_selection = range.len() > 1 && !composing;
+        if self.moved_since_edit || paused || text.contains('\n') || replaces_selection {
+            self.doc.seal_undo_group();
+        }
+        let Ok(edit) = self.doc.edit(range, text) else { return };
+        if text.contains('\n') {
+            self.doc.seal_undo_group();
+        }
+        self.last_edit = Some(now);
+        self.moved_since_edit = false;
+        let caret = edit.new_range().end;
+        self.selection = caret..caret;
+        self.reversed = false;
+        self.marked = None;
+        self.after_edit(cx);
+    }
+
+    fn after_edit(&mut self, cx: &mut Context<Self>) {
+        self.goal_x = None;
+        self.reparse(cx);
+        self.update_active();
+        self.reveal_cursor();
+        cx.notify();
+    }
+
+    /// Runs pending parse jobs: small ones inline, a large one on the
+    /// background executor (one at a time; it continues when it lands).
+    fn reparse(&mut self, cx: &mut Context<Self>) {
+        while self.parse_task.is_none() {
+            let Some(job) = self.doc.parse_job() else { break };
+            if job.is_small() {
+                let result = job.run();
+                self.doc.apply(result);
+                continue;
+            }
+            self.parse_task = Some(cx.spawn(async move |this, cx| {
+                let result = cx.background_executor().spawn(async move { job.run() }).await;
+                let _ = this.update(cx, |editor, cx| {
+                    editor.parse_task = None;
+                    editor.doc.apply(result);
+                    editor.reparse(cx);
+                    editor.update_active();
+                    cx.notify();
+                });
+            }));
+        }
+        for splice in self.doc.take_splices() {
+            self.list.splice(splice.old, splice.new_len);
+        }
+    }
+
+    fn delete_towards(&mut self, cx: &mut Context<Self>, f: fn(&ropey::Rope, usize) -> usize) {
+        let range = if self.selection.is_empty() {
+            let head = self.head();
+            let other = f(self.doc.buffer().rope(), head);
+            head.min(other)..head.max(other)
+        } else {
+            self.selection.clone()
+        };
+        if !range.is_empty() {
+            self.replace(range, "", cx);
+        }
+    }
+
+    fn selected_text(&self) -> String {
+        self.doc.buffer().rope().byte_slice(self.selection.clone()).to_string()
+    }
+
+    pub(crate) fn mouse_down(
+        &mut self,
+        offset: usize,
+        extend: bool,
+        click_count: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        window.focus(&self.focus, cx);
+        self.goal_x = None;
+        if click_count >= 2 && !extend {
+            let rope = self.doc.buffer().rope();
+            let start = movement::prev_word(rope, movement::next_grapheme(rope, offset));
+            let end = movement::next_word(rope, start);
+            self.move_to(start, false, cx);
+            self.move_to(end, true, cx);
+        } else {
+            self.move_to(offset, extend, cx);
+        }
+        self.selecting = true;
+    }
+
+    pub(crate) fn mouse_drag(&mut self, offset: usize, cx: &mut Context<Self>) {
+        if self.selecting {
+            self.move_to(offset, true, cx);
+        }
+    }
+
+    // ---- actions --------------------------------------------------------
+
+    pub(crate) fn backspace(&mut self, _: &Backspace, _: &mut Window, cx: &mut Context<Self>) {
+        self.delete_towards(cx, movement::prev_grapheme);
+    }
+    pub(crate) fn delete(&mut self, _: &Delete, _: &mut Window, cx: &mut Context<Self>) {
+        self.delete_towards(cx, movement::next_grapheme);
+    }
+    pub(crate) fn delete_word_left(
+        &mut self,
+        _: &DeleteWordLeft,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.delete_towards(cx, movement::prev_word);
+    }
+    pub(crate) fn delete_word_right(
+        &mut self,
+        _: &DeleteWordRight,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.delete_towards(cx, movement::next_word);
+    }
+    pub(crate) fn left(&mut self, _: &Left, _: &mut Window, cx: &mut Context<Self>) {
+        self.move_by(false, cx, movement::prev_grapheme);
+    }
+    pub(crate) fn right(&mut self, _: &Right, _: &mut Window, cx: &mut Context<Self>) {
+        self.move_by(false, cx, movement::next_grapheme);
+    }
+    pub(crate) fn up(&mut self, _: &Up, _: &mut Window, cx: &mut Context<Self>) {
+        self.vertical(-1, false, cx);
+    }
+    pub(crate) fn down(&mut self, _: &Down, _: &mut Window, cx: &mut Context<Self>) {
+        self.vertical(1, false, cx);
+    }
+    pub(crate) fn word_left(&mut self, _: &WordLeft, _: &mut Window, cx: &mut Context<Self>) {
+        self.move_by(false, cx, movement::prev_word);
+    }
+    pub(crate) fn word_right(&mut self, _: &WordRight, _: &mut Window, cx: &mut Context<Self>) {
+        self.move_by(false, cx, movement::next_word);
+    }
+    pub(crate) fn home(&mut self, _: &Home, _: &mut Window, cx: &mut Context<Self>) {
+        self.move_by(false, cx, movement::home);
+    }
+    pub(crate) fn end(&mut self, _: &End, _: &mut Window, cx: &mut Context<Self>) {
+        self.move_by(false, cx, movement::end);
+    }
+    pub(crate) fn document_start(
+        &mut self,
+        _: &DocumentStart,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.goal_x = None;
+        self.move_to(0, false, cx);
+    }
+    pub(crate) fn document_end(&mut self, _: &DocumentEnd, _: &mut Window, cx: &mut Context<Self>) {
+        self.goal_x = None;
+        self.move_to(self.doc.len(), false, cx);
+    }
+    pub(crate) fn select_left(&mut self, _: &SelectLeft, _: &mut Window, cx: &mut Context<Self>) {
+        self.move_by(true, cx, movement::prev_grapheme);
+    }
+    pub(crate) fn select_right(&mut self, _: &SelectRight, _: &mut Window, cx: &mut Context<Self>) {
+        self.move_by(true, cx, movement::next_grapheme);
+    }
+    pub(crate) fn select_up(&mut self, _: &SelectUp, _: &mut Window, cx: &mut Context<Self>) {
+        self.vertical(-1, true, cx);
+    }
+    pub(crate) fn select_down(&mut self, _: &SelectDown, _: &mut Window, cx: &mut Context<Self>) {
+        self.vertical(1, true, cx);
+    }
+    pub(crate) fn select_word_left(
+        &mut self,
+        _: &SelectWordLeft,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.move_by(true, cx, movement::prev_word);
+    }
+    pub(crate) fn select_word_right(
+        &mut self,
+        _: &SelectWordRight,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.move_by(true, cx, movement::next_word);
+    }
+    pub(crate) fn select_home(&mut self, _: &SelectHome, _: &mut Window, cx: &mut Context<Self>) {
+        self.move_by(true, cx, movement::home);
+    }
+    pub(crate) fn select_end(&mut self, _: &SelectEnd, _: &mut Window, cx: &mut Context<Self>) {
+        self.move_by(true, cx, movement::end);
+    }
+    pub(crate) fn select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
+        self.move_to(0, false, cx);
+        self.move_to(self.doc.len(), true, cx);
+    }
+    pub(crate) fn newline(&mut self, _: &Newline, _: &mut Window, cx: &mut Context<Self>) {
+        self.replace(self.selection.clone(), "\n", cx);
+    }
+    pub(crate) fn tab(&mut self, _: &Tab, _: &mut Window, cx: &mut Context<Self>) {
+        self.replace(self.selection.clone(), "    ", cx);
+    }
+    pub(crate) fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
+        if !self.selection.is_empty() {
+            cx.write_to_clipboard(ClipboardItem::new_string(self.selected_text()));
+        }
+    }
+    pub(crate) fn cut(&mut self, _: &Cut, _: &mut Window, cx: &mut Context<Self>) {
+        if !self.selection.is_empty() {
+            cx.write_to_clipboard(ClipboardItem::new_string(self.selected_text()));
+            self.replace(self.selection.clone(), "", cx);
+        }
+    }
+    pub(crate) fn paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+            self.moved_since_edit = true;
+            self.replace(self.selection.clone(), &text, cx);
+        }
+    }
+    pub(crate) fn undo(&mut self, _: &Undo, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(edits) = self.doc.undo() {
+            self.caret_after(&edits);
+            self.moved_since_edit = true;
+            self.after_edit(cx);
+        }
+    }
+    pub(crate) fn redo(&mut self, _: &Redo, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(edits) = self.doc.redo() {
+            self.caret_after(&edits);
+            self.moved_since_edit = true;
+            self.after_edit(cx);
+        }
+    }
+
+    /// Closes the window, asking first if there are unsaved changes.
+    pub(crate) fn close_window(
+        &mut self,
+        _: &CloseWindow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.should_close(window, cx) {
+            window.remove_window();
+        }
+    }
+
+    pub(crate) fn save(&mut self, _: &Save, window: &mut Window, cx: &mut Context<Self>) {
+        self.save_then(window, cx, |_, _| {});
+    }
+
+    pub(crate) fn save_as(&mut self, _: &SaveAs, window: &mut Window, cx: &mut Context<Self>) {
+        self.prompt_path_then_save(window, cx, |_, _| {});
+    }
+
+    /// Saves to the associated file (asking for one if there is none), then
+    /// runs `after` on success.
+    fn save_then(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        after: impl FnOnce(&mut Window, &mut App) + 'static,
+    ) {
+        match self.file.clone() {
+            Some(path) => self.write_to(path, window, cx, after),
+            None => self.prompt_path_then_save(window, cx, after),
+        }
+    }
+
+    fn prompt_path_then_save(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        after: impl FnOnce(&mut Window, &mut App) + 'static,
+    ) {
+        let directory = self
+            .file
+            .as_ref()
+            .and_then(|p| p.parent())
+            .map(Path::to_path_buf)
+            .or_else(|| std::env::current_dir().ok())
+            .unwrap_or_default();
+        let name = self
+            .file
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .map_or_else(|| "untitled.md".to_owned(), |n| n.to_string_lossy().into_owned());
+        let chosen = cx.prompt_for_new_path(&directory, Some(&name));
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(path))) = chosen.await else { return };
+            let _ =
+                this.update_in(cx, |editor, window, cx| editor.write_to(path, window, cx, after));
+        })
+        .detach();
+    }
+
+    /// Writes the text (original line endings restored) off the UI thread.
+    fn write_to(
+        &mut self,
+        path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        after: impl FnOnce(&mut Window, &mut App) + 'static,
+    ) {
+        let text = self.doc.buffer().to_saved_text();
+        let version = self.doc.buffer().version();
+        cx.spawn_in(window, async move |this, cx| {
+            let target = path.clone();
+            let written = cx
+                .background_executor()
+                .spawn(async move { write_atomically(&target, text.as_bytes()) })
+                .await;
+            let _ = this.update_in(cx, |editor, window, cx| match written {
+                Ok(()) => {
+                    editor.file = Some(path);
+                    editor.saved_version = version;
+                    editor.sync_title(window);
+                    cx.notify();
+                    after(window, cx);
+                }
+                Err(e) => {
+                    let detail = format!("{}: {e}", path.display());
+                    // The answer carries no choice; dropping the receiver just ignores it.
+                    drop(window.prompt(
+                        PromptLevel::Critical,
+                        "Could not save",
+                        Some(&detail),
+                        &["OK"],
+                        cx,
+                    ));
+                }
+            });
+        })
+        .detach();
+    }
+
+    fn caret_after(&mut self, edits: &[tachyon_text::Edit]) {
+        if let Some(last) = edits.last() {
+            let caret = last.new_range().end.min(self.doc.len());
+            self.selection = caret..caret;
+            self.reversed = false;
+            self.marked = None;
+        }
+    }
+
+    // ---- UTF-16 helpers for the platform input handler -------------------
+
+    fn range_from_utf16(&self, range: &Range<usize>) -> Range<usize> {
+        let buffer = self.doc.buffer();
+        buffer.utf16_to_byte(range.start)..buffer.utf16_to_byte(range.end)
+    }
+
+    fn range_to_utf16(&self, range: &Range<usize>) -> Range<usize> {
+        let buffer = self.doc.buffer();
+        buffer.byte_to_utf16(range.start)..buffer.byte_to_utf16(range.end)
+    }
+
+    fn position_for_offset(&self, offset: usize) -> Option<Point<Pixels>> {
+        let (layout, base) = self.active_layout.as_ref()?;
+        let local = offset.checked_sub(*base).filter(|&l| l <= layout.len())?;
+        layout.position_for_index(local)
+    }
+}
+
+/// Writes `bytes` to a temporary file next to `path` and renames it over
+/// `path`, so a crash or full disk never leaves a truncated file. Follows a
+/// symlink to its target and keeps the target's permissions.
+pub(crate) fn write_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let name = path
+        .file_name()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no file name"))?;
+    let temp = path.with_file_name(format!(".{}.tachyon-save", name.to_string_lossy()));
+    let result = (|| {
+        let mut file = std::fs::File::create(&temp)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        drop(file);
+        if let Ok(metadata) = std::fs::metadata(&path) {
+            std::fs::set_permissions(&temp, metadata.permissions())?;
+        }
+        std::fs::rename(&temp, &path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    result
+}
+
+impl Focusable for Editor {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+}
+
+impl EntityInputHandler for Editor {
+    fn text_for_range(
+        &mut self,
+        range_utf16: Range<usize>,
+        actual_range: &mut Option<Range<usize>>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<String> {
+        let range = self.range_from_utf16(&range_utf16);
+        actual_range.replace(self.range_to_utf16(&range));
+        Some(self.doc.buffer().rope().byte_slice(range).to_string())
+    }
+
+    fn selected_text_range(
+        &mut self,
+        _ignore_disabled_input: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<UTF16Selection> {
+        Some(UTF16Selection {
+            range: self.range_to_utf16(&self.selection),
+            reversed: self.reversed,
+        })
+    }
+
+    fn marked_text_range(
+        &self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<Range<usize>> {
+        self.marked.as_ref().map(|range| self.range_to_utf16(range))
+    }
+
+    fn unmark_text(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {
+        self.marked = None;
+    }
+
+    fn replace_text_in_range(
+        &mut self,
+        range_utf16: Option<Range<usize>>,
+        text: &str,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let range = range_utf16
+            .map(|r| self.range_from_utf16(&r))
+            .or_else(|| self.marked.clone())
+            .unwrap_or_else(|| self.selection.clone());
+        self.replace(range, text, cx);
+    }
+
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        range_utf16: Option<Range<usize>>,
+        text: &str,
+        new_selected_range_utf16: Option<Range<usize>>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let range = range_utf16
+            .map(|r| self.range_from_utf16(&r))
+            .or_else(|| self.marked.clone())
+            .unwrap_or_else(|| self.selection.clone());
+        let start = range.start;
+        self.replace(range, text, cx);
+        let inserted = self.head() - start;
+        self.marked = (inserted > 0).then(|| start..start + inserted);
+        if let Some(selected) = new_selected_range_utf16 {
+            // Relative to the start of the marked text, in UTF-16.
+            let base16 = self.doc.buffer().byte_to_utf16(start);
+            let selected = self.range_from_utf16(&(base16 + selected.start..base16 + selected.end));
+            self.selection = selected;
+            self.reversed = false;
+        }
+        cx.notify();
+    }
+
+    fn bounds_for_range(
+        &mut self,
+        range_utf16: Range<usize>,
+        _element_bounds: Bounds<Pixels>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<Bounds<Pixels>> {
+        let range = self.range_from_utf16(&range_utf16);
+        let start = self.position_for_offset(range.start)?;
+        let end = self.position_for_offset(range.end).unwrap_or(start);
+        let line_height = self.active_layout.as_ref()?.0.line_height();
+        Some(Bounds::from_corners(start, point(end.x.max(start.x), end.y + line_height)))
+    }
+
+    fn character_index_for_point(
+        &mut self,
+        point: Point<Pixels>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<usize> {
+        let (layout, base) = self.active_layout.as_ref()?;
+        let (Ok(index) | Err(index)) = layout.index_for_position(point);
+        Some(self.doc.buffer().byte_to_utf16(base + index))
+    }
+}

@@ -14,9 +14,10 @@ start as fast as a scratchpad and edit like Typora: one pane, inline WYSIWYG, no
   shows rendered rich text.
 - **Platforms:** Windows first, then Linux and macOS.
 
-> **Status:** the headless core (buffer, incremental Markdown parser, document model) is done; the
-> window still shows Markdown as raw text until the block-swap editor lands in Phase 3. The startup
-> gate is open. See [ROADMAP](docs/ROADMAP.md).
+> **Status:** early. Block-swap editing and saving work (the block under the caret is raw
+> Markdown, the rest is rendered), on top of an incremental parser. Leaf-level swapping in lists
+> and several Phase 3 items are still open, and the startup gate is not met. See
+> [ROADMAP](docs/ROADMAP.md).
 
 ## Performance budgets
 

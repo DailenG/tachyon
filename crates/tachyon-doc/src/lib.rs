@@ -63,6 +63,12 @@ impl Block {
         &self.parsed
     }
 
+    /// Shared handle to the last parse, for holding on to it beyond a borrow
+    /// of the document (e.g. in UI event handlers).
+    pub fn parsed_shared(&self) -> Arc<ParsedBlock> {
+        Arc::clone(&self.parsed)
+    }
+
     /// The source changed since the last parse; render it raw.
     pub fn is_stale(&self) -> bool {
         self.stale
