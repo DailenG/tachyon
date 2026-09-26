@@ -1,0 +1,8 @@
+[toolchain]
+# Bump deliberately together with `rust-version` in Cargo.toml.
+channel = "1.98.1"
+components = ["clippy", "rustfmt"]
+# Lets non-Windows hosts type-check the primary platform:
+# cargo clippy --target x86_64-pc-windows-msvc
+targets = ["x86_64-pc-windows-msvc"]
+profile = "minimal"

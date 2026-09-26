@@ -1,0 +1,4 @@
+#!/bin/sh
+# Enable with: git config core.hooksPath .githooks
+# Runs the same checks CI requires. Skip once with: git push --no-verify
+exec cargo xtask ci

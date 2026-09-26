@@ -1,0 +1,13 @@
+/target
+
+# Editors and OS
+/.idea/
+/.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Profiling output
+perf.data*
+*.etl
+flamegraph.svg

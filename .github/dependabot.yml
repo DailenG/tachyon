@@ -1,0 +1,25 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      cargo-minor-patch:
+        update-types: [minor, patch]
+    ignore:
+      # GPUI is pinned to a Zed commit and bumped by hand (docs/adr/0001).
+      - dependency-name: gpui
+      - dependency-name: gpui_platform
+      # Must match the revs Zed patches in at the pinned GPUI commit.
+      - dependency-name: async-task
+      - dependency-name: calloop
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]

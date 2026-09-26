@@ -1,0 +1,7 @@
+[alias]
+xtask = "run --package xtask --"
+
+[target.x86_64-pc-windows-msvc]
+linker = "rust-lld.exe"
+# Static CRT: no vcruntime DLL lookup during process startup.
+rustflags = ["-C", "target-feature=+crt-static"]

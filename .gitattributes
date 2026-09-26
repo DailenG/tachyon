@@ -1,0 +1,10 @@
+# Windows is the primary platform: never let checkouts rewrite line endings,
+# or rustfmt (newline_style = "Unix") and include_str! content drift per OS.
+* text=auto eol=lf
+
+*.png binary
+*.ico binary
+*.ttf binary
+*.otf binary
+
+Cargo.lock linguist-generated=true

@@ -1,0 +1,64 @@
+# cargo-deny policy: `cargo deny check`. Runs in CI on every push and PR.
+
+[graph]
+targets = [
+    "x86_64-pc-windows-msvc",
+    "aarch64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+]
+
+[advisories]
+# Unmaintained crates deep in GPUI's graph are outside our control; report
+# only those we depend on directly.
+unmaintained = "workspace"
+ignore = []
+
+[licenses]
+# Everything here is compatible with shipping Tachyon as MIT OR Apache-2.0.
+# Copyleft licenses (GPL, LGPL, AGPL) are intentionally absent.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Zlib",
+]
+confidence-threshold = 0.9
+
+[licenses.private]
+ignore = true
+
+# Permissive BSD-style license used only by the pure-Rust libbzip2 port.
+[[licenses.exceptions]]
+crate = "libbz2-rs-sys"
+allow = ["bzip2-1.0.6"]
+
+[bans]
+# All duplicate versions come from GPUI's graph, which we cannot change;
+# warnings nobody can act on would bury real findings.
+multiple-versions = "allow"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-git = [
+    # GPUI and its workspace crates (pinned rev in Cargo.toml).
+    "https://github.com/zed-industries/zed",
+    # Forks Zed patches into its graph; mirrored in our [patch.crates-io].
+    "https://github.com/zed-industries/calloop",
+    "https://github.com/smol-rs/async-task.git",
+]
+
+[sources.allow-org]
+github = ["zed-industries"]

@@ -1,0 +1,47 @@
+name: Bug report
+description: Something is broken or slower than it should be
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Include what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Attach or link the Markdown input if the bug depends on content.
+      placeholder: |
+        1. Copy the attached LLM output
+        2. Run `tachyon --paste`
+        3. ...
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options: [Windows 11, Windows 10, Linux (Wayland), Linux (X11), macOS]
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Tachyon version or commit
+      placeholder: "`tachyon --version` or git SHA"
+    validations:
+      required: true
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU and driver
+      placeholder: e.g. Intel UHD 750, driver 31.0.101.5186
+  - type: textarea
+    id: startup
+    attributes:
+      label: Startup report (performance issues)
+      description: Output of `tachyon --startup-report`.
+      render: text
