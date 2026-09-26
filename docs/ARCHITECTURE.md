@@ -12,8 +12,8 @@ follows from that.
 
 ## Crates
 
-Implemented today: `tachyon`, `tachyon-platform`, `xtask`. The others arrive with the phase that
-needs them ([ROADMAP](ROADMAP.md)); empty placeholder crates are not allowed.
+Implemented today: `tachyon`, `tachyon-platform`, `tachyon-text`, `xtask`. The others arrive with the
+phase that needs them ([ROADMAP](ROADMAP.md)); empty placeholder crates are not allowed.
 
 ```mermaid
 flowchart LR
@@ -27,7 +27,7 @@ flowchart LR
 | `tachyon` | exists | yes | Binary: CLI, single-instance claim, startup sequencing, windows |
 | `tachyon-platform` | exists | no | OS integration GPUI lacks: single-instance IPC (later: hotkey, backdrop) |
 | `xtask` | exists | no | `ci`, `bench-startup` |
-| `tachyon-text` | Phase 2 | **never** | Rope buffer, edits, selections, undo, UTF-8↔UTF-16, line endings |
+| `tachyon-text` | exists | **never** | Rope buffer, edit log, grouped undo, offset mapping, UTF-8↔UTF-16, line endings |
 | `tachyon-md` | Phase 2 | **never** | `pulldown-cmark` wrapper → owned block IR with source maps |
 | `tachyon-doc` | Phase 2 | **never** | Document state, block map, incremental reparse, parse scheduling |
 | `tachyon-theme` | Phase 3 | yes | Style tokens → GPUI text styles, built-in theme |
@@ -42,8 +42,10 @@ GPUI entities and text shaping stay on the main thread. Background work receives
 snapshot and returns owned data. The hot path has no shared `Mutex`.
 
 **Buffer (`tachyon-text`).** A `ropey::Rope` (O(log n) edits, O(1) snapshot clones), a version
-counter, a bounded edit log for rebasing stale background results, and undo history. Line endings
-are normalized to LF on load and restored on save. IME and GPUI's input handler use UTF-16 ranges;
+counter, a bounded edit log (`edits_since`) for rebasing stale background results, and undo
+history. Undo groups are sealed explicitly by the editor (pauses, cursor jumps); the buffer holds
+no clock or grouping policy. Line endings are normalized to LF on load and on insert, and the
+dominant original ending is restored on save. IME and GPUI's input handler use UTF-16 ranges;
 conversion goes byte → char → UTF-16 in O(log n).
 
 **Block IR (`tachyon-md`).** `pulldown-cmark` events borrow the source `&str`, so each parse window

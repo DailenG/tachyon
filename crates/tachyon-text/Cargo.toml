@@ -1,0 +1,19 @@
+[package]
+name = "tachyon-text"
+description = "Rope text buffer with edit log, undo and UTF-16 mapping"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+ropey.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
