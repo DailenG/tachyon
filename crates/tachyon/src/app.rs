@@ -12,7 +12,7 @@ use tachyon_platform::Listener;
 use crate::cli::{self, Cli};
 use crate::startup::Startup;
 
-actions!(tachyon, [Quit, CloseWindow]);
+actions!(tachyon, [Quit]);
 
 const APP_ID: &str = "tachyon";
 const SAMPLE: &str = include_str!("sample.md");
@@ -25,7 +25,13 @@ enum Source {
 
 impl Source {
     fn from_cli(cli: Cli) -> Vec<Source> {
-        let mut sources: Vec<Source> = cli.files.into_iter().map(Source::File).collect();
+        // Absolute paths: the file is read later on another thread, and the
+        // path is shown and saved to independently of the working directory.
+        let mut sources: Vec<Source> = cli
+            .files
+            .into_iter()
+            .map(|file| Source::File(std::path::absolute(&file).unwrap_or(file)))
+            .collect();
         if cli.paste {
             sources.push(Source::Clipboard);
         }
@@ -53,15 +59,15 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
         startup.mark("platform_ready");
         cx.set_global(startup);
 
-        cx.bind_keys([
-            KeyBinding::new("secondary-q", Quit, None),
-            KeyBinding::new("secondary-w", CloseWindow, None),
-        ]);
+        cx.bind_keys([KeyBinding::new("secondary-q", Quit, None)]);
         tachyon_editor::init(cx);
-        cx.on_action(|_: &Quit, cx| cx.quit());
-        cx.on_action(|_: &CloseWindow, cx| {
-            if let Some(window) = cx.active_window() {
-                let _ = window.update(cx, |_, window, _| window.remove_window());
+        // Quitting closes every window through the editor, so unsaved
+        // changes are asked about; the last window closing quits the app.
+        cx.on_action(|_: &Quit, cx| {
+            for window in cx.windows() {
+                let _ = window.update(cx, |_, window, cx| {
+                    window.dispatch_action(Box::new(tachyon_editor::CloseWindow), cx)
+                });
             }
         });
         cx.on_window_closed(|cx, _| {
@@ -133,15 +139,24 @@ fn open_window(source: Source, cx: &mut App) -> Option<WindowHandle<Editor>> {
 fn load_file(path: PathBuf, cx: &mut Context<Editor>) {
     cx.spawn(async move |editor, cx| {
         let read_path = path.clone();
-        let doc = cx
+        let loaded = cx
             .background_executor()
-            .spawn(async move {
-                let text = std::fs::read_to_string(&read_path)
-                    .unwrap_or_else(|e| format!("Could not read {}: {e}\n", read_path.display()));
-                Document::new(&text)
-            })
+            .spawn(
+                async move { std::fs::read_to_string(&read_path).map(|text| Document::new(&text)) },
+            )
             .await;
-        editor.update(cx, |editor, cx| editor.set_document(doc, cx))
+        editor.update(cx, |editor, cx| match loaded {
+            Ok(doc) => {
+                editor.set_document(doc, cx);
+                editor.set_file(path, cx);
+            }
+            // Not associated with the file: saving must not overwrite it
+            // with the error message.
+            Err(e) => editor.set_document(
+                Document::new(&format!("Could not read {}: {e}\n", path.display())),
+                cx,
+            ),
+        })
     })
     .detach();
 }

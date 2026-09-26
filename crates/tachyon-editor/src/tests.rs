@@ -134,3 +134,47 @@ fn large_paste_parses_in_the_background(cx: &mut TestAppContext) {
     assert!(kinds.iter().all(|k| *k != BlockKind::Unparsed));
     assert_eq!(kinds[0], BlockKind::Heading(2));
 }
+
+#[gpui::test]
+fn save_writes_the_file_with_its_line_endings(cx: &mut TestAppContext) {
+    let dir = std::env::temp_dir().join(format!("tachyon-save-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("note.md");
+    std::fs::write(&path, "# Note\r\n\r\nbody\r\n").unwrap();
+
+    let (editor, cx) = open("", cx);
+    let loaded = tachyon_doc::Document::new(&std::fs::read_to_string(&path).unwrap());
+    editor.update(cx, |e, cx| {
+        e.set_document(loaded, cx);
+        e.set_file(path.clone(), cx);
+    });
+    assert!(!editor.read_with(cx, |e, _| e.is_modified()));
+
+    cx.simulate_keystrokes("ctrl-end");
+    cx.simulate_input("!");
+    assert!(editor.read_with(cx, |e, _| e.is_modified()));
+    assert!(editor.read_with(cx, |e, _| e.title()).starts_with("• note.md"));
+
+    cx.simulate_keystrokes("secondary-s");
+    cx.run_until_parked();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "# Note\r\n\r\nbody\r\n!");
+    assert!(!editor.read_with(cx, |e, _| e.is_modified()));
+    assert_eq!(editor.read_with(cx, |e, _| e.title()), "note.md - Tachyon");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn atomic_write_replaces_content_and_leaves_no_temp_file() {
+    let dir = std::env::temp_dir().join(format!("tachyon-atomic-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("f.md");
+    std::fs::write(&path, "old").unwrap();
+    let permissions = std::fs::metadata(&path).unwrap().permissions();
+
+    crate::editor::write_atomically(&path, b"new contents").unwrap();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "new contents");
+    assert_eq!(std::fs::metadata(&path).unwrap().permissions(), permissions);
+    let leftovers: Vec<_> = std::fs::read_dir(&dir).unwrap().collect();
+    assert_eq!(leftovers.len(), 1, "no temporary file left behind");
+    std::fs::remove_dir_all(&dir).unwrap();
+}

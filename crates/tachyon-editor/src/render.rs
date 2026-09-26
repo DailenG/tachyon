@@ -16,7 +16,8 @@ use crate::editor::{Editor, KEY_CONTEXT, TextTarget};
 const INDENT: f32 = 22.;
 
 impl Render for Editor {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_title(window);
         let editor = cx.entity();
         let focus = self.focus.clone();
         div()
@@ -58,6 +59,9 @@ impl Render for Editor {
             .on_action(cx.listener(Self::paste))
             .on_action(cx.listener(Self::undo))
             .on_action(cx.listener(Self::redo))
+            .on_action(cx.listener(Self::save))
+            .on_action(cx.listener(Self::save_as))
+            .on_action(cx.listener(Self::close_window))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|editor, _: &MouseDownEvent, window, cx| {

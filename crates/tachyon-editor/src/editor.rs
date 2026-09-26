@@ -1,11 +1,13 @@
+use std::io::{self, Write};
 use std::ops::Range;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui::{
     App, Bounds, ClipboardItem, Context, EntityInputHandler, FocusHandle, Focusable, KeyBinding,
-    ListAlignment, ListState, Pixels, Point, Task, TextLayout, UTF16Selection, Window, actions,
-    point, px,
+    ListAlignment, ListState, Pixels, Point, PromptLevel, Task, TextLayout, UTF16Selection, Window,
+    actions, point, px,
 };
 use tachyon_doc::{BlockId, Document};
 use tachyon_md::ParsedBlock;
@@ -46,6 +48,9 @@ actions!(
         Paste,
         Undo,
         Redo,
+        Save,
+        SaveAs,
+        CloseWindow,
     ]
 );
 
@@ -99,6 +104,9 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("secondary-z", Undo, c),
         KeyBinding::new("secondary-shift-z", Redo, c),
         KeyBinding::new("ctrl-y", Redo, c),
+        KeyBinding::new("secondary-s", Save, c),
+        KeyBinding::new("secondary-shift-s", SaveAs, c),
+        KeyBinding::new("secondary-w", CloseWindow, c),
     ]
 }
 
@@ -144,6 +152,11 @@ pub struct Editor {
     /// The cursor moved without typing since the last edit.
     moved_since_edit: bool,
     pub(crate) selecting: bool,
+    file: Option<PathBuf>,
+    /// Buffer version last written to (or loaded from) `file`.
+    saved_version: u64,
+    /// Window title last set, to avoid resetting it every frame.
+    shown_title: Option<String>,
 }
 
 impl Editor {
@@ -155,6 +168,10 @@ impl Editor {
     pub fn with_document(doc: Document, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
+        let editor = cx.entity().downgrade();
+        window.on_window_should_close(cx, move |window, cx| {
+            editor.update(cx, |editor, cx| editor.should_close(window, cx)).unwrap_or(true)
+        });
         cx.on_next_frame(window, |editor, window, cx| editor.resolve_code_font(window, cx));
         let list = ListState::new(doc.blocks().len(), ListAlignment::Top, px(1000.));
         let mut editor = Editor {
@@ -172,6 +189,9 @@ impl Editor {
             last_edit: None,
             moved_since_edit: false,
             selecting: false,
+            file: None,
+            saved_version: 0,
+            shown_title: None,
         };
         editor.doc.take_splices();
         editor.update_active();
@@ -181,6 +201,7 @@ impl Editor {
 
     /// Replaces the whole document (file load finished, new paste).
     pub fn set_document(&mut self, doc: Document, cx: &mut Context<Self>) {
+        self.saved_version = doc.buffer().version();
         self.doc = doc;
         self.doc.take_splices();
         self.selection = 0..0;
@@ -197,6 +218,68 @@ impl Editor {
 
     pub fn document(&self) -> &Document {
         &self.doc
+    }
+
+    /// Associates the editor with a file: saves go there and the current
+    /// text counts as saved.
+    pub fn set_file(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        self.file = Some(path);
+        self.saved_version = self.doc.buffer().version();
+        cx.notify();
+    }
+
+    pub fn file(&self) -> Option<&Path> {
+        self.file.as_deref()
+    }
+
+    /// Edited since the last save or load.
+    pub fn is_modified(&self) -> bool {
+        self.doc.buffer().version() != self.saved_version
+    }
+
+    /// Window title: file name (or "Tachyon" for a scratch buffer), with a
+    /// leading dot while there are unsaved changes.
+    pub fn title(&self) -> String {
+        let name = self
+            .file
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .map(|n| format!("{} - Tachyon", n.to_string_lossy()))
+            .unwrap_or_else(|| "Tachyon".to_owned());
+        if self.is_modified() { format!("• {name}") } else { name }
+    }
+
+    pub(crate) fn sync_title(&mut self, window: &mut Window) {
+        let title = self.title();
+        if self.shown_title.as_ref() != Some(&title) {
+            window.set_window_title(&title);
+            window.set_window_edited(self.is_modified());
+            self.shown_title = Some(title);
+        }
+    }
+
+    /// Unsaved changes: ask first. Returns whether the window may close now.
+    fn should_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if !self.is_modified() {
+            return true;
+        }
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            "Save changes before closing?",
+            Some("Unsaved changes will be lost."),
+            &["Save", "Don't Save", "Cancel"],
+            cx,
+        );
+        cx.spawn_in(window, async move |this, cx| {
+            let choice = answer.await.ok();
+            let _ = this.update_in(cx, |editor, window, cx| match choice {
+                Some(0) => editor.save_then(window, cx, |window, _| window.remove_window()),
+                Some(1) => window.remove_window(),
+                _ => {}
+            });
+        })
+        .detach();
+        false
     }
 
     pub fn text(&self) -> String {
@@ -563,6 +646,107 @@ impl Editor {
         }
     }
 
+    /// Closes the window, asking first if there are unsaved changes.
+    pub(crate) fn close_window(
+        &mut self,
+        _: &CloseWindow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.should_close(window, cx) {
+            window.remove_window();
+        }
+    }
+
+    pub(crate) fn save(&mut self, _: &Save, window: &mut Window, cx: &mut Context<Self>) {
+        self.save_then(window, cx, |_, _| {});
+    }
+
+    pub(crate) fn save_as(&mut self, _: &SaveAs, window: &mut Window, cx: &mut Context<Self>) {
+        self.prompt_path_then_save(window, cx, |_, _| {});
+    }
+
+    /// Saves to the associated file (asking for one if there is none), then
+    /// runs `after` on success.
+    fn save_then(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        after: impl FnOnce(&mut Window, &mut App) + 'static,
+    ) {
+        match self.file.clone() {
+            Some(path) => self.write_to(path, window, cx, after),
+            None => self.prompt_path_then_save(window, cx, after),
+        }
+    }
+
+    fn prompt_path_then_save(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        after: impl FnOnce(&mut Window, &mut App) + 'static,
+    ) {
+        let directory = self
+            .file
+            .as_ref()
+            .and_then(|p| p.parent())
+            .map(Path::to_path_buf)
+            .or_else(|| std::env::current_dir().ok())
+            .unwrap_or_default();
+        let name = self
+            .file
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .map_or_else(|| "untitled.md".to_owned(), |n| n.to_string_lossy().into_owned());
+        let chosen = cx.prompt_for_new_path(&directory, Some(&name));
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(path))) = chosen.await else { return };
+            let _ =
+                this.update_in(cx, |editor, window, cx| editor.write_to(path, window, cx, after));
+        })
+        .detach();
+    }
+
+    /// Writes the text (original line endings restored) off the UI thread.
+    fn write_to(
+        &mut self,
+        path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        after: impl FnOnce(&mut Window, &mut App) + 'static,
+    ) {
+        let text = self.doc.buffer().to_saved_text();
+        let version = self.doc.buffer().version();
+        cx.spawn_in(window, async move |this, cx| {
+            let target = path.clone();
+            let written = cx
+                .background_executor()
+                .spawn(async move { write_atomically(&target, text.as_bytes()) })
+                .await;
+            let _ = this.update_in(cx, |editor, window, cx| match written {
+                Ok(()) => {
+                    editor.file = Some(path);
+                    editor.saved_version = version;
+                    editor.sync_title(window);
+                    cx.notify();
+                    after(window, cx);
+                }
+                Err(e) => {
+                    let detail = format!("{}: {e}", path.display());
+                    // The answer carries no choice; dropping the receiver just ignores it.
+                    drop(window.prompt(
+                        PromptLevel::Critical,
+                        "Could not save",
+                        Some(&detail),
+                        &["OK"],
+                        cx,
+                    ));
+                }
+            });
+        })
+        .detach();
+    }
+
     fn caret_after(&mut self, edits: &[tachyon_text::Edit]) {
         if let Some(last) = edits.last() {
             let caret = last.new_range().end.min(self.doc.len());
@@ -589,6 +773,31 @@ impl Editor {
         let local = offset.checked_sub(*base).filter(|&l| l <= layout.len())?;
         layout.position_for_index(local)
     }
+}
+
+/// Writes `bytes` to a temporary file next to `path` and renames it over
+/// `path`, so a crash or full disk never leaves a truncated file. Follows a
+/// symlink to its target and keeps the target's permissions.
+pub(crate) fn write_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let name = path
+        .file_name()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no file name"))?;
+    let temp = path.with_file_name(format!(".{}.tachyon-save", name.to_string_lossy()));
+    let result = (|| {
+        let mut file = std::fs::File::create(&temp)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        drop(file);
+        if let Ok(metadata) = std::fs::metadata(&path) {
+            std::fs::set_permissions(&temp, metadata.permissions())?;
+        }
+        std::fs::rename(&temp, &path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    result
 }
 
 impl Focusable for Editor {

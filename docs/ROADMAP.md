@@ -60,7 +60,9 @@ the end of 512 KiB 7 ms. All corpus tests pass.
 - [x] Paste path: large pastes show unparsed blocks and parse on the background executor
 - [ ] Background parse streamed back in chunks, viewport first
 - [ ] Frame-time overlay
-- [ ] Save (`Ctrl+S`) for files opened from disk
+- [x] Save / Save As with atomic writes; unsaved-changes prompt on close and quit
+- [ ] Keyboard support in the unsaved-changes prompt on Linux (GPUI's fallback prompt is
+      mouse-only; Windows and macOS use native dialogs)
 
 **Exit:** pasting 5 MB of LLM output produces no frame over 16.6 ms, with visible text in the same
 frame; typing in a 1 MB document keeps key-to-present p99 within one 60 Hz frame.
