@@ -62,8 +62,8 @@ the end of 512 KiB 7 ms. All corpus tests pass.
 - [ ] Background parse streamed back in chunks, viewport first
 - [ ] Frame-time overlay
 - [x] Save / Save As with atomic writes; unsaved-changes prompt on close and quit
-- [ ] Keyboard support in the unsaved-changes prompt on Linux (GPUI's fallback prompt is
-      mouse-only; Windows and macOS use native dialogs)
+- [x] Keyboard support in prompts on Linux (own in-window prompt; Windows and macOS keep native
+      dialogs)
 
 **Exit:** pasting 5 MB of LLM output produces no frame over 16.6 ms, with visible text in the same
 frame; typing in a 1 MB document keeps key-to-present p99 within one 60 Hz frame.

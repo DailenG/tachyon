@@ -61,6 +61,9 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
 
         cx.bind_keys([KeyBinding::new("secondary-q", Quit, None)]);
         tachyon_editor::init(cx);
+        if !tachyon_platform::has_native_prompts() {
+            cx.set_prompt_builder(tachyon_editor::keyboard_prompt);
+        }
         // Quitting closes every window through the editor, so unsaved
         // changes are asked about; the last window closing quits the app.
         cx.on_action(|_: &Quit, cx| {

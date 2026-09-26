@@ -20,7 +20,7 @@ All notable user-visible changes are recorded here. The format follows
   parsed in the background.
 - Save (`Ctrl+S`) and Save As (`Ctrl+Shift+S`): atomic writes that keep the file's line endings
   and permissions; the title shows unsaved changes. Closing a window or quitting with unsaved
-  changes asks first.
+  changes asks first. On Linux the prompt works from the keyboard (Tab/arrows, Enter, Escape).
 - Single-instance handoff: a second launch forwards its files to the running instance and exits
   (named pipe on Windows, Unix socket on Linux/macOS). `-n` / `--new-instance` opts out.
 - `--startup-report` and `cargo xtask bench-startup` for measuring launch-to-first-frame latency

@@ -40,6 +40,12 @@ pub fn monospace_font_candidates() -> &'static [&'static str] {
     }
 }
 
+/// Whether GPUI shows native dialogs for prompts on this OS. Where it does
+/// not (Linux, BSD), GPUI's in-window fallback is mouse-only.
+pub fn has_native_prompts() -> bool {
+    cfg!(any(target_os = "windows", target_os = "macos"))
+}
+
 /// Outcome of claiming the per-user, per-session application instance.
 pub enum Instance {
     /// This process owns the instance and receives forwarded launches.

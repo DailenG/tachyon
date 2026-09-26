@@ -195,3 +195,23 @@ fn in_a_list_only_the_item_under_the_caret_is_raw(cx: &mut TestAppContext) {
     assert_eq!(leaf(cx), None);
     assert_eq!(editor.read_with(cx, |e, _| e.active_block()), Some(1));
 }
+
+#[gpui::test]
+fn unsaved_close_prompt_works_from_the_keyboard(cx: &mut TestAppContext) {
+    cx.update(|cx| cx.set_prompt_builder(crate::keyboard_prompt));
+    let (editor, cx) = open("text\n", cx);
+    cx.simulate_input("x");
+    cx.simulate_keystrokes("secondary-w");
+    assert!(cx.update(|window, _| window.has_active_prompt()));
+
+    // Escape picks "Cancel": the prompt closes, the window and edit stay.
+    cx.simulate_keystrokes("escape");
+    assert!(!cx.update(|window, _| window.has_active_prompt()));
+    assert_eq!(text(&editor, cx), "xtext\n");
+
+    // Tab to "Don't Save", Enter: the window closes without saving.
+    cx.simulate_keystrokes("secondary-w");
+    cx.simulate_keystrokes("tab enter");
+    cx.run_until_parked();
+    assert!(cx.windows().is_empty(), "window closed");
+}
