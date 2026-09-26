@@ -21,14 +21,31 @@ Both measured platforms miss the budget by 3–4×. On Linux the likely cause is
 through wgpu/Vulkan; on the Windows runner GPUI's platform initialization alone takes longer than
 the whole budget. Neither is profiled yet.
 
+Warm launches, handed to a running instance (`cargo xtask bench-startup --warm`, release, 20 runs;
+measured from spawning the second process until the running instance has drawn the new window):
+
+| Platform | Hardware | first | p50 | p95 |
+|---|---|---|---|---|
+| Linux, Wayland (Hyprland) | Intel UHD 750 | 180 ms | 27.6 ms | 29.5 ms |
+
+The first launch into a windowless resident instance is cold (GPUI creates the GPU context with
+the first window); after that the context outlives its windows, so every later launch is warm even
+when no window is open. The second process itself (start, hand-off, acknowledgement) costs about
+1 ms of that.
+
 ## Decision (proposed)
 
 1. Measure on reference Windows hardware, cold (first launch after boot) and warm.
 2. If Windows direct launch meets p95 < 50 ms, keep direct launch and treat Linux as best effort
    until profiled.
-3. Otherwise adopt **resident mode**: the primary instance stays alive with its window hidden when
-   closed, a global hotkey and relaunches (through the single-instance channel, ADR 0003) show it.
-   Showing an existing window avoids GPU and font initialization entirely.
+3. Otherwise adopt **resident mode**: the primary instance stays alive after its last window closes
+   and relaunches (through the single-instance channel, ADR 0003) open windows in it, skipping
+   process, GPU and font start-up.
+
+Status of the mechanism: resident mode is implemented as an opt-in flag, `tachyon --resident`
+(without files it starts with no window, suitable for login autostart; Ctrl+Q quits for real). It
+meets the budget on Linux. Making it the default, and adding autostart and a way to show the
+process is running, waits for the Windows numbers.
 
 ## Consequences
 

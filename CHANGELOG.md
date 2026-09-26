@@ -25,6 +25,9 @@ All notable user-visible changes are recorded here. The format follows
   changes asks first. On Linux the prompt works from the keyboard (Tab/arrows, Enter, Escape).
 - Single-instance handoff: a second launch forwards its files to the running instance and exits
   (named pipe on Windows, Unix socket on Linux/macOS). `-n` / `--new-instance` opts out.
+- `--resident`: keep running after the last window closes so later launches open in about 30 ms
+  (without files it starts windowless, for login autostart; `Ctrl+Q` quits for real).
+  `cargo xtask bench-startup --warm` measures such launches.
 - `--startup-report` and `cargo xtask bench-startup` for measuring launch-to-first-frame latency
   against the 50 ms budget.
 - `Ctrl+Q` / `Cmd+Q` quits, `Ctrl+W` / `Cmd+W` closes the window.

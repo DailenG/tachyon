@@ -11,6 +11,11 @@ window. Launches are forwarded to an already running instance.
 Options:
   -p, --paste          Open the clipboard contents
   -n, --new-instance   Do not forward to a running instance
+      --resident       Keep running after the last window closes, so later
+                       launches open in about the time of one frame. Without
+                       FILE or --paste, starts with no window (for login
+                       autostart); exits if an instance is already running.
+                       Ctrl+Q quits for real.
       --startup-report Print startup timings after the first frame, then exit
                        (implies --new-instance; used by `cargo xtask bench-startup`)
   -h, --help           Print help
@@ -29,6 +34,10 @@ pub struct Cli {
     pub paste: bool,
     pub new_instance: bool,
     pub startup_report: bool,
+    pub resident: bool,
+    /// Primary prints one `tachyon-launch` line per forwarded launch once its
+    /// window has drawn, then closes it (`cargo xtask bench-startup --warm`).
+    pub report_launches: bool,
 }
 
 pub fn parse(
@@ -45,6 +54,11 @@ pub fn parse(
             Long("startup-report") => {
                 cli.startup_report = true;
                 cli.new_instance = true;
+            }
+            Long("resident") => cli.resident = true,
+            Long("report-launches") => {
+                cli.resident = true;
+                cli.report_launches = true;
             }
             Short('h') | Long("help") => return Ok(Command::Help),
             Short('V') | Long("version") => return Ok(Command::Version),

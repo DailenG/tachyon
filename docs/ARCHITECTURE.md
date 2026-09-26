@@ -157,3 +157,12 @@ The budget is launch to first frame, p95 < 50 ms ([ADR 0004](adr/0004-startup-bu
 `--startup-report` prints milestones measured from `main` (`platform_ready`, `window_open`,
 `first_frame`); `cargo xtask bench-startup` also measures from `spawn`, which includes process
 creation and loader time.
+
+**Resident mode** (`--resident`). The primary keeps running after its last window closes, so a
+later launch only pays for the hand-off and one window (about 30 ms on Linux instead of about
+200 ms). GPUI runs with `QuitMode::Explicit`; the app quits when the last window closes unless
+resident, and Quit (`Ctrl+Q`) always ends the process after the windows have closed. Without files
+a resident start opens no window, and a second resident start with nothing to open exits, which
+makes it safe for login autostart. `TACHYON_INSTANCE_ID` renames the instance channel so
+`cargo xtask bench-startup --warm` runs against a private resident instance
+(`--report-launches` prints one line per forwarded launch once its window has drawn).

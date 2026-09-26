@@ -14,10 +14,12 @@ Tasks:
   ci
       Runs the checks required by CI: rustfmt, clippy, tests and cargo-deny
       (when installed). Run before pushing.
-  bench-startup [--runs N] [--budget-ms MS] [--bin PATH] [--no-build]
+  bench-startup [--warm] [--runs N] [--budget-ms MS] [--bin PATH] [--no-build]
       Launches the release binary N times (default 20) with --startup-report and
       reports spawn-to-first-frame latency. Exits non-zero if the p95 exceeds
       the budget (default 50 ms).
+      --warm measures launches handed to a resident instance instead: spawn of
+      the second process until the resident instance has drawn the new window.
 ";
 
 const REPORT_PREFIX: &str = "tachyon-startup";
@@ -79,11 +81,17 @@ struct BenchOptions {
     budget: Duration,
     bin: Option<PathBuf>,
     build: bool,
+    warm: bool,
 }
 
 fn parse_bench_options(args: Vec<String>) -> Result<BenchOptions, String> {
-    let mut options =
-        BenchOptions { runs: 20, budget: Duration::from_millis(50), bin: None, build: true };
+    let mut options = BenchOptions {
+        runs: 20,
+        budget: Duration::from_millis(50),
+        bin: None,
+        build: true,
+        warm: false,
+    };
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
         let mut value = || args.next().ok_or_else(|| format!("{arg} needs a value"));
@@ -100,6 +108,7 @@ fn parse_bench_options(args: Vec<String>) -> Result<BenchOptions, String> {
             }
             "--bin" => options.bin = Some(value()?.into()),
             "--no-build" => options.build = false,
+            "--warm" => options.warm = true,
             _ => return Err(format!("unknown argument {arg}\n\n{USAGE}")),
         }
     }
@@ -134,12 +143,78 @@ fn bench_startup(args: Vec<String>) -> Result<ExitCode, String> {
     }
     let bin = options.bin.clone().unwrap_or_else(release_binary);
 
+    if options.warm {
+        let samples = bench_warm(&bin, options.runs)?;
+        return Ok(report(&samples, options.budget, "receipt"));
+    }
     let mut samples = Vec::with_capacity(options.runs);
     for run in 1..=options.runs {
         let sample = launch_once(&bin).map_err(|e| format!("run {run}: {e}"))?;
         samples.push(sample);
     }
-    Ok(report(&samples, options.budget))
+    Ok(report(&samples, options.budget, "main"))
+}
+
+/// Starts a resident instance (on a private instance id, so a running
+/// Tachyon is not involved), then times launches handed to it.
+fn bench_warm(bin: &PathBuf, runs: usize) -> Result<Vec<Sample>, String> {
+    let id = format!("tachyon-bench-{}", std::process::id());
+    let mut resident = Command::new(bin)
+        .arg("--report-launches")
+        .env("TACHYON_INSTANCE_ID", &id)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .map_err(|e| format!("failed to launch {}: {e}", bin.display()))?;
+    let stdout = resident.stdout.take().expect("stdout is piped");
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            if tx.send((Instant::now(), line)).is_err() {
+                break;
+            }
+        }
+    });
+
+    let result = (|| {
+        wait_for_line(&rx, "tachyon-ready")?;
+        let mut samples = Vec::with_capacity(runs);
+        for run in 1..=runs {
+            let started = Instant::now();
+            let status = Command::new(bin)
+                .env("TACHYON_INSTANCE_ID", &id)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .status()
+                .map_err(|e| format!("run {run}: failed to launch: {e}"))?;
+            if !status.success() {
+                return Err(format!("run {run}: launch exited with {status}"));
+            }
+            let (at, line) =
+                wait_for_line(&rx, "tachyon-launch").map_err(|e| format!("run {run}: {e}"))?;
+            samples.push(Sample { external: at - started, marks: parse_report(&line)? });
+        }
+        Ok(samples)
+    })();
+    let _ = resident.kill();
+    let _ = resident.wait();
+    result
+}
+
+fn wait_for_line(
+    rx: &mpsc::Receiver<(Instant, String)>,
+    prefix: &str,
+) -> Result<(Instant, String), String> {
+    let deadline = Instant::now() + RUN_TIMEOUT;
+    loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        match rx.recv_timeout(left) {
+            Ok((at, line)) if line.starts_with(prefix) => return Ok((at, line)),
+            Ok(_) => continue,
+            Err(_) => return Err(format!("resident instance did not print `{prefix}`")),
+        }
+    }
 }
 
 fn launch_once(bin: &PathBuf) -> Result<Sample, String> {
@@ -207,13 +282,14 @@ fn percentile(sorted: &[Duration], p: f64) -> Duration {
     sorted[rank - 1]
 }
 
-fn report(samples: &[Sample], budget: Duration) -> ExitCode {
+/// `marks_from` names where the in-process milestones are measured from.
+fn report(samples: &[Sample], budget: Duration, marks_from: &str) -> ExitCode {
     let ms = |d: Duration| format!("{:>8.2}", d.as_secs_f64() * 1000.0);
     let mut rows: Vec<(String, Vec<Duration>)> =
         vec![("spawn -> first frame".into(), samples.iter().map(|s| s.external).collect())];
     for name in samples[0].marks.keys() {
         let values = samples.iter().filter_map(|s| s.marks.get(name).copied()).collect();
-        rows.push((format!("main -> {name}"), values));
+        rows.push((format!("{marks_from} -> {name}"), values));
     }
 
     // The first launch has the coldest caches; percentiles cover the rest.

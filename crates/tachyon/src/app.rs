@@ -1,9 +1,11 @@
+use std::io::Write as _;
 use std::path::PathBuf;
+use std::time::Instant;
 
 use futures::StreamExt as _;
 use gpui::{
-    App, Bounds, Context, KeyBinding, SharedString, TitlebarOptions, WindowBounds, WindowHandle,
-    WindowOptions, actions, prelude::*, px, size,
+    App, Bounds, Context, Global, KeyBinding, QuitMode, SharedString, TitlebarOptions,
+    WindowBounds, WindowHandle, WindowOptions, actions, prelude::*, px, size,
 };
 use tachyon_doc::Document;
 use tachyon_editor::Editor;
@@ -53,11 +55,30 @@ impl Source {
     }
 }
 
+/// How the process ends. A resident primary outlives its windows so later
+/// launches skip process and GPU start-up (docs/adr/0004).
+struct Lifecycle {
+    resident: bool,
+    /// Quit was requested: the last window closing ends the process even
+    /// when resident.
+    quitting: bool,
+    report_launches: bool,
+}
+
+impl Global for Lifecycle {}
+
 pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
     startup.set_report(cli.startup_report);
-    gpui_platform::application().run(move |cx: &mut App| {
+    // Resident only makes sense for the primary: it needs the channel that
+    // later launches arrive on.
+    let resident = cli.resident && listener.is_some();
+    let report_launches = cli.report_launches && resident;
+    // Window lifetime is ours to manage (resident mode); GPUI would otherwise
+    // quit when the last window closes on Linux and Windows.
+    gpui_platform::application().with_quit_mode(QuitMode::Explicit).run(move |cx: &mut App| {
         startup.mark("platform_ready");
         cx.set_global(startup);
+        cx.set_global(Lifecycle { resident, quitting: false, report_launches });
 
         cx.bind_keys([KeyBinding::new("secondary-q", Quit, None)]);
         tachyon_editor::init(cx);
@@ -67,14 +88,24 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
         // Quitting closes every window through the editor, so unsaved
         // changes are asked about; the last window closing quits the app.
         cx.on_action(|_: &Quit, cx| {
-            for window in cx.windows() {
-                let _ = window.update(cx, |_, window, cx| {
-                    window.dispatch_action(Box::new(tachyon_editor::CloseWindow), cx)
-                });
-            }
+            cx.global_mut::<Lifecycle>().quitting = true;
+            // Deferred: the action is dispatched from inside a window update,
+            // and updating that window again from here would fail.
+            cx.defer(|cx| {
+                let windows = cx.windows();
+                if windows.is_empty() {
+                    cx.quit();
+                }
+                for window in windows {
+                    let _ = window.update(cx, |_, window, cx| {
+                        window.dispatch_action(Box::new(tachyon_editor::CloseWindow), cx)
+                    });
+                }
+            });
         });
         cx.on_window_closed(|cx, _| {
-            if cx.windows().is_empty() {
+            let lifecycle = cx.global::<Lifecycle>();
+            if cx.windows().is_empty() && (!lifecycle.resident || lifecycle.quitting) {
                 cx.quit();
             }
         })
@@ -82,10 +113,20 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
 
         if let Some(listener) = listener {
             serve_forwarded_launches(listener, cx);
+            if report_launches {
+                report_line("tachyon-ready");
+            }
         }
 
+        // A resident start with nothing to open (login autostart) stays
+        // windowless until the first launch arrives.
+        let sources = if resident && cli.files.is_empty() && !cli.paste {
+            Vec::new()
+        } else {
+            Source::from_cli(cli)
+        };
         let mut first = true;
-        for source in Source::from_cli(cli) {
+        for source in sources {
             let Some(handle) = open_window(source, cx) else { continue };
             if std::mem::take(&mut first) {
                 cx.global_mut::<Startup>().mark("window_open");
@@ -164,6 +205,13 @@ fn load_file(path: PathBuf, cx: &mut Context<Editor>) {
     .detach();
 }
 
+/// A line for `cargo xtask bench-startup`, flushed immediately.
+fn report_line(line: &str) {
+    let mut stdout = std::io::stdout().lock();
+    let _ = writeln!(stdout, "{line}");
+    let _ = stdout.flush();
+}
+
 /// Moves launches forwarded by secondary processes from the listener thread
 /// onto the main thread and opens them there.
 fn serve_forwarded_launches(listener: Listener, cx: &mut App) {
@@ -173,10 +221,21 @@ fn serve_forwarded_launches(listener: Listener, cx: &mut App) {
     cx.spawn(async move |cx| {
         while let Some(args) = rx.next().await {
             let Ok(cli::Command::Run(cli)) = cli::parse(args) else { continue };
+            let received = Instant::now();
             cx.update(|cx| {
+                let report = cx.global::<Lifecycle>().report_launches;
                 for source in Source::from_cli(cli) {
                     if let Some(handle) = open_window(source, cx) {
-                        let _ = handle.update(cx, |_, window, _| window.activate_window());
+                        let _ = handle.update(cx, |_, window, _| {
+                            window.activate_window();
+                            if report {
+                                window.on_next_frame(move |window, _| {
+                                    let us = received.elapsed().as_micros();
+                                    report_line(&format!("tachyon-launch first_frame_us={us}"));
+                                    window.remove_window();
+                                });
+                            }
+                        });
                     }
                 }
                 cx.activate(true);
