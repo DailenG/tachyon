@@ -3,9 +3,8 @@
 //! so a stale socket left by a crashed primary never blocks a new one.
 
 use std::fs::{self, File, OpenOptions, TryLockError};
-use std::io::{self, Write};
-use std::net::Shutdown;
-use std::os::unix::fs::OpenOptionsExt;
+use std::io::{self, Read, Write};
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -15,6 +14,10 @@ use crate::protocol;
 /// How long a secondary waits for a primary that holds the lock but has not
 /// bound its socket yet.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Bounds each read on either side, so a stalled peer cannot wedge the
+/// listener thread or leave a secondary waiting forever for its reply.
+const IO_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub enum Acquired {
     Primary(Listener),
@@ -61,6 +64,9 @@ pub fn acquire(app_id: &str) -> io::Result<Acquired> {
                 _ => {}
             }
             let socket = UnixListener::bind(&socket_path)?;
+            // Connecting needs write permission on the socket file; do not
+            // rely on the umask when the directory is shared (/tmp fallback).
+            fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600))?;
             Ok(Acquired::Primary(Listener { socket, socket_path, _lock: lock }))
         }
         Err(TryLockError::WouldBlock) => Ok(Acquired::Secondary(Client { socket_path })),
@@ -68,18 +74,41 @@ pub fn acquire(app_id: &str) -> io::Result<Acquired> {
     }
 }
 
-pub fn serve(listener: Listener, mut on_message: impl FnMut(Vec<String>)) {
+pub fn serve(listener: Listener, mut on_message: impl FnMut(Vec<String>) -> bool) {
     for stream in listener.socket.incoming() {
-        let Ok(stream) = stream else { continue };
-        if let Ok(Some(args)) = protocol::read_message(stream) {
-            on_message(args);
+        let Ok(mut stream) = stream else { continue };
+        let request = DeadlineReader { stream: &stream, deadline: Instant::now() + IO_TIMEOUT };
+        if let Ok(Some(args)) = protocol::read_request(request)
+            && on_message(args)
+        {
+            let _ = stream.set_write_timeout(Some(IO_TIMEOUT));
+            let _ = stream.write_all(protocol::ACK);
         }
     }
 }
 
-pub fn send(client: Client, message: &[u8]) -> io::Result<()> {
+/// Bounds a whole request by one deadline, so a peer that trickles bytes
+/// cannot hold the sequential listener longer than [`IO_TIMEOUT`].
+struct DeadlineReader<'a> {
+    stream: &'a UnixStream,
+    deadline: Instant,
+}
+
+impl Read for DeadlineReader<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let remaining = self
+            .deadline
+            .checked_duration_since(Instant::now())
+            .filter(|d| !d.is_zero())
+            .ok_or_else(|| io::Error::from(io::ErrorKind::TimedOut))?;
+        self.stream.set_read_timeout(Some(remaining))?;
+        self.stream.read(buf)
+    }
+}
+
+pub fn send(client: Client, request: &[u8]) -> io::Result<()> {
     let deadline = Instant::now() + CONNECT_TIMEOUT;
-    let mut stream = loop {
+    let stream = loop {
         match UnixStream::connect(&client.socket_path) {
             Ok(stream) => break stream,
             Err(e)
@@ -94,6 +123,8 @@ pub fn send(client: Client, message: &[u8]) -> io::Result<()> {
             Err(e) => return Err(e),
         }
     };
-    stream.write_all(message)?;
-    stream.shutdown(Shutdown::Write)
+    // A primary that accepts but never reads must not block a large write.
+    stream.set_write_timeout(Some(IO_TIMEOUT))?;
+    stream.set_read_timeout(Some(IO_TIMEOUT))?;
+    protocol::send_request(&stream, request)
 }

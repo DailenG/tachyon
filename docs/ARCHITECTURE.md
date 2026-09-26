@@ -113,7 +113,9 @@ standalone rather than losing the launch.
 - Linux/macOS: an advisory lock on `tachyon.lock` elects the primary, which serves `tachyon.sock` in
   `$XDG_RUNTIME_DIR` (fallback: temp directory with the user name). The lock, not the socket, is
   authoritative, so a crashed primary's stale socket never blocks a new one.
-- Wire format: `TACHYON1\n` then NUL-terminated UTF-8 arguments, capped at 1 MiB.
+- Wire format: `TACHYON2\n`, a `u32` LE body length, then NUL-terminated UTF-8 arguments (body
+  capped at 1 MiB). The primary replies `OK` once it has accepted the launch; a secondary that gets
+  no reply within its timeout starts standalone.
 
 **Windows specifics.** Release builds use the GUI subsystem. The application manifest (PerMonitorV2
 DPI, Windows 10+, segment heap, common controls v6) comes from GPUI: `gpui_platform` forces GPUI's
