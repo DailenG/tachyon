@@ -27,27 +27,6 @@ pub struct DefTable {
     last_link: Option<String>,
 }
 
-/// Difference between two tables, as far as block rendering is concerned.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct DefChanges {
-    /// Link labels added, removed or retargeted.
-    links: HashSet<UniCase<String>>,
-    /// The set of defined footnotes changed.
-    pub footnotes: bool,
-}
-
-impl DefChanges {
-    /// Whether a block that looked up `label` must be rendered again.
-    pub fn link_changed(&self, label: &str) -> bool {
-        !self.links.is_empty() && self.links.contains(&UniCase::new(label.to_owned()))
-    }
-
-    /// The changed link labels, in unspecified order.
-    pub fn links(&self) -> impl Iterator<Item = &str> {
-        self.links.iter().map(|label| label.as_str())
-    }
-}
-
 impl DefTable {
     /// Builds the table from definitions in document order.
     pub fn new<'a>(
@@ -136,16 +115,13 @@ impl DefTable {
         prefix
     }
 
-    /// What differs between `self` and `other`.
-    pub fn changes(&self, other: &DefTable) -> DefChanges {
-        let mut links: HashSet<UniCase<String>> = self
-            .links
-            .iter()
-            .filter(|(label, target)| other.links.get(*label) != Some(target))
-            .map(|(label, _)| label.clone())
-            .collect();
-        links.extend(other.links.keys().filter(|label| !self.links.contains_key(*label)).cloned());
-        DefChanges { links, footnotes: self.footnotes != other.footnotes }
+    /// Identifies the footnote definitions a window is parsed against (the
+    /// [`DefTable::footnote_prefix`] is a function of them): a block that
+    /// mentions footnotes renders stale when the key changes.
+    pub fn footnote_key(&self) -> u64 {
+        let mut hasher = std::hash::DefaultHasher::new();
+        std::hash::Hash::hash(&self.footnote_order, &mut hasher);
+        std::hash::Hasher::finish(&hasher)
     }
 }
 
@@ -166,18 +142,22 @@ mod tests {
     }
 
     #[test]
-    fn changes_report_links_and_footnotes() {
-        let old = DefTable::new(&[("a".into(), target("/a")), ("b".into(), target("/b"))], &[]);
-        let new = DefTable::new(
-            &[("A".into(), target("/a")), ("c".into(), target("/c"))],
-            &["n".to_owned()],
+    fn footnote_key_follows_footnote_definitions_only() {
+        let notes = |labels: &[&str]| labels.iter().map(|l| (*l).to_owned()).collect::<Vec<_>>();
+        let table = DefTable::new(&[("a".into(), target("/a"))], &notes(&["n", "m"]));
+        let retargeted = DefTable::new(&[("a".into(), target("/b"))], &notes(&["n", "m", "N"]));
+        assert_eq!(
+            table.footnote_key(),
+            retargeted.footnote_key(),
+            "links and repeats do not count"
         );
-        let changes = old.changes(&new);
-        let mut links: Vec<&str> = changes.links().collect();
-        links.sort();
-        assert_eq!(links, vec!["b", "c"]);
-        assert!(changes.footnotes);
-        assert!(changes.link_changed("B") && !changes.link_changed("a"));
-        assert_eq!(old.changes(&old.clone()), DefChanges::default());
+        let added = DefTable::new(&[], &notes(&["n", "m", "o"]));
+        assert_ne!(table.footnote_key(), added.footnote_key());
+        let reordered = DefTable::new(&[], &notes(&["m", "n"]));
+        assert_ne!(
+            table.footnote_key(),
+            reordered.footnote_key(),
+            "the prefix lists them in order"
+        );
     }
 }

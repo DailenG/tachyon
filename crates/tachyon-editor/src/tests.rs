@@ -136,6 +136,78 @@ fn large_paste_parses_in_the_background(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn a_large_paste_is_parsed_near_the_caret_first(cx: &mut TestAppContext) {
+    let (editor, cx) = open("", cx);
+    let section = "## Section\n\nSome *text* here.\n\n```\ncode\n```\n\n";
+    let paste = section.repeat(3 * tachyon_doc::PARSE_CHUNK / section.len());
+    cx.write_to_clipboard(gpui::ClipboardItem::new_string(paste));
+    // Not a simulated keystroke: that would run until every chunk is back.
+    editor.update_in(cx, |e, window, cx| e.paste(&crate::editor::Paste, window, cx));
+    let unparsed = |cx: &mut VisualTestContext| -> Vec<bool> {
+        editor.read_with(cx, |e, _| {
+            e.document().blocks().iter().map(|b| b.parsed().kind == BlockKind::Unparsed).collect()
+        })
+    };
+    // Step the executors until the first chunk comes back.
+    let pasted = unparsed(cx);
+    while unparsed(cx) == pasted {
+        assert!(cx.executor().tick(), "parse finished without applying a chunk");
+    }
+    let blocks = unparsed(cx);
+    assert!(!blocks[blocks.len() - 1], "the caret's end of the paste is parsed first");
+    assert!(blocks[0], "the far end waits for later chunks");
+
+    cx.run_until_parked();
+    assert!(!unparsed(cx).contains(&true));
+}
+
+#[gpui::test]
+fn the_caret_stays_in_view_after_a_long_paste_and_ctrl_end(cx: &mut TestAppContext) {
+    // Long enough to arrive as unparsed placeholder blocks first.
+    let text: String = (0..8000).map(|i| format!("Paragraph {i}.\n\n")).collect();
+    let (editor, cx) = open("", cx);
+    let caret_block_is_drawn = |cx: &mut VisualTestContext| {
+        editor.read_with(cx, |e, _| e.active_block().is_some_and(|i| e.rendered.contains(&i)))
+    };
+    cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+    cx.simulate_keystrokes("secondary-v");
+    cx.run_until_parked();
+    assert!(caret_block_is_drawn(cx), "after pasting");
+
+    cx.simulate_keystrokes("ctrl-home");
+    cx.run_until_parked();
+    assert!(caret_block_is_drawn(cx), "after jumping to the start");
+    cx.simulate_keystrokes("ctrl-end");
+    cx.run_until_parked();
+    assert!(caret_block_is_drawn(cx), "after jumping to the end");
+}
+
+#[gpui::test]
+fn ctrl_end_reveals_the_end_of_a_long_document(cx: &mut TestAppContext) {
+    // Opened, not pasted: nothing below the first screen has been measured.
+    let text: String = (0..8000).map(|i| format!("Paragraph {i}.\n\n")).collect();
+    let (editor, cx) = open(&text, cx);
+    cx.simulate_keystrokes("ctrl-end");
+    cx.run_until_parked();
+    let drawn =
+        editor.read_with(cx, |e, _| e.active_block().is_some_and(|i| e.rendered.contains(&i)));
+    assert!(drawn);
+}
+
+#[test]
+fn drawn_blocks_map_through_splices() {
+    use crate::editor::map_drawn;
+    // Before, after, and across the drawn range.
+    assert_eq!(map_drawn(&(5..10), &(0..2), 5), 8..13);
+    assert_eq!(map_drawn(&(5..10), &(12..14), 1), 5..10);
+    assert_eq!(map_drawn(&(5..10), &(7..8), 2), 5..11, "a drawn block split in two");
+    // A drawn block replaced by many: only as many count as drawn.
+    assert_eq!(map_drawn(&(0..1), &(0..1), 640), 0..1);
+    assert_eq!(map_drawn(&(3..6), &(4..9), 100), 3..6);
+    assert_eq!(map_drawn(&(3..6), &(0..9), 1), 0..1, "merged into one");
+}
+
+#[gpui::test]
 fn save_writes_the_file_with_its_line_endings(cx: &mut TestAppContext) {
     let dir = std::env::temp_dir().join(format!("tachyon-save-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();

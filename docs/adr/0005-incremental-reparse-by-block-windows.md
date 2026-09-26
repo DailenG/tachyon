@@ -27,7 +27,10 @@ segmenter in `tachyon-md` enforces that:
    (indented code); a block cut mid-line would parse differently alone. The previous block's
    *real content* end (not its container range, which can run into the next line's indentation)
    bounds the cut. Two blocks that start on the same line merge into one, so no block is ever
-   empty (an empty block cannot be addressed by offset, and reparsing looped on it).
+   empty (an empty block cannot be addressed by offset, and reparsing looped on it). A block whose
+   line is indented like code (4 columns) but that is not indented code merges into the previous
+   one: it continues a container that pulldown-cmark closed early (a footnote definition nested
+   in another's continuation lines) and would be indented code on its own.
 2. **Link reference definitions directly before a block belong to it.** After a definition the
    parser is in a paragraph-like state ("[x]: /u\n2) two" is a paragraph, "2) two" alone is a
    list), and pulldown-cmark may attribute the definition to the previous container's range.
@@ -36,20 +39,35 @@ segmenter in `tachyon-md` enforces that:
    labels.
 4. **Document-wide references go through a table.** Reference links resolve against a `DefTable`
    built from all blocks (first definition wins); footnote references resolve by prepending the
-   document's footnote definitions to each window, closed off by a thematic break. When the table
-   changes, blocks that looked up a changed label (or mention footnotes) are reparsed.
+   document's footnote definitions to each window, closed off by a thematic break. Each block
+   records the entry it found for every label it looked up (including "undefined"); it is reparsed
+   when the table now answers differently, or, if it mentions footnotes, when the set of footnotes
+   changed. A job whose window changes the definitions parses the window once more against the
+   table as it will be after applying, so a paste that defines its own references is not reparsed
+   block by block afterwards (for 5 MB of such text that was ≈ 7800 jobs, 2 s on the UI thread).
 
 Jobs own an immutable snapshot (rope clone, block list `Arc`, table `Arc`) and are `Send`. The
 caller runs small jobs inline and large ones on a background executor. A result is applied only if
 no edit touched its window since the snapshot (checked through the buffer's edit log); otherwise the
 window is marked dirty again. One job is outstanding at a time.
 
+A large dirty range (a paste) is **streamed back in chunks**: `parse_job_near(focus, max)` takes
+the dirty range nearest `focus` (the caret after an edit, else the top of the viewport) and, if it
+is longer than `max`, a window of about `max` bytes starting at `focus` (moved back so it is full
+size when `focus` is near the end). Such a window skips convergence and look-ahead, because the
+dirty text after it is parsed by a later job whose look-behind reaches back into this window's last
+block, which may have been cut short. Dirty text left before the window is parsed by a job that
+converges against the window's blocks, as for any edit.
+
 ## Consequences
 
 - Measured on a 1 MB document (`cargo bench -p tachyon-doc`): keystroke-to-clean p99 ≈ 45 µs, full
   parse ≈ 20 ms, 10 MB ≈ 220 ms, an unclosed fence reaching the end of 512 KB ≈ 7 ms. A 5 MB paste
   costs ≈ 6 ms on the UI thread (rope insert, pre-segmenting into IR-free placeholders of ≥ 8 KiB),
-  ≈ 70 ms of background parsing, and ≈ 8 ms to apply the result.
+  ≈ 170 ms of background parsing (twice ≈ 80 ms: the paste defines the references it uses), and
+  ≈ 9 ms to apply the result. Streamed in 128 KiB chunks it takes 38 jobs; the one at the caret is
+  parsed in ≈ 4 ms and applied in ≈ 0.1 ms, each later one is applied in ≤ 7 ms (p50 3 ms, mostly
+  rebuilding the definition table, which is O(definitions) per changed window).
 - Documents without blank lines between blocks get larger reparse windows (slower keystrokes, same
   results).
 - The invariant is checked by property tests (random documents, edits, undo, interleaved jobs,

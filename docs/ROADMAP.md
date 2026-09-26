@@ -64,11 +64,19 @@ the end of 512 KiB 7 ms. All corpus tests pass.
 - [x] IME through GPUI's input handler (composition is one undo step)
 - [ ] IME verified with a Japanese or Chinese IME on Windows
 - [x] Paste path: large pastes show unparsed blocks and parse on the background executor; a 5 MB
-      paste costs ≈ 6 ms on the UI thread plus ≈ 8 ms when the background parse is applied
-- [ ] Background parse streamed back in chunks, viewport first
-- [x] Frame-time overlay (`Ctrl+Alt+F`): p50/max of the editor's render+layout+paint and frames
-      over 16.7 ms. On a 5 MB document while scrolling and typing: p50 1.4 ms, max 3.0 ms
-- [ ] Measure a live 5 MB paste with the overlay (exit criterion)
+      paste costs ≈ 6 ms on the UI thread, then 38 chunks applied in ≤ 7 ms each (the caret's
+      first, ≈ 0.1 ms); a paste that defines its own references no longer triggers a reparse of
+      every block that uses them
+- [x] Background parse streamed back in chunks, caret or viewport first (`parse_job_near`)
+- [x] Frame-time overlay (`Ctrl+Alt+F`): p50/max of the editor's UI-thread time per frame (edits,
+      pastes and applied parse results since the previous frame, plus render+layout+paint) and
+      frames over 16.7 ms. On a 5 MB document while scrolling and typing: p50 1.4 ms, max 3.0 ms
+- [x] Measure a live 5 MB paste with the overlay. Linux (Intel UHD 750, nested Hyprland): the
+      paste frame takes ≈ 31 ms (clipboard read inside GPUI ≈ 7 ms, rope insert and pre-segmenting
+      ≈ 8 ms, first paint of the raw placeholder under the caret ≈ 14 ms); every later frame stays
+      under budget (p50 2.5 ms) while the chunks stream in, and the view stays at the caret
+- [ ] Paste frame within budget: measure on the reference Windows machine; if it is still over,
+      shape only the visible lines of raw placeholder blocks and pre-segment off the UI thread
 - [x] Save / Save As with atomic writes; unsaved-changes prompt on close and quit
 - [x] Keyboard support in prompts on Linux (own in-window prompt; Windows and macOS keep native
       dialogs)

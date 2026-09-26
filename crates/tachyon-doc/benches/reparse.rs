@@ -147,6 +147,35 @@ fn main() {
         start.elapsed()
     );
 
+    // The editor streams the same paste back in chunks, the caret's first.
+    let mut pasted = Document::new("start\n");
+    let end = pasted.len();
+    pasted.edit(end..end, &paste).expect("end is a char boundary");
+    let (mut chunks, mut parse, mut apply) = (Vec::new(), Duration::ZERO, Duration::ZERO);
+    while let Some(job) = pasted.parse_job_near(pasted.len(), tachyon_doc::PARSE_CHUNK) {
+        let start = Instant::now();
+        let result = job.run();
+        let parsed = start.elapsed();
+        let start = Instant::now();
+        pasted.apply(result);
+        chunks.push(start.elapsed());
+        parse += parsed;
+        apply += chunks[chunks.len() - 1];
+        if chunks.len() == 1 {
+            println!(
+                "{:<44} {:>9.1?}  (parsed in {parsed:.1?})",
+                format!("paste {} KiB: first chunk, applying", paste.len() >> 10),
+                chunks[0]
+            );
+        }
+    }
+    Stats { samples: chunks.clone() }.print(&format!(
+        "paste {} KiB: {} chunks, applying each",
+        paste.len() >> 10,
+        chunks.len()
+    ));
+    println!("{:<44} {parse:>9.1?}  (applying: {apply:.1?})", "  total chunk parse time");
+
     let mut doc = Document::new(&one_mb);
     let at = doc.buffer().text()[middle_paragraph..]
         .find("This paragraph")

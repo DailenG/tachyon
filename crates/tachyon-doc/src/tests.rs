@@ -165,3 +165,23 @@ fn block_lookup_by_offset() {
     assert_eq!(doc.block_at(doc.len()), Some(1));
     assert_eq!(Document::new("").block_at(0), None);
 }
+
+#[test]
+fn a_paste_that_defines_its_references_needs_one_job() {
+    let section = |n: usize| format!("See [ref-{n}] here.\n\n[ref-{n}]: /target/{n}\n\n");
+    let paste: String = (0..50).map(section).collect();
+    // The fillers keep the paragraph using [ref-49] out of the job's window
+    // (the edit touches the last block, look-behind adds the one before).
+    let mut doc =
+        Document::new("# Notes\n\nUses [ref-49] before the paste.\n\nFiller.\n\nMore.\n\n");
+    let end = doc.len();
+    doc.edit(end..end, &paste).unwrap();
+
+    let job = doc.parse_job().unwrap();
+    assert_eq!(doc.apply(job.run()), Applied::Spliced);
+    // Only the block before the paste looked up a label the paste defines.
+    assert_eq!(doc.dirty_ranges(), [doc.block_range(1)]);
+    doc.reparse_now();
+    assert_matches_full_parse(&doc);
+    assert_eq!(doc.blocks()[1].parsed().ir.links[0].dest, "/target/49");
+}

@@ -72,8 +72,12 @@ enum Step {
         len: usize,
     },
     Undo,
-    /// Take a job now and run/apply it after the following steps.
-    StartJob,
+    /// Take a job now and run/apply it after the following steps. `max`
+    /// bounds the window (streamed chunks), `focus` picks the dirty range.
+    StartJob {
+        focus: usize,
+        max: usize,
+    },
     FinishJob,
     Reparse,
 }
@@ -84,10 +88,15 @@ fn step() -> impl Strategy<Value = Step> {
             .prop_map(|(at, text)| Step::Insert { at, text }),
         3 => (any::<usize>(), 0usize..40).prop_map(|(at, len)| Step::Delete { at, len }),
         1 => Just(Step::Undo),
-        1 => Just(Step::StartJob),
+        1 => (any::<usize>(), window_limit()).prop_map(|(focus, max)| Step::StartJob { focus, max }),
         1 => Just(Step::FinishJob),
         2 => Just(Step::Reparse),
     ]
+}
+
+/// Small limits force streamed chunks in these short documents.
+fn window_limit() -> impl Strategy<Value = usize> {
+    prop_oneof![1 => Just(usize::MAX), 3 => 1usize..64]
 }
 
 fn floor_boundary(text: &str, offset: usize) -> usize {
@@ -123,9 +132,9 @@ proptest! {
                     doc.seal_undo_group();
                 }
                 Step::Undo => { doc.undo(); }
-                Step::StartJob => {
+                Step::StartJob { focus, max } => {
                     if job.is_none() {
-                        job = doc.parse_job();
+                        job = doc.parse_job_near(focus % (text.len() + 1), max);
                     }
                 }
                 Step::FinishJob => {
@@ -187,5 +196,52 @@ proptest! {
             prop_assert!(doc.blocks().iter().all(|b| !b.is_empty()));
             prop_assert_eq!(doc.blocks().iter().map(Block::len).sum::<usize>(), doc.len());
         }
+    }
+}
+
+/// A paste large enough to be split into unparsed blocks, streamed back in
+/// chunks around a moving viewport, parses like a full parse.
+///
+/// Not in `proptest!`: that applies `PROPTEST_CASES` over any configured
+/// count, and each case streams more than 64 KiB in up to a few hundred
+/// chunks (every chunk carries the document's footnote definitions), so a
+/// million cases would take hours. Edits interleaved with small chunks are
+/// covered by `incremental_parse_equals_full_parse`.
+#[test]
+fn streamed_chunks_of_a_large_paste_equal_full_parse() {
+    let config =
+        ProptestConfig { cases: 64, failure_persistence: None, ..ProptestConfig::default() };
+    let strategy = (
+        prop::collection::vec(document(), 1..8),
+        prop::collection::vec(any::<usize>(), 1..8),
+        1024usize..(64 * 1024),
+    );
+    let result =
+        proptest::test_runner::TestRunner::new(config).run(&strategy, |(parts, focuses, max)| {
+            let mut paste = String::new();
+            while paste.len() <= tachyon_doc::UNPARSED_SPLIT_THRESHOLD {
+                for part in &parts {
+                    paste.push_str(part);
+                    paste.push('\n');
+                }
+            }
+            let mut doc = Document::new("# before\n\n");
+            doc.edit(doc.len()..doc.len(), &paste).unwrap();
+            let mut focuses = focuses.into_iter().cycle();
+            let mut jobs = 0;
+            while let Some(job) =
+                doc.parse_job_near(focuses.next().unwrap_or(0) % (doc.len() + 1), max)
+            {
+                prop_assert_eq!(doc.apply(job.run()), Applied::Spliced);
+                jobs += 1;
+                prop_assert!(jobs < 100_000, "streaming does not terminate");
+            }
+            let fresh = Document::new(&doc.buffer().text());
+            prop_assert!(!doc.is_dirty());
+            prop_assert_eq!(parsed(&doc), parsed(&fresh));
+            Ok(())
+        });
+    if let Err(e) = result {
+        panic!("{e}");
     }
 }

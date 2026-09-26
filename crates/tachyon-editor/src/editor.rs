@@ -9,7 +9,7 @@ use gpui::{
     ListAlignment, ListOffset, ListState, Pixels, Point, PromptLevel, Task, TextLayout,
     UTF16Selection, Window, actions, point, px,
 };
-use tachyon_doc::{BlockId, Document};
+use tachyon_doc::{BlockId, Document, Splice};
 use tachyon_md::{BlockKind, ParsedBlock};
 
 use crate::movement;
@@ -157,8 +157,8 @@ pub struct Editor {
     pub(crate) selecting: bool,
     /// The caret should be scrolled into view at the next paint.
     reveal: bool,
-    /// Block indices the list rendered in the last frame, and the ones it
-    /// is rendering in the current one.
+    /// Block indices the list drew in the last completed frame, and the
+    /// ones it is rendering in the current one.
     pub(crate) rendered: Range<usize>,
     pub(crate) rendering: Option<Range<usize>>,
     file: Option<PathBuf>,
@@ -210,7 +210,7 @@ impl Editor {
         };
         editor.doc.take_splices();
         editor.update_active();
-        editor.reparse(cx);
+        editor.reparse(0, cx);
         editor
     }
 
@@ -227,7 +227,7 @@ impl Editor {
         self.parse_task = None;
         self.list.reset(self.doc.blocks().len());
         self.update_active();
-        self.reparse(cx);
+        self.reparse(0, cx);
         cx.notify();
     }
 
@@ -444,9 +444,17 @@ impl Editor {
     /// block alone would jump to the top of a tall block on every keystroke.
     fn reveal_cursor(&mut self) {
         self.reveal = true;
-        if let Some(index) = self.active_block()
-            && !self.rendered.contains(&index)
-        {
+        let Some(index) = self.active_block() else { return };
+        if self.rendered.contains(&index) {
+            return;
+        }
+        if index > self.rendered.end {
+            // Blocks the list has not measured count as zero height, so
+            // revealing one further down than the next would compute a
+            // position above the current one and not scroll (a long paste,
+            // Ctrl+End). Put the block at the top instead.
+            self.scroll_to_caret();
+        } else {
             self.list.scroll_to_reveal_item(index);
         }
     }
@@ -477,10 +485,28 @@ impl Editor {
 
     /// Replaces `range` with `text` and puts the caret after it.
     pub(crate) fn replace(&mut self, range: Range<usize>, text: &str, cx: &mut Context<Self>) {
+        let now = Instant::now();
+        self.replace_at(now, range, text, cx);
+        self.charge_work(now);
+    }
+
+    /// Charges the time since `started` to the frame-time overlay.
+    fn charge_work(&mut self, started: Instant) {
+        if let Some(stats) = &mut self.frame_stats {
+            stats.work(started.elapsed());
+        }
+    }
+
+    fn replace_at(
+        &mut self,
+        now: Instant,
+        range: Range<usize>,
+        text: &str,
+        cx: &mut Context<Self>,
+    ) {
         // Undo groups: typing runs group together; navigation, pauses, line
         // breaks and replacing a selection start new ones. An IME
         // composition (replacing its own marked text) stays one group.
-        let now = Instant::now();
         let paused = self.last_edit.is_none_or(|t| now - t > UNDO_GROUP_PAUSE);
         let composing = self.marked.as_ref() == Some(&range);
         let replaces_selection = range.len() > 1 && !composing;
@@ -502,17 +528,30 @@ impl Editor {
 
     fn after_edit(&mut self, cx: &mut Context<Self>) {
         self.goal_x = None;
-        self.reparse(cx);
+        self.reparse(self.head(), cx);
         self.update_active();
         self.reveal_cursor();
         cx.notify();
     }
 
+    /// Offset of the first block in view.
+    fn viewport_offset(&self) -> usize {
+        match self.doc.blocks().len() {
+            0 => 0,
+            n => self.doc.block_range(self.list.logical_scroll_top().item_ix.min(n - 1)).start,
+        }
+    }
+
     /// Runs pending parse jobs: small ones inline, a large one on the
-    /// background executor (one at a time; it continues when it lands).
-    fn reparse(&mut self, cx: &mut Context<Self>) {
+    /// background executor (one at a time; it continues when it lands). A
+    /// large dirty range streams back in chunks, starting at `focus`: the
+    /// caret after an edit (the view is about to reveal it), else the top of
+    /// the viewport.
+    fn reparse(&mut self, focus: usize, cx: &mut Context<Self>) {
         while self.parse_task.is_none() {
-            let Some(job) = self.doc.parse_job() else { break };
+            let Some(job) = self.doc.parse_job_near(focus, tachyon_doc::PARSE_CHUNK) else {
+                break;
+            };
             if job.is_small() {
                 let result = job.run();
                 self.doc.apply(result);
@@ -521,10 +560,21 @@ impl Editor {
             self.parse_task = Some(cx.spawn(async move |this, cx| {
                 let result = cx.background_executor().spawn(async move { job.run() }).await;
                 let _ = this.update(cx, |editor, cx| {
+                    let started = Instant::now();
                     editor.parse_task = None;
+                    let caret_drawn =
+                        editor.active_block().is_some_and(|i| editor.rendered.contains(&i));
                     editor.doc.apply(result);
-                    editor.reparse(cx);
+                    // Blocks replacing the top one by a different number
+                    // lose the scroll position; if the caret was in view
+                    // (just pasted), keep it there.
+                    if editor.apply_splices() && caret_drawn {
+                        editor.scroll_to_caret();
+                    }
+                    let focus = editor.viewport_offset();
+                    editor.reparse(focus, cx);
                     editor.update_active();
+                    editor.charge_work(started);
                     cx.notify();
                 });
             }));
@@ -536,29 +586,43 @@ impl Editor {
     /// the scroll offset to the top of a replaced item, so an edit inside a
     /// tall block scrolled half out of view would jump; for a one-for-one
     /// replacement keep the pixel offset instead.
-    fn apply_splices(&mut self) {
+    ///
+    /// Returns whether the top block was replaced by a different number of
+    /// blocks, which loses the position within it.
+    fn apply_splices(&mut self) -> bool {
         let splices = self.doc.take_splices();
-        if splices.is_empty() {
-            return;
-        }
         let top = self.list.logical_scroll_top();
         let (mut item, mut offset) = (top.item_ix, top.offset_in_item);
+        let mut displaced = false;
         for splice in splices {
-            if splice.old.contains(&item) {
-                item = splice.old.start;
+            let Splice { old, new_len } = splice;
+            if old.contains(&item) {
+                item = old.start;
                 // Only a one-for-one replacement (an edit inside the block)
                 // is the same content; after a split or merge the offset
                 // may not fit the new item.
-                if splice.old.len() != 1 || splice.new_len != 1 {
+                if old.len() != 1 || new_len != 1 {
                     offset = px(0.);
+                    displaced = true;
                 }
-            } else if splice.old.end <= item {
-                item = item - splice.old.len() + splice.new_len;
+            } else if old.end <= item {
+                item = item - old.len() + new_len;
             }
-            self.list.splice(splice.old, splice.new_len);
+            self.rendered = map_drawn(&self.rendered, &old, new_len);
+            self.list.splice(old, new_len);
         }
         if offset > px(0.) && item < self.list.item_count() {
             self.list.scroll_to(ListOffset { item_ix: item, offset_in_item: offset });
+        }
+        displaced
+    }
+
+    /// Scrolls the caret's block to the top; the caret's line is brought
+    /// into view when it paints.
+    fn scroll_to_caret(&mut self) {
+        self.reveal = true;
+        if let Some(index) = self.active_block() {
+            self.list.scroll_to(ListOffset { item_ix: index, offset_in_item: px(0.) });
         }
     }
 
@@ -724,7 +788,10 @@ impl Editor {
         }
     }
     pub(crate) fn paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+        let started = Instant::now();
+        let text = cx.read_from_clipboard().and_then(|item| item.text());
+        self.charge_work(started);
+        if let Some(text) = text {
             self.moved_since_edit = true;
             self.replace(self.selection.clone(), &text, cx);
         }
@@ -884,6 +951,31 @@ impl Editor {
         let local = offset.checked_sub(*base).filter(|&l| l <= layout.len())?;
         layout.position_for_index(local)
     }
+}
+
+/// Maps the block indices drawn last frame through a splice replacing `old`
+/// with `new_len` blocks. Replaced blocks that were drawn count as that many
+/// of their replacements (the first ones): a drawn block split in two is
+/// still near the viewport, but thousands of blocks replacing one are not
+/// all in view.
+pub(crate) fn map_drawn(drawn: &Range<usize>, old: &Range<usize>, new_len: usize) -> Range<usize> {
+    let shift = |ix: usize| ix - old.len() + new_len;
+    let start = if drawn.start < old.start {
+        drawn.start
+    } else if drawn.start >= old.end {
+        shift(drawn.start)
+    } else {
+        old.start
+    };
+    let end = if drawn.end <= old.start {
+        drawn.end
+    } else if drawn.end > old.end {
+        shift(drawn.end)
+    } else {
+        let replaced = drawn.end - drawn.start.max(old.start);
+        old.start + replaced.min(new_len)
+    };
+    start..end.max(start)
 }
 
 /// Writes `bytes` to a temporary file next to `path` and renames it over

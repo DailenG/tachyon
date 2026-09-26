@@ -32,6 +32,11 @@ pub const UNPARSED_SPLIT_THRESHOLD: usize = 64 * 1024;
 /// Minimum size of those provisional blocks.
 pub const UNPARSED_CHUNK: usize = 8 * 1024;
 
+/// Window size for streaming a large dirty range back in pieces with
+/// [`Document::parse_job_near`]: a few milliseconds of parsing, so the text
+/// near the viewport is formatted within a frame or two of a large paste.
+pub const PARSE_CHUNK: usize = 128 * 1024;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct BlockId(u64);
 
@@ -229,9 +234,18 @@ impl Document {
         Some(edits)
     }
 
-    /// The next reparse to run, or `None` when nothing is dirty or a job is
-    /// already outstanding (one at a time; apply or cancel it first).
+    /// The next reparse to run, covering the first dirty range whole, or
+    /// `None` when nothing is dirty or a job is already outstanding (one at a
+    /// time; apply or cancel it first).
     pub fn parse_job(&mut self) -> Option<ParseJob> {
+        self.parse_job_near(0, usize::MAX)
+    }
+
+    /// Like [`Document::parse_job`], but takes the dirty range nearest
+    /// `focus` (the top of the viewport) and, if it is longer than
+    /// `max_window`, only about `max_window` bytes of it starting at `focus`.
+    /// Repeated calls stream a large paste back viewport first.
+    pub fn parse_job_near(&mut self, focus: usize, max_window: usize) -> Option<ParseJob> {
         if self.outstanding.is_some() || self.dirty.is_empty() {
             return None;
         }
@@ -239,20 +253,29 @@ impl Document {
             self.dirty.clear();
             return None;
         }
-        let d = self.dirty[0].clone();
+        let d = self.nearest_dirty(focus);
+        let part = if d.len() <= max_window {
+            d.clone()
+        } else {
+            let start = focus.clamp(d.start, d.end - max_window);
+            start..start + max_window
+        };
         let n = self.blocks.len();
         // Look-behind: an edit can change how preceding blocks end (setext
         // underline, lazy continuation, table rows) and, through lines that
         // are only continuations if the next line allows it, reach further
         // back. Start after a blank line (or at the top): no construct
-        // continues across one into a separate block. One block of
-        // look-ahead anchors convergence.
-        let mut first = self.block_at(d.start).unwrap_or(0).saturating_sub(1);
+        // continues across one into a separate block.
+        let mut first = self.block_at(part.start).unwrap_or(0).saturating_sub(1);
         while first > 0 && !self.follows_blank_line(self.starts[first]) {
             first -= 1;
         }
-        let last = self.block_at(if d.end > d.start { d.end - 1 } else { d.start }).unwrap_or(0);
-        let last = (last + 1).min(n - 1);
+        let last = self.block_at(part.end.saturating_sub(1).max(part.start)).unwrap_or(0);
+        // Dirty text right after the window will be parsed by a later job,
+        // whose look-behind reparses this window's last block: no need to
+        // converge. Otherwise one block of look-ahead anchors convergence.
+        let converge = self.starts[last + 1] >= d.end;
+        let last = if converge { (last + 1).min(n - 1) } else { last };
         let window = self.starts[first]..self.starts[last + 1];
         self.clear_dirty(&window);
 
@@ -268,7 +291,26 @@ impl Document {
             first,
             last,
             window,
+            converge,
         })
+    }
+
+    /// The dirty range containing `focus`, else the closer of its neighbors.
+    /// `self.dirty` must not be empty.
+    fn nearest_dirty(&self, focus: usize) -> Range<usize> {
+        let after = self.dirty.partition_point(|r| r.end < focus);
+        let before = after.checked_sub(1).map(|i| &self.dirty[i]);
+        let range = match (self.dirty.get(after), before) {
+            (Some(next), Some(prev))
+                if next.start > focus && focus - prev.end < next.start - focus =>
+            {
+                prev
+            }
+            (Some(next), _) => next,
+            (None, Some(prev)) => prev,
+            (None, None) => &self.dirty[0],
+        };
+        range.clone()
     }
 
     /// Whether the line before `offset` (a line start) is blank.
@@ -331,11 +373,30 @@ impl Document {
             new_blocks.push(Block { id, len, parsed, stale: false });
         }
         // The table only changes if the window's definitions did.
-        let defs_changed = !same_definitions(&self.blocks[old.clone()], &new_blocks);
+        let defs_changed = !same_definitions(
+            self.blocks[old.clone()].iter().map(|b| &*b.parsed),
+            new_blocks.iter().map(|b| &*b.parsed),
+        );
+        let spliced = old.start..old.start + new_blocks.len();
         self.splice(old, new_blocks);
         self.clear_dirty(&window);
-        if defs_changed || self.defs_dirty {
-            self.refresh_defs();
+        self.defs_dirty |= defs_changed;
+        if self.defs_dirty {
+            // Rebuilding the table and checking every block is O(blocks):
+            // wait until nothing else is dirty, so a paste streamed back in
+            // chunks (each defining references) pays for it once.
+            if self.dirty.is_empty() {
+                self.refresh_defs();
+            }
+        } else {
+            // The table stands, but the job rendered against its snapshot,
+            // which an earlier result may have changed since.
+            let key = self.defs.footnote_key();
+            for i in spliced {
+                if renders_stale(&self.blocks[i].parsed, &self.defs, key) {
+                    self.mark_dirty(self.block_range(i));
+                }
+            }
         }
         Applied::Spliced
     }
@@ -514,24 +575,21 @@ impl Document {
         }
     }
 
-    /// Rebuilds the definition table; blocks whose rendering depends on a
-    /// changed definition are marked dirty.
+    /// Rebuilds the definition table and marks every block that rendered
+    /// against a different one dirty (blocks parsed while the refresh was
+    /// deferred may have used any snapshot).
     fn refresh_defs(&mut self) {
         self.defs_dirty = false;
         let table = DefTable::from_blocks(self.blocks.iter().map(|b| &*b.parsed));
-        if table == *self.defs {
-            return;
+        if table != *self.defs {
+            self.defs = Arc::new(table);
         }
-        let changes = self.defs.changes(&table);
-        self.defs = Arc::new(table);
+        let key = self.defs.footnote_key();
         let affected: Vec<Range<usize>> = self
             .blocks
             .iter()
             .enumerate()
-            .filter(|(_, b)| {
-                (changes.footnotes && b.parsed.mentions_footnotes)
-                    || b.parsed.refs.iter().any(|r| changes.link_changed(r))
-            })
+            .filter(|(_, b)| renders_stale(&b.parsed, &self.defs, key))
             .map(|(i, _)| self.block_range(i))
             .collect();
         for range in affected {
@@ -540,14 +598,20 @@ impl Document {
     }
 }
 
-fn same_definitions(old: &[Block], new: &[Block]) -> bool {
-    fn links(blocks: &[Block]) -> impl Iterator<Item = &(String, md::LinkTarget)> {
-        blocks.iter().flat_map(|b| &b.parsed.defs)
-    }
-    fn notes(blocks: &[Block]) -> impl Iterator<Item = &String> {
-        blocks.iter().flat_map(|b| &b.parsed.footnotes)
-    }
-    links(old).eq(links(new)) && notes(old).eq(notes(new))
+/// Whether `block` rendered against other definitions than `defs` (whose
+/// [`DefTable::footnote_key`] is `footnote_key`): a link label it looked up
+/// resolves differently, or it mentions footnotes and they changed.
+fn renders_stale(block: &ParsedBlock, defs: &DefTable, footnote_key: u64) -> bool {
+    block.footnotes_seen.is_some_and(|seen| seen != footnote_key)
+        || block.refs.iter().any(|r| defs.get(&r.label) != r.target.as_ref())
+}
+
+fn same_definitions<'a>(
+    old: impl Iterator<Item = &'a ParsedBlock> + Clone,
+    new: impl Iterator<Item = &'a ParsedBlock> + Clone,
+) -> bool {
+    old.clone().flat_map(|b| &b.defs).eq(new.clone().flat_map(|b| &b.defs))
+        && old.flat_map(|b| &b.footnotes).eq(new.flat_map(|b| &b.footnotes))
 }
 
 /// Maps a range through an edit. Ranges overlapping the edit grow to cover
@@ -577,6 +641,9 @@ pub struct ParseJob {
     first: usize,
     last: usize,
     window: Range<usize>,
+    /// Extend the window until it re-synchronizes with the old blocks. Off
+    /// when dirty text follows the window (a streamed chunk).
+    converge: bool,
 }
 
 impl ParseJob {
@@ -593,7 +660,7 @@ impl ParseJob {
     /// Parses the window, extending it until the parse re-synchronizes with
     /// the old block structure: the last reparsed block must equal the old
     /// block at the same place (same extent, source and kind), or the window
-    /// reaches the end of the text.
+    /// reaches the end of the text. A streamed chunk is parsed as is.
     pub fn run(self) -> ParseResult {
         let n = self.blocks.len();
         let text_len = self.rope.len_bytes();
@@ -602,11 +669,13 @@ impl ParseJob {
         loop {
             let text = self.rope.byte_slice(self.window.start..end).to_string();
             let parsed = md::parse(&text, &self.defs);
-            let converged = end == text_len
+            let converged = !self.converge
+                || end == text_len
                 || parsed.last().is_some_and(|p| {
                     end - p.len >= self.window.start && self.blocks[last].matches(p)
                 });
             if converged || last + 1 >= n {
+                let parsed = self.settle_definitions(&text, parsed, last);
                 let blocks = parsed.into_iter().map(Arc::new).collect();
                 return ParseResult { id: self.id, window: self.window.start..end, blocks };
             }
@@ -616,6 +685,36 @@ impl ParseJob {
             let new_last = (last + grow).min(n - 1);
             end += self.blocks[last + 1..=new_last].iter().map(|b| b.len).sum::<usize>();
             last = new_last;
+        }
+    }
+
+    /// If the window's definitions changed, the table changes once the
+    /// result is applied, and every block that looked up a changed label
+    /// would be parsed again, each as its own job on the UI thread (a paste
+    /// that defines the references it uses: thousands). Instead parse the
+    /// window once more here, against the table as it will be.
+    fn settle_definitions(
+        &self,
+        text: &str,
+        parsed: Vec<ParsedBlock>,
+        last: usize,
+    ) -> Vec<ParsedBlock> {
+        let old = self.blocks[self.first..=last].iter().map(|b| &*b.parsed);
+        if same_definitions(old, parsed.iter()) {
+            return parsed;
+        }
+        let table = DefTable::from_blocks(
+            self.blocks[..self.first]
+                .iter()
+                .map(|b| &*b.parsed)
+                .chain(&parsed)
+                .chain(self.blocks[last + 1..].iter().map(|b| &*b.parsed)),
+        );
+        let key = table.footnote_key();
+        if parsed.iter().any(|p| renders_stale(p, &table, key)) {
+            md::parse(text, &table)
+        } else {
+            parsed
         }
     }
 }

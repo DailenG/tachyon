@@ -144,11 +144,14 @@ fn reference_links_resolve_through_the_document_table() {
     assert_eq!(with.ir.text, "See ref and text.");
     assert_eq!(with.ir.links.len(), 2);
     assert!(with.ir.links.iter().all(|l| l.dest == "/elsewhere"));
-    assert_eq!(with.refs, vec!["REF".to_owned(), "ref".to_owned()]);
+    let found =
+        |label: &str| LinkLookup { label: label.to_owned(), target: table.get(label).cloned() };
+    assert_eq!(with.refs, vec![found("REF"), found("ref")]);
 
     let without = &parse("See [ref].\n", &DefTable::default())[0];
     assert_eq!(without.ir.text, "See [ref].");
-    assert_eq!(without.refs, vec!["ref".to_owned()], "failed lookups are dependencies too");
+    let missing = LinkLookup { label: "ref".to_owned(), target: None };
+    assert_eq!(without.refs, vec![missing], "failed lookups are dependencies too");
 }
 
 #[test]
@@ -198,6 +201,21 @@ fn footnotes_and_html() {
 }
 
 #[test]
+fn a_footnote_definition_in_another_ones_continuation_stays_with_it() {
+    // pulldown-cmark ends the first definition at the indented second one;
+    // cut there, the second would be indented code on its own.
+    let src = "[^1]: note\n\n\t[^2]: nested\n\nAfter.\n";
+    assert_eq!(sources(src), vec!["[^1]: note\n\n\t[^2]: nested\n\n", "After.\n"]);
+    for block in sources(src) {
+        assert!(!kinds(&block).iter().any(|k| matches!(k, BlockKind::CodeBlock { .. })));
+    }
+    assert_eq!(
+        kinds("Text.\n\n    code\n"),
+        vec![BlockKind::Paragraph, BlockKind::CodeBlock { fenced: false, lang: None }]
+    );
+}
+
+#[test]
 fn link_definition_blocks_show_their_source_lines() {
     let src = "para\n\n[a]: /x\n[b]: /y\n";
     let b = &blocks(src)[1];
@@ -213,7 +231,7 @@ fn footnote_references_resolve_through_the_document_table() {
     let with = DefTable::new(&[], &["1".to_owned()]);
     let b = &parse("Claim[^1].\n", &with)[0];
     assert_eq!(b.ir.text, "Claim[1].");
-    assert!(b.mentions_footnotes);
+    assert!(b.footnotes_seen.is_some());
 
     let without = &parse("Claim[^1].\n", &DefTable::default())[0];
     assert_eq!(without.ir.text, "Claim[^1].");
