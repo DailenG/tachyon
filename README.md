@@ -16,7 +16,7 @@ start as fast as a scratchpad and edit like Typora: one pane, inline WYSIWYG, no
 
 > **Status:** early. Block-swap editing and saving work (the block under the caret is raw
 > Markdown, the rest is rendered), on top of an incremental parser. The startup budget is met by
-> resident mode (`--resident`, opt-in for now), and Phase 3's paste and typing criteria are met on
+> resident mode (default on Windows), and Phase 3's paste and typing criteria are met on
 > the reference Windows machine. See [ROADMAP](docs/ROADMAP.md).
 
 ## Performance budgets
@@ -56,7 +56,16 @@ cargo run --release -- --paste     # open the clipboard contents
 ```
 
 A second launch forwards its files to the running instance and exits; pass `-n` to force a separate
-process. `tachyon --help` lists all options.
+process. On Windows the instance stays running after its last window closes, so later launches open
+at once (`--no-resident` turns that off; on Linux and macOS it is opt-in with `--resident`):
+
+```sh
+tachyon --autostart on   # start in the background at login
+tachyon --status         # is an instance running? does it start at login?
+tachyon --quit           # end it (asks about unsaved changes)
+```
+
+`tachyon --help` lists all options.
 
 ## Development
 

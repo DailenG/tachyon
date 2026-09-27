@@ -32,8 +32,10 @@ All notable user-visible changes are recorded here. The format follows
   changes asks first. On Linux the prompt works from the keyboard (Tab/arrows, Enter, Escape).
 - Single-instance handoff: a second launch forwards its files to the running instance and exits
   (named pipe on Windows, Unix socket on Linux/macOS). `-n` / `--new-instance` opts out.
-- `--resident`: keep running after the last window closes so later launches open in about 30 ms
-  (without files it starts windowless, for login autostart; `Ctrl+Q` quits for real). On Windows
+- Resident mode: the instance keeps running after its last window closes so later launches open in
+  about 30 ms. Default on Windows (`--no-resident` opts out), opt-in elsewhere (`--resident`).
+  `--background` starts it without a window, `--autostart on|off` does that at login,
+  `--status` and `--quit` report on and end it; `Ctrl+Q` quits for real. On Windows
   a resident instance keeps a hidden window ready, shown without the open animation, so a launch
   draws it within about 5 ms of the resident instance receiving it (about 23 ms from starting the
   launching process).

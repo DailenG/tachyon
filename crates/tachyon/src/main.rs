@@ -19,8 +19,16 @@ fn instance_id() -> String {
 
 fn main() -> ExitCode {
     let startup = startup::Startup::begin();
-    let cli = match cli::parse(std::env::args_os().skip(1)) {
+    let command = cli::parse(std::env::args_os().skip(1));
+    if !matches!(command, Ok(Command::Run(ref cli)) if !cli.quit) {
+        // Only command-line output follows; make it visible when started from a console.
+        tachyon_platform::attach_parent_console();
+    }
+    let cli = match command {
+        Ok(Command::Run(cli)) if cli.quit => return quit_running_instance(&cli),
         Ok(Command::Run(cli)) => cli,
+        Ok(Command::Status) => return status(),
+        Ok(Command::Autostart(enabled)) => return autostart(enabled),
         Ok(Command::Help) => {
             print!("{}", cli::USAGE);
             return ExitCode::SUCCESS;
@@ -57,6 +65,60 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// `--status`: exit code 0 if an instance is running, 1 if not.
+fn status() -> ExitCode {
+    let running = match Instance::acquire(&instance_id()) {
+        Ok(Instance::Secondary(_)) => true,
+        // Claimed only to check; dropping the listener releases it at once.
+        Ok(Instance::Primary(_)) => false,
+        Err(e) => {
+            eprintln!("tachyon: instance check failed: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    println!("instance: {}", if running { "running" } else { "not running" });
+    match tachyon_platform::autostart_enabled() {
+        Ok(on) => println!("autostart: {}", if on { "on" } else { "off" }),
+        Err(e) => println!("autostart: unknown ({e})"),
+    }
+    if running { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+}
+
+/// `--quit`: forwards the request; nothing running is not an error.
+fn quit_running_instance(cli: &Cli) -> ExitCode {
+    let sent = match Instance::acquire(&instance_id()) {
+        Ok(Instance::Secondary(client)) => cli.forward_args().and_then(|args| client.send(&args)),
+        Ok(Instance::Primary(_)) => {
+            println!("tachyon: no running instance");
+            return ExitCode::SUCCESS;
+        }
+        Err(e) => Err(e),
+    };
+    match sent {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("tachyon: could not reach the running instance: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// `--autostart on|off`.
+fn autostart(enabled: bool) -> ExitCode {
+    let result =
+        std::env::current_exe().and_then(|exe| tachyon_platform::set_autostart(&exe, enabled));
+    match result {
+        Ok(()) => {
+            println!("tachyon: autostart {}", if enabled { "on" } else { "off" });
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("tachyon: could not change autostart: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 enum Claim {
     Forwarded,
     Primary(Listener),
@@ -68,11 +130,9 @@ enum Claim {
 fn claim_instance(cli: &Cli) -> Claim {
     match Instance::acquire(&instance_id()) {
         Ok(Instance::Primary(listener)) => Claim::Primary(listener),
-        // A resident launch with nothing to open (login autostart) has
+        // A background start with nothing to open (login autostart) has
         // nothing to forward when an instance already runs.
-        Ok(Instance::Secondary(_)) if cli.resident && cli.files.is_empty() && !cli.paste => {
-            Claim::Forwarded
-        }
+        Ok(Instance::Secondary(_)) if cli.background && cli.opens_nothing() => Claim::Forwarded,
         Ok(Instance::Secondary(client)) => match cli.forward_args().and_then(|a| client.send(&a)) {
             Ok(()) => Claim::Forwarded,
             Err(e) => {

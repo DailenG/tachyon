@@ -167,12 +167,21 @@ The budget is launch to first frame, p95 < 50 ms ([ADR 0004](adr/0004-startup-bu
 `first_frame`); `cargo xtask bench-startup` also measures from `spawn`, which includes process
 creation and loader time.
 
-**Resident mode** (`--resident`). The primary keeps running after its last window closes, so a
-later launch only pays for the hand-off and one window (about 30 ms on Linux instead of about
-200 ms). GPUI runs with `QuitMode::Explicit`; the app quits when the last window closes unless
-resident, and Quit (`Ctrl+Q`) always ends the process after the windows have closed. Without files
-a resident start opens no window, and a second resident start with nothing to open exits, which
-makes it safe for login autostart. `TACHYON_INSTANCE_ID` renames the instance channel so
+**Resident mode.** The primary keeps running after its last window closes, so a later launch only
+pays for the hand-off and one window (about 30 ms on Linux instead of about 200 ms). It is the
+default on Windows (`tachyon_platform::resident_by_default`); `--resident` / `--no-resident`
+override it. GPUI runs with `QuitMode::Explicit`; the app quits when the last window closes unless
+resident, and Quit (`Ctrl+Q`, or `tachyon --quit` forwarded over the instance channel) always ends
+the process after the windows have closed, asking about unsaved changes. `--background` starts a
+resident primary without a window, and a second background start with nothing to open exits,
+which makes it safe for login autostart; `--autostart on|off` registers or removes that start
+(the current user's `Run` key on Windows, `$XDG_CONFIG_HOME/autostart/tachyon.desktop` on Linux).
+Its state is the effective one: on Windows Task Manager's `StartupApproved` switch counts (turning
+autostart on clears a "disabled" mark), on Linux a system entry in `$XDG_CONFIG_DIRS` counts unless
+the user entry overrides it (turning autostart off then writes `Hidden=true`).
+`--status` reports whether an instance runs (exit code 0 or 1) and whether autostart is on; it
+claims the instance channel only for the check. Windows release builds are GUI-subsystem
+executables, so these commands attach to the parent console to print. `TACHYON_INSTANCE_ID` renames the instance channel so
 `cargo xtask bench-startup --warm` runs against a private resident instance
 (`--report-launches` prints one line per forwarded launch once its window has drawn;
 `--gap-ms` spaces the launches, 500 ms by default).

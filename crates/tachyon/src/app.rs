@@ -71,7 +71,7 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
     startup.set_report(cli.startup_report);
     // Resident only makes sense for the primary: it needs the channel that
     // later launches arrive on.
-    let resident = cli.resident && listener.is_some();
+    let resident = cli.resident() && listener.is_some();
     let report_launches = cli.report_launches && resident;
     // Window lifetime is ours to manage (resident mode); GPUI would otherwise
     // quit when the last window closes on Linux and Windows.
@@ -119,9 +119,9 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
             }
         }
 
-        // A resident start with nothing to open (login autostart) stays
+        // A background start with nothing to open (login autostart) stays
         // windowless until the first launch arrives.
-        let sources = if resident && cli.files.is_empty() && !cli.paste {
+        let sources = if resident && cli.background && cli.opens_nothing() {
             Vec::new()
         } else {
             Source::from_cli(cli)
@@ -304,6 +304,10 @@ fn serve_forwarded_launches(listener: Listener, cx: &mut App) {
         while let Some(args) = rx.next().await {
             let Ok(cli::Command::Run(cli)) = cli::parse(args) else { continue };
             let received = Instant::now();
+            if cli.quit {
+                cx.update(|cx| cx.dispatch_action(&Quit));
+                continue;
+            }
             cx.update(|cx| {
                 let report = cx.global::<Lifecycle>().report_launches;
                 for source in Source::from_cli(cli) {
