@@ -84,7 +84,11 @@ rendered; other active blocks render raw entirely. Every other block renders its
 visible offset and through the block's source map to a document offset. The active block's text
 layout from the last paint drives caret painting, vertical movement and IME candidate placement.
 Scrolling follows the caret's line: a block off screen is scrolled to first, then the caret's line
-is brought into view when it paints, so typing in a tall block never jumps to its top.
+is brought into view when it paints, so typing in a tall block never jumps to its top. While the
+find bar is open, that reveal keeps the target below the bar's bottom edge (measured when the bar
+prepaints, before any block paints), and the first block gets that much top padding so a match at
+the very top can clear the bar. The document caret is not painted while the find bar or a picker
+takes typing; the field there paints its own.
 Selections are drawn as highlight backgrounds, so they span raw and rendered blocks alike.
 
 ## Concurrency

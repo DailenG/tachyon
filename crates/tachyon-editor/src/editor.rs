@@ -211,6 +211,14 @@ pub struct Editor {
     /// ones it is rendering in the current one.
     pub(crate) rendered: Range<usize>,
     pub(crate) rendering: Option<Range<usize>>,
+    /// Window-coordinate y of the bottom edge of the open find bar overlay, refreshed every
+    /// frame it renders (see `render::find_bar`); `reveal_caret_at` keeps revealed content below
+    /// it so the bar (which floats over the document without reflowing it) never hides the
+    /// target. Stale while the bar is closed, but then unused.
+    pub(crate) find_bar_bottom: Pixels,
+    /// Whether the document caret's quad was painted during the last completed frame. False
+    /// while the find bar or a picker holds typing, so only the field's own caret is visible.
+    pub(crate) caret_painted: bool,
     pub(crate) file: Option<PathBuf>,
     /// Buffer version last written to (or loaded from) `file`.
     pub(crate) saved_version: u64,
@@ -288,6 +296,8 @@ impl Editor {
             reveal: false,
             rendered: 0..0,
             rendering: None,
+            find_bar_bottom: px(0.),
+            caret_painted: false,
             file: None,
             saved_version: 0,
             disk_stamp: None,
@@ -608,16 +618,23 @@ impl Editor {
         }
     }
 
-    /// Called while painting the caret (window coordinates). Scrolls so the
-    /// caret's line is visible with a line of margin if a reveal is pending.
-    /// Returns whether it scrolled.
+    /// Called while painting the caret (window coordinates). Scrolls so the caret's line is
+    /// visible with a line of margin if a reveal is pending. While the find bar is open it floats
+    /// over the top of the document without reflowing it, so its bottom edge (`find_bar_bottom`)
+    /// is treated as the effective top of the viewport, keeping the revealed line below it;
+    /// pickers close on Enter and need no such inset. Returns whether it scrolled.
     pub(crate) fn reveal_caret_at(&mut self, top: Pixels, line_height: Pixels) -> bool {
         if !std::mem::take(&mut self.reveal) {
             return false;
         }
         let viewport = self.list.viewport_bounds();
         let margin = line_height.min(viewport.size.height / 4.);
-        let above = top - margin - viewport.top();
+        let top_bound = if self.find.is_some() {
+            viewport.top().max(self.find_bar_bottom + crate::render::OVERLAY_MARGIN)
+        } else {
+            viewport.top()
+        };
+        let above = top - margin - top_bound;
         let below = top + line_height + margin - viewport.bottom();
         let distance = if above < px(0.) {
             above

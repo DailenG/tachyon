@@ -14,6 +14,7 @@ use gpui::{
 use tachyon_md::{BlockKind, LineInfo, LineKind, Marker, ParsedBlock};
 
 use crate::editor::{Editor, KEY_CONTEXT, TextTarget};
+use crate::theme::Theme;
 
 const INDENT: f32 = 22.;
 
@@ -26,6 +27,8 @@ impl Render for Editor {
         if let Some(log) = &mut self.frame_log {
             log.begin();
         }
+        // Set again below if the document caret is actually painted this frame.
+        self.caret_painted = false;
         let editor = cx.entity();
         let focus = self.focus.clone();
         // Spacing given in rems (padding, gaps) follows the zoom.
@@ -147,7 +150,7 @@ impl Render for Editor {
                 .size_full(),
             )
             .children(self.frame_stats_overlay())
-            .children(self.find_bar(viewport))
+            .children(self.find_bar(viewport, cx))
             .children(self.picker_bar(viewport, cx))
     }
 }
@@ -155,11 +158,12 @@ impl Render for Editor {
 impl Editor {
     /// The find bar: the query with a caret and the match count. At most the window's width
     /// less the margins; with Replace open in a narrow window the fields wrap.
-    fn find_bar(&self, viewport: Size<Pixels>) -> Option<AnyElement> {
+    fn find_bar(&self, viewport: Size<Pixels>, cx: &mut Context<Self>) -> Option<AnyElement> {
         let find = self.find.as_ref()?;
         let theme = &self.theme;
         let max_width = viewport.width - OVERLAY_MARGIN * 2.;
         let field_width = |width: f32| theme.scaled(px(width)).min(max_width - px(64.));
+        let editor = cx.entity();
         Some(
             div()
                 .absolute()
@@ -170,6 +174,7 @@ impl Editor {
                 .justify_center()
                 .child(
                     div()
+                        .relative()
                         .flex()
                         .flex_wrap()
                         .gap_x_3()
@@ -182,23 +187,51 @@ impl Editor {
                         .border_color(theme.border.control)
                         .text_color(theme.text.primary)
                         .child(div().text_color(theme.text.muted).child("Find"))
-                        .child(
-                            div()
-                                .min_w(field_width(200.))
-                                .child(field(&find.query, !find.editing_replacement)),
-                        )
+                        .child(div().w(field_width(200.)).child(field(
+                            theme,
+                            &find.query,
+                            !find.editing_replacement,
+                        )))
                         .child(div().text_color(theme.text.muted).child(find.status()))
                         .children(find.replacement.as_ref().map(|replacement| {
                             div()
                                 .flex()
                                 .gap_3()
                                 .child(div().text_color(theme.text.muted).child("Replace"))
-                                .child(
-                                    div()
-                                        .min_w(field_width(160.))
-                                        .child(field(replacement, find.editing_replacement)),
-                                )
-                        })),
+                                .child(div().w(field_width(160.)).child(field(
+                                    theme,
+                                    replacement,
+                                    find.editing_replacement,
+                                )))
+                        }))
+                        .child(
+                            // Measures the bar's rendered height, in window coordinates, without
+                            // an extra layout pass: `reveal_caret_at` keeps revealed content below
+                            // it while it is open. Prepaints before any block paints (see
+                            // `find_bar_bottom`'s doc comment), so the value is current this frame.
+                            canvas(
+                                move |bounds, window, cx| {
+                                    let bottom = bounds.bottom();
+                                    let changed = editor.update(cx, |editor, _| {
+                                        let changed = editor.find_bar_bottom != bottom;
+                                        editor.find_bar_bottom = bottom;
+                                        changed
+                                    });
+                                    if changed {
+                                        // Block 0's reserved top space (see `render_block`) and
+                                        // `reveal_caret_at`'s inset were sized from the previous
+                                        // measurement; redraw once more so both reflect this
+                                        // frame's, the way `render_raw` does when it scrolls.
+                                        window.request_animation_frame();
+                                    }
+                                },
+                                |_, _, _, _| {},
+                            )
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .size_full(),
+                        ),
                 )
                 .into_any_element(),
         )
@@ -270,7 +303,11 @@ impl Editor {
                                 .flex()
                                 .gap_3()
                                 .child(div().text_color(theme.text.muted).child(picker.title))
-                                .child(field(&picker.query, true)),
+                                .child(div().flex_1().min_w_0().child(field(
+                                    theme,
+                                    &picker.query,
+                                    true,
+                                ))),
                         )
                         .children(rows)
                         .children(note.map(|note| div().text_color(theme.text.muted).child(note))),
@@ -389,10 +426,16 @@ impl Editor {
         } else {
             self.render_rendered(range.start, parsed, leaf, window, cx)
         };
-        div()
-            .w_full()
-            .flex()
-            .justify_center()
+        // The list cannot scroll above its first item, so `reveal_caret_at`'s inset (which
+        // relies on scrolling) cannot keep a match in this block below the find bar on its own.
+        // Growing this block's own top padding while the bar is open reserves that room instead:
+        // it is part of the block's measured height, so scrolling past it (bar open or not)
+        // behaves like any other content and leaves nothing to jump when viewed elsewhere.
+        let mut wrapper = div().w_full().flex().justify_center();
+        if index == 0 && self.find.is_some() {
+            wrapper = wrapper.pt(self.find_bar_bottom + OVERLAY_MARGIN);
+        }
+        wrapper
             .child(div().w_full().max_w(self.theme.content_width).px_4().child(content))
             .into_any_element()
     }
@@ -452,7 +495,9 @@ impl Editor {
         let head = self.head();
         let caret = (head >= base && head <= base + len).then(|| head - base);
         let editor = cx.entity();
-        let focused = self.focus.is_focused(window);
+        // Only one caret is ever visible: while the bar holds typing (see `bar_open`) the field
+        // it belongs to draws its own, and the document's stays hidden even if it is focused.
+        let show_caret = self.focus.is_focused(window) && !self.bar_open();
         let cursor_color = theme.editing.caret;
         let paint_layout = layout.clone();
 
@@ -475,21 +520,18 @@ impl Editor {
                         let line_height = paint_layout.line_height();
                         let scrolled = editor.update(cx, |editor, _| {
                             editor.active_layout = Some((paint_layout.clone(), base));
+                            if show_caret && caret_position.is_some() {
+                                editor.caret_painted = true;
+                            }
                             caret_position.is_some_and(|p| editor.reveal_caret_at(p.y, line_height))
                         });
                         if scrolled {
                             // The caret was out of view: draw again.
                             window.request_animation_frame();
                         }
-                        if focused
-                            && let Some(caret) = caret
-                            && let Some(position) = paint_layout.position_for_index(caret)
-                        {
+                        if show_caret && let Some(position) = caret_position {
                             let caret = fill(
-                                gpui::Bounds::new(
-                                    position,
-                                    size(px(2.), paint_layout.line_height()),
-                                ),
+                                gpui::Bounds::new(position, size(px(2.), line_height)),
                                 cursor_color,
                             );
                             window.paint_quad(caret);
@@ -802,9 +844,55 @@ impl Editor {
     }
 }
 
-/// A find-bar field's text, with a caret when it receives typing.
-fn field(text: &str, active: bool) -> String {
-    if active { format!("{text}\u{258f}") } else { text.to_owned() }
+/// A find-bar or picker field: a bordered box (`border.focus` while it receives typing,
+/// `border.control` otherwise) that fills its reserved width (the caller sizes that container;
+/// `find_bar`'s wrappers use a capped width, the picker's uses `flex_1`), so it neither grows
+/// with the query nor changes width when Tab moves focus between differently-sized fields. It
+/// has a steady caret painted as a 2 px quad, full line height, after the text, never a glyph, so
+/// ClearType's subpixel anti-aliasing on a caret character cannot tint it (a fringe seen on
+/// Windows). The height is fixed to one text line so the border never changes it, and an empty
+/// active field still reserves a line box for the caret.
+fn field(theme: &Theme, text: &str, active: bool) -> AnyElement {
+    let border = if active { theme.border.focus } else { theme.border.control };
+    let el = div()
+        .w_full()
+        .h(theme.text_size * 1.6)
+        .flex()
+        .items_center()
+        .px_1()
+        .overflow_hidden()
+        .rounded(theme.radius_small)
+        .border_1()
+        .border_color(border);
+    if !active {
+        return el.child(text.to_owned()).into_any_element();
+    }
+    let shown = if text.is_empty() { " ".to_owned() } else { text.to_owned() };
+    let styled = StyledText::new(shown);
+    let layout = styled.layout().clone();
+    let caret_index = text.len();
+    let cursor_color = theme.editing.caret;
+    el.relative()
+        .child(styled)
+        .child(
+            canvas(
+                |_, _, _| {},
+                move |_, _, window, _| {
+                    if let Some(position) = layout.position_for_index(caret_index) {
+                        let caret = fill(
+                            gpui::Bounds::new(position, size(px(2.), layout.line_height())),
+                            cursor_color,
+                        );
+                        window.paint_quad(caret);
+                    }
+                },
+            )
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full(),
+        )
+        .into_any_element()
 }
 
 /// Horizontal padding of the active block's card: raw text sits this much to

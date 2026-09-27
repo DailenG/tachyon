@@ -536,6 +536,72 @@ fn find_starts_with_the_selected_text(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn the_document_caret_is_hidden_while_the_find_bar_is_open(cx: &mut TestAppContext) {
+    let (editor, cx) = open("hello world\n", cx);
+    assert!(editor.read_with(cx, |e, _| e.caret_painted), "caret painted while editing");
+
+    cx.simulate_keystrokes("secondary-f");
+    cx.run_until_parked();
+    assert!(
+        !editor.read_with(cx, |e, _| e.caret_painted),
+        "typing goes to the bar, not the document: only its own caret should show"
+    );
+
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    assert!(editor.read_with(cx, |e, _| e.caret_painted), "shown again once the bar closes");
+}
+
+#[gpui::test]
+fn a_match_is_revealed_below_the_find_bar_in_a_small_window(cx: &mut TestAppContext) {
+    // A match on the document's very first line: the list cannot scroll further up to reveal it
+    // (item 0 is already at the top), so this exercises the extra top padding block 0 gets while
+    // the bar is open (see `render_block`), not `reveal_caret_at`'s scroll-based inset.
+    {
+        let doc = format!("target\n\n{}", "filler line\n\n".repeat(60));
+        let (editor, cx) = open(&doc, cx);
+        cx.simulate_resize(gpui::size(gpui::px(480.), gpui::px(360.)));
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("secondary-f");
+        cx.simulate_input("target");
+        cx.run_until_parked();
+
+        let (matched_y, bar_bottom) = editor.read_with(cx, |e, _| {
+            let y = e.position_for_offset(0).expect("the match's block is laid out").y;
+            (y, e.find_bar_bottom)
+        });
+        assert!(
+            matched_y >= bar_bottom,
+            "top-of-document match at y {matched_y:?} is under the find bar (bottom {bar_bottom:?})"
+        );
+    }
+
+    // A match well after the first line: there is real content above it to scroll through, so
+    // this exercises `reveal_caret_at`'s find-bar inset instead of the extra top padding.
+    {
+        let doc = format!("{}needle\n", "filler line\n\n".repeat(60));
+        let needle = doc.find("needle").expect("fixture");
+        let (editor, cx) = open(&doc, cx);
+        cx.simulate_resize(gpui::size(gpui::px(480.), gpui::px(360.)));
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("secondary-f");
+        cx.simulate_input("needle");
+        cx.run_until_parked();
+
+        let (matched_y, bar_bottom) = editor.read_with(cx, |e, _| {
+            let y = e.position_for_offset(needle).expect("the match's block is laid out").y;
+            (y, e.find_bar_bottom)
+        });
+        assert!(
+            matched_y >= bar_bottom,
+            "deep match at y {matched_y:?} is hidden under the find bar (bottom {bar_bottom:?})"
+        );
+    }
+}
+
+#[gpui::test]
 fn replace_one_then_all_with_one_undo_step_each(cx: &mut TestAppContext) {
     let doc = "cat and cat\n\nthe cat sat\n";
     let (editor, cx) = open(doc, cx);
