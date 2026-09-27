@@ -73,10 +73,11 @@ impl Picker {
         self.selected = self.selected.min(self.matches.len().saturating_sub(1));
     }
 
-    /// The rows in view: indices into `matches`, keeping `selected` visible.
-    pub(crate) fn window(&self) -> std::ops::Range<usize> {
-        let first = self.selected.saturating_sub(VISIBLE_ROWS - 1);
-        first..(first + VISIBLE_ROWS).min(self.matches.len())
+    /// The `rows` in view (at least one): indices into `matches`, keeping `selected` visible.
+    pub(crate) fn window(&self, rows: usize) -> std::ops::Range<usize> {
+        let rows = rows.max(1);
+        let first = self.selected.saturating_sub(rows - 1);
+        first..(first + rows).min(self.matches.len())
     }
 }
 

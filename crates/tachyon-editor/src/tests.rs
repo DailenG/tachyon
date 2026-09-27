@@ -1189,3 +1189,31 @@ fn local_images_are_found_per_line_and_remote_ones_are_not_loaded(cx: &mut TestA
     assert_eq!(images[0], [(dir.join("img/d.png"), 2, 0..7, 7)]);
     assert!(images[1].is_empty(), "remote images are not loaded");
 }
+
+#[gpui::test]
+fn the_current_find_match_keeps_its_fill_and_a_thicker_underline(cx: &mut TestAppContext) {
+    let doc = "one fish, two fish\n";
+    let (editor, cx) = open(doc, cx);
+    cx.simulate_keystrokes("secondary-f");
+    cx.simulate_input("fish");
+    let (marks, editing) = editor.read_with(cx, |e, _| (e.marks(&(0..doc.len())), e.theme.editing));
+    let style = |range: std::ops::Range<usize>| {
+        let (_, style) = marks.iter().find(|(r, _)| *r == range).expect("a mark over the range");
+        (style.background_color, style.underline.map(|u| f32::from(u.thickness)))
+    };
+    // The current match is also the selection: no selection mark hides its fill.
+    assert_eq!(marks.len(), 2);
+    assert_eq!(style(4..8), (Some(editing.find_current), Some(2.)));
+    assert_eq!(style(14..18), (Some(editing.find_match), Some(1.)));
+}
+
+#[gpui::test]
+fn prompts_use_the_theme_the_settings_choose(cx: &mut TestAppContext) {
+    // The test window reports a light system appearance.
+    cx.update(|cx| {
+        cx.set_global(crate::Settings { theme: crate::ThemeChoice::Dark, zoom: 1., hot_exit: true })
+    });
+    let (_editor, cx) = open("", cx);
+    let dark = cx.update(|window, cx| crate::Theme::for_window(window, cx).dark);
+    assert!(dark);
+}

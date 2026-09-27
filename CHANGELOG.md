@@ -94,9 +94,15 @@ All notable user-visible changes are recorded here. The format follows
 - New light and dark palettes from the design direction: navy-tinted surfaces and deep-navy text,
   one brand-blue accent, and syntax colors that all meet 4.5:1 contrast (muted text and code
   comments were below it on the editing card and code backgrounds).
+- Find matches are underlined, and the current match has a thicker underline and a stronger fill
+  (it used to look like a plain selection). The editing card, find bar, pickers, prompt and task
+  boxes have visible 1 px control borders; the selected picker row is solid accent. The find bar,
+  pickers and prompt fit windows down to 480 × 360, and the Linux prompt no longer dims the
+  document behind a translucent backdrop.
 
 ### Fixed
 
+- The in-window prompt (Linux) ignored the `theme` setting and followed the system appearance.
 - A large paste could keep a stray link: while its parse streamed in, a window that started
   inside a fenced code block read a line of code as a link definition, and a `[label]` further
   down kept linking to it after the code was parsed correctly.
