@@ -174,4 +174,12 @@ resident, and Quit (`Ctrl+Q`) always ends the process after the windows have clo
 a resident start opens no window, and a second resident start with nothing to open exits, which
 makes it safe for login autostart. `TACHYON_INSTANCE_ID` renames the instance channel so
 `cargo xtask bench-startup --warm` runs against a private resident instance
-(`--report-launches` prints one line per forwarded launch once its window has drawn).
+(`--report-launches` prints one line per forwarded launch once its window has drawn;
+`--gap-ms` spaces the launches, 500 ms by default).
+
+On Windows a resident instance keeps one **ready window**: created hidden 100 ms after each
+launch's first frame (and at resident start), sized in advance, and filled with the launch's
+document and shown when the next launch arrives. Creating a window there costs 40-60 ms and
+showing a newly created one resizes its render targets; a ready window appears with its content
+≈ 27 ms after the launch arrives (ADR 0004). `tachyon_platform::keeps_hidden_windows_hidden()`
+gates it: Wayland maps windows opened hidden, so Linux has none.

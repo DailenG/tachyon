@@ -1,7 +1,7 @@
 # 0004: 50 ms startup budget and the Phase 1 gate
 
-- **Status:** Proposed. Windows profiled; neither option meets the budget. The per-window cost is
-  what remains to attribute.
+- **Status:** Accepted: resident mode with a ready window. It meets the budget on the reference
+  Windows machine (p95 47.5 ms at 4K @ 30 Hz); direct launch cannot.
 - **Date:** 2026-09-25
 
 ## Context
@@ -45,7 +45,10 @@ the first window); after that the context outlives its windows, so every later l
 when no window is open. The second process itself (start, hand-off, acknowledgement) costs about
 1 ms of that.
 
-## Decision (proposed)
+## Decision
+
+Steps 1-3 below were the plan; the measurements under them led to the decision at the end of this
+section.
 
 1. Measure on reference Windows hardware, cold (first launch after boot) and warm.
 2. If Windows direct launch meets p95 < 50 ms, keep direct launch and treat Linux as best effort
@@ -90,8 +93,39 @@ So resident mode can only meet the budget if the per-window cost goes: next, tra
 `SetWindowPlacement` (window messages, focus, input-method activation), and try a resident
 instance that keeps a created, hidden window ready and only shows it on launch.
 
+Windows results (step 3, traced GPUI, 4K @ 30 Hz, launches 500 ms apart;
+[`docs/measurements/windows-trace-2-373f6cb.md`](../measurements/windows-trace-2-373f6cb.md)):
+
+| Launch | spawn -> first frame p50 / p95 | receipt -> first_frame p50 / p95 |
+|---|---|---|
+| direct | 347 / 352 ms | |
+| resident, window opened on launch | 118 / 128 ms | 102 / 108 ms |
+| resident, hidden window kept ready | **41 / 47.5 ms** | 25 / 30 ms |
+
+- Showing a window is mostly the render-target resize to its final size (`WM_SIZE` inside
+  `WM_WINDOWPOSCHANGED`, ≈ 20 ms) and activation (`WM_ACTIVATE`, ≈ 15 ms, of which input-method
+  setup is 0.6-3.4 ms). A ready window is drawn and appears as soon as it is shown, before
+  activation finishes: its content is visible ≈ 27 ms after the launch arrives.
+- The second process (start, hand-off, acknowledgement) costs ≈ 16 ms of the 41 ms.
+
+**Decision:** the startup path is resident mode, and on Windows the resident instance keeps one
+hidden window ready (created 100 ms after each launch's first frame, already sized, so the resize
+does not happen while it is shown). Direct launch remains for a process that is not resident (the
+first launch, `--new-instance`, a resident instance that is not running). Wayland maps windows
+opened hidden, so Linux keeps no ready window; its resident launches already take ≈ 27 ms.
+The ready window is enabled per platform (`tachyon_platform::keeps_hidden_windows_hidden`) where
+measured; macOS is unmeasured.
+
 ## Consequences
 
-- Resident mode means a background process and a tray or hotkey surface to design and document.
+- Resident mode means a background process and a tray or hotkey surface to design and document;
+  it is still opt-in (`--resident`). Making it the default (autostart at login, a way to see and
+  quit the process) is the next startup work.
+- The margin is small (47.5 ms against 50) and assumes the ready window exists when a launch
+  arrives; launches closer together than it takes to prepare one (≈ 20 ms plus 100 ms delay) open
+  a window the ordinary way. Pre-sizing the ready window is expected to take ≈ 20 ms off, still to
+  be measured on the reference machine.
+- A ready window costs one window's memory and GPU buffers while idle.
 - Every change on the startup path must include bench numbers (CONTRIBUTING).
-- Accept this ADR, with the chosen option and the Windows numbers, to close the Phase 1 gate.
+- DirectWrite's font update check (≈ 130 ms per process) should still be proposed upstream: it is
+  paid by every direct launch and every resident start.
