@@ -57,6 +57,7 @@ actions!(
         SelectAll,
         Newline,
         Tab,
+        Outdent,
         Copy,
         Cut,
         Paste,
@@ -131,6 +132,7 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("enter", Newline, c),
         KeyBinding::new("shift-enter", ShiftNewline, c),
         KeyBinding::new("tab", Tab, c),
+        KeyBinding::new("shift-tab", Outdent, c),
         KeyBinding::new("secondary-c", Copy, c),
         KeyBinding::new("secondary-x", Cut, c),
         KeyBinding::new("secondary-v", Paste, c),
@@ -366,7 +368,7 @@ impl Editor {
         if self.reversed { self.selection.start } else { self.selection.end }
     }
 
-    fn tail(&self) -> usize {
+    pub(crate) fn tail(&self) -> usize {
         if self.reversed { self.selection.end } else { self.selection.start }
     }
 
@@ -945,6 +947,9 @@ impl Editor {
         if self.finding() {
             return self.find_enter(window, cx);
         }
+        if self.list_newline(cx) {
+            return;
+        }
         self.replace(self.selection.clone(), "\n", cx);
     }
     /// Shift+Enter: the previous match while finding, else a line break like Enter.
@@ -960,10 +965,16 @@ impl Editor {
         self.replace(self.selection.clone(), "\n", cx);
     }
     pub(crate) fn tab(&mut self, _: &Tab, _: &mut Window, cx: &mut Context<Self>) {
-        if self.find_switch_field(cx) {
+        if self.find_switch_field(cx) || self.list_indent(false, cx) {
             return;
         }
         self.replace(self.selection.clone(), "    ", cx);
+    }
+    /// Shift+Tab: outdents list items (and switches find-bar fields).
+    pub(crate) fn outdent(&mut self, _: &Outdent, _: &mut Window, cx: &mut Context<Self>) {
+        if !self.find_switch_field(cx) {
+            self.list_indent(true, cx);
+        }
     }
     pub(crate) fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
         if !self.selection.is_empty() {

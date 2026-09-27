@@ -7,6 +7,7 @@ mod find;
 mod frame_log;
 mod frame_stats;
 mod links;
+mod lists;
 mod movement;
 mod prompt;
 mod render;

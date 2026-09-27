@@ -722,3 +722,120 @@ fn an_empty_clipboard_read_off_thread_pastes_nothing(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert_eq!(text(&editor, cx), "start\nx");
 }
+
+#[gpui::test]
+fn enter_continues_lists_and_ends_them_on_an_empty_item(cx: &mut TestAppContext) {
+    for (doc, typed, expected) in [
+        ("- one", "enter t w o", "- one\n- two"),
+        ("9. nine", "enter t", "9. nine\n10. t"),
+        ("> - [x] done", "enter n", "> - [x] done\n> - [ ] n"),
+        // Enter on the new, empty item ends the list.
+        ("- one", "enter enter t", "- one\n\nt"),
+        ("> - q", "enter enter t", "> - q\n>\n> t"),
+    ] {
+        let (editor, cx) = open(doc, cx);
+        cx.simulate_keystrokes("ctrl-end");
+        cx.simulate_keystrokes(typed);
+        cx.run_until_parked();
+        assert_eq!(text(&editor, cx), expected, "{doc:?} + {typed:?}");
+    }
+}
+
+#[gpui::test]
+fn enter_splits_an_item_and_stays_plain_outside_lists(cx: &mut TestAppContext) {
+    let (editor, cx) = open("- abcd", cx);
+    editor.update(cx, |e, cx| e.move_to(4, false, cx));
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert_eq!(text(&editor, cx), "- ab\n- cd");
+
+    let code = "```\n- not a list\n```\n";
+    let (editor, cx) = open(code, cx);
+    let end = code.find("list").expect("fixture") + 4;
+    editor.update(cx, |e, cx| e.move_to(end, false, cx));
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert_eq!(text(&editor, cx), "```\n- not a list\n\n```\n");
+}
+
+#[gpui::test]
+fn tab_indents_list_items_and_shift_tab_outdents(cx: &mut TestAppContext) {
+    let doc = "- a\n- b\n- c\n\ntext";
+    let (editor, cx) = open(doc, cx);
+    // Select from inside "b" to inside "c".
+    editor.update(cx, |e, cx| {
+        e.move_to(6, false, cx);
+        e.move_to(10, true, cx);
+    });
+    cx.simulate_keystrokes("tab");
+    cx.run_until_parked();
+    assert_eq!(text(&editor, cx), "- a\n  - b\n  - c\n\ntext");
+    assert_eq!(selection(&editor, cx), 8..14, "the selection moves with the text");
+
+    cx.simulate_keystrokes("shift-tab");
+    cx.run_until_parked();
+    assert_eq!(text(&editor, cx), doc);
+    assert_eq!(selection(&editor, cx), 6..10);
+
+    cx.simulate_keystrokes("secondary-z");
+    cx.run_until_parked();
+    assert_eq!(text(&editor, cx), "- a\n  - b\n  - c\n\ntext", "each is one undo step");
+
+    // Outside a list, Tab still inserts spaces and Shift+Tab does nothing.
+    let end = doc.len();
+    editor.update(cx, |e, cx| e.move_to(end + 4, false, cx));
+    cx.simulate_keystrokes("shift-tab tab");
+    cx.run_until_parked();
+    assert_eq!(text(&editor, cx), "- a\n  - b\n  - c\n\ntext    ");
+}
+
+#[gpui::test]
+fn nesting_renumbers_ordered_items_and_empty_nested_items_move_up(cx: &mut TestAppContext) {
+    let (editor, cx) = open("1. a\n2. b\n3. c", cx);
+    editor.update(cx, |e, cx| e.move_to(8, false, cx));
+    cx.simulate_keystrokes("tab");
+    cx.run_until_parked();
+    assert_eq!(text(&editor, cx), "1. a\n   1. b\n3. c", "a nested list starts at 1");
+    cx.simulate_keystrokes("shift-tab");
+    cx.run_until_parked();
+    assert_eq!(text(&editor, cx), "1. a\n2. b\n3. c", "back in the parent list: 2");
+
+    // The first item has nothing to nest under: Tab leaves it alone.
+    editor.update(cx, |e, cx| e.move_to(3, false, cx));
+    cx.simulate_keystrokes("tab");
+    cx.run_until_parked();
+    assert_eq!(text(&editor, cx), "1. a\n2. b\n3. c");
+
+    let (editor, cx) = open("- a\n  - b", cx);
+    cx.simulate_keystrokes("ctrl-end enter");
+    cx.run_until_parked();
+    assert_eq!(text(&editor, cx), "- a\n  - b\n  - ");
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert_eq!(text(&editor, cx), "- a\n  - b\n- ", "Enter on an empty nested item moves it up");
+}
+
+#[gpui::test]
+fn tab_leaves_lines_the_selection_only_touches_or_that_are_code(cx: &mut TestAppContext) {
+    let doc = "- a\n- b\n- c\n";
+    let (editor, cx) = open(doc, cx);
+    // From inside "b" to the start of "c": "c" is not selected.
+    editor.update(cx, |e, cx| {
+        e.move_to(6, false, cx);
+        e.move_to(8, true, cx);
+    });
+    cx.simulate_keystrokes("tab");
+    cx.run_until_parked();
+    assert_eq!(text(&editor, cx), "- a\n  - b\n- c\n");
+
+    let doc = "- a\n- b\n\n```\n- code\n```\n";
+    let (editor, cx) = open(doc, cx);
+    let end = doc.find("code").expect("fixture");
+    editor.update(cx, |e, cx| {
+        e.move_to(6, false, cx);
+        e.move_to(end, true, cx);
+    });
+    cx.simulate_keystrokes("tab");
+    cx.run_until_parked();
+    assert_eq!(text(&editor, cx), "- a\n  - b\n\n```\n- code\n```\n", "the fenced line stays");
+}
