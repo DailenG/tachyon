@@ -141,7 +141,8 @@ What a scratchpad needs day to day, without giving up the budgets above.
       from the desktop portal only after its first windows exist, so start-up asks the portal
       itself on a thread (≈ 1 ms warm, waited for at most 15 ms) and the first frame is already
       in the right theme
-- [ ] Zoom (`Ctrl+=`, `Ctrl+-`, `Ctrl+0`)
+- [x] Zoom (`Ctrl+=`, `Ctrl+-`, `Ctrl+0`): browser steps from 50 % to 300 %, per window; text,
+      indents and rem-based spacing scale together
 - [ ] Open links with `Ctrl+click`
 - [ ] Tray icon on Windows for the resident process (show a window, quit)
 - [ ] Read the clipboard off the UI thread (the Phase 3 follow-up above)
