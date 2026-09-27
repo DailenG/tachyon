@@ -1,7 +1,8 @@
 # 0004: 50 ms startup budget and the Phase 1 gate
 
 - **Status:** Accepted: resident mode with a ready window. It meets the budget on the reference
-  Windows machine (shipped build: p95 29.0 ms at 4K @ 30 Hz); direct launch cannot.
+  Windows machine (p95 29.0 ms at 4K @ 30 Hz with a pre-sized ready window, 22.8 ms with its DWM
+  transitions off as shipped since run 4); direct launch cannot.
 - **Date:** 2026-09-25
 
 ## Context
@@ -138,6 +139,13 @@ rest delays the next input, not the first frame. Direct launch: p95 392 ms.
   transitions for it (`DWMWA_TRANSITIONS_FORCEDISABLED`), which may also shorten the time until
   the window visibly appears. Measure time to input readiness (activation handled), not only the
   first frame.
+- Run 4 ([`docs/measurements/windows-run-4-ad98ba5.md`](../measurements/windows-run-4-ad98ba5.md),
+  same run, warm p95 spawn -> first frame / receipt -> first_frame): baseline 32.3 / 15.6 ms,
+  DWM transitions off 22.8 / 5.4 ms, placed while hidden 27.8 / 12.1 ms, both 19.3 / 0.66 ms.
+  Transitions are now off for ready windows (`tachyon_platform::disable_window_transitions`);
+  placing the window while hidden needs a GPUI change and is to be proposed upstream. Showing the
+  window still takes 14-26 ms after its first frame (activation); input is handled ≈ 19-24 ms after
+  showing starts.
 - A ready window costs one window's memory and GPU buffers while idle.
 - Every change on the startup path must include bench numbers (CONTRIBUTING).
 - DirectWrite's font update check (≈ 130 ms per process) should still be proposed upstream: it is

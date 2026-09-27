@@ -19,6 +19,12 @@ use windows as imp;
 use std::io;
 use std::thread::JoinHandle;
 
+/// Turns off the compositor's open and close animations for `window` (DWM on Windows; a no-op
+/// elsewhere). Returns whether it was applied.
+pub fn disable_window_transitions(window: &impl raw_window_handle::HasWindowHandle) -> bool {
+    imp::disable_window_transitions(window)
+}
+
 /// Monospace font families to try for code, most preferred first. The first
 /// entry ships with the OS on Windows and macOS; Linux has no universal one,
 /// so callers should pick the first installed family.

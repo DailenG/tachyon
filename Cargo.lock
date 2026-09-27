@@ -5412,6 +5412,7 @@ dependencies = [
 name = "tachyon-platform"
 version = "0.1.0"
 dependencies = [
+ "raw-window-handle",
  "windows-sys 0.61.2",
 ]
 
