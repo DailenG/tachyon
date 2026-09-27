@@ -655,6 +655,8 @@ fn secondary_click_on_a_bare_url_opens_it(cx: &mut TestAppContext) {
     cx.simulate_click(url, gpui::Modifiers::secondary_key());
     cx.run_until_parked();
     assert_eq!(cx.opened_url().as_deref(), Some("https://example.com/docs"));
+}
+
 thread_local! {
     /// Clipboard text for the off-thread reader tests, standing in for the system clipboard.
     /// Per thread: tests run in parallel, and GPUI's test executor runs "background" work on the
