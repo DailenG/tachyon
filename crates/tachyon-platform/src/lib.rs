@@ -46,6 +46,13 @@ pub fn has_native_prompts() -> bool {
     cfg!(any(target_os = "windows", target_os = "macos"))
 }
 
+/// Whether a window opened with `show: false` stays hidden until activated.
+/// Wayland compositors map it anyway, so a resident instance keeps no ready
+/// window there. Only enabled where it has been measured (docs/adr/0004).
+pub fn keeps_hidden_windows_hidden() -> bool {
+    cfg!(target_os = "windows")
+}
+
 /// Outcome of claiming the per-user, per-session application instance.
 pub enum Instance {
     /// This process owns the instance and receives forwarded launches.

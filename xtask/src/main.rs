@@ -14,13 +14,15 @@ Tasks:
   ci
       Runs the checks required by CI: rustfmt, clippy, tests and cargo-deny
       (when installed). Run before pushing.
-  bench-startup [--warm] [--runs N] [--budget-ms MS] [--bin PATH] [--no-build]
+  bench-startup [--warm [--gap-ms MS]] [--runs N] [--budget-ms MS] [--bin PATH] [--no-build]
       Launches the release binary N times (default 20) with --startup-report and
       reports spawn-to-first-frame latency. The first run is reported on its
       own (coldest caches); percentiles cover the other runs. Exits non-zero
       if their p95 exceeds the budget (default 50 ms).
       --warm measures launches handed to a resident instance instead: spawn of
       the second process until the resident instance has drawn the new window.
+      --gap-ms waits between those launches (default 500, like a person; the
+      resident instance prepares its next window in between).
 ";
 
 const REPORT_PREFIX: &str = "tachyon-startup";
@@ -83,6 +85,7 @@ struct BenchOptions {
     bin: Option<PathBuf>,
     build: bool,
     warm: bool,
+    gap: Duration,
 }
 
 fn parse_bench_options(args: Vec<String>) -> Result<BenchOptions, String> {
@@ -92,6 +95,7 @@ fn parse_bench_options(args: Vec<String>) -> Result<BenchOptions, String> {
         bin: None,
         build: true,
         warm: false,
+        gap: Duration::from_millis(500),
     };
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
@@ -110,6 +114,10 @@ fn parse_bench_options(args: Vec<String>) -> Result<BenchOptions, String> {
             "--bin" => options.bin = Some(value()?.into()),
             "--no-build" => options.build = false,
             "--warm" => options.warm = true,
+            "--gap-ms" => {
+                let ms: u64 = value()?.parse().map_err(|e| format!("--gap-ms: {e}"))?;
+                options.gap = Duration::from_millis(ms);
+            }
             _ => return Err(format!("unknown argument {arg}\n\n{USAGE}")),
         }
     }
@@ -145,7 +153,7 @@ fn bench_startup(args: Vec<String>) -> Result<ExitCode, String> {
     let bin = options.bin.clone().unwrap_or_else(release_binary);
 
     if options.warm {
-        let samples = bench_warm(&bin, options.runs)?;
+        let samples = bench_warm(&bin, options.runs, options.gap)?;
         return Ok(report(&samples, options.budget, "receipt"));
     }
     let mut samples = Vec::with_capacity(options.runs);
@@ -158,7 +166,7 @@ fn bench_startup(args: Vec<String>) -> Result<ExitCode, String> {
 
 /// Starts a resident instance (on a private instance id, so a running
 /// Tachyon is not involved), then times launches handed to it.
-fn bench_warm(bin: &PathBuf, runs: usize) -> Result<Vec<Sample>, String> {
+fn bench_warm(bin: &PathBuf, runs: usize, gap: Duration) -> Result<Vec<Sample>, String> {
     let id = format!("tachyon-bench-{}", std::process::id());
     let mut resident = Command::new(bin)
         .arg("--report-launches")
@@ -182,6 +190,7 @@ fn bench_warm(bin: &PathBuf, runs: usize) -> Result<Vec<Sample>, String> {
         wait_for_line(&rx, "tachyon-ready")?;
         let mut samples = Vec::with_capacity(runs);
         for run in 1..=runs {
+            std::thread::sleep(gap);
             let started = Instant::now();
             let status = Command::new(bin)
                 .env("TACHYON_INSTANCE_ID", &id)

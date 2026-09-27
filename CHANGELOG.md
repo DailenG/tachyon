@@ -31,8 +31,10 @@ All notable user-visible changes are recorded here. The format follows
 - Single-instance handoff: a second launch forwards its files to the running instance and exits
   (named pipe on Windows, Unix socket on Linux/macOS). `-n` / `--new-instance` opts out.
 - `--resident`: keep running after the last window closes so later launches open in about 30 ms
-  (without files it starts windowless, for login autostart; `Ctrl+Q` quits for real).
-  `cargo xtask bench-startup --warm` measures such launches.
+  (without files it starts windowless, for login autostart; `Ctrl+Q` quits for real). On Windows
+  a resident instance keeps a hidden window ready, so a launch shows it about 25 ms after the
+  resident instance receives it (about 41 ms from starting the launching process).
+  `cargo xtask bench-startup --warm` measures such launches (`--gap-ms` spaces them).
 - `--startup-report` and `cargo xtask bench-startup` for measuring launch-to-first-frame latency
   against the 50 ms budget.
 - `Ctrl+Q` / `Cmd+Q` quits, `Ctrl+W` / `Cmd+W` closes the window.

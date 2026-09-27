@@ -15,9 +15,9 @@ start as fast as a scratchpad and edit like Typora: one pane, inline WYSIWYG, no
 - **Platforms:** Windows first, then Linux and macOS.
 
 > **Status:** early. Block-swap editing and saving work (the block under the caret is raw
-> Markdown, the rest is rendered), on top of an incremental parser. Leaf-level swapping in lists
-> and several Phase 3 items are still open, and the startup gate is not met. See
-> [ROADMAP](docs/ROADMAP.md).
+> Markdown, the rest is rendered), on top of an incremental parser. The startup budget is met by
+> resident mode (`--resident`, opt-in for now); Phase 3's exit criteria are still to be shown on
+> the reference Windows machine. See [ROADMAP](docs/ROADMAP.md).
 
 ## Performance budgets
 

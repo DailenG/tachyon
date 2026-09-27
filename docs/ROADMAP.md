@@ -4,15 +4,18 @@ Each phase has exit criteria that must be met, with evidence, before the phase i
 later phase may start early only when it does not depend on the open criterion (Phase 2's core
 crates are needed whichever way the startup gate goes).
 
-## Phase 1: skeleton and startup gate (open: needs reference Windows hardware)
+## Phase 1: skeleton and startup gate (gate met; follow-ups open)
 
 - [x] Workspace, pinned toolchain and GPUI revision, release profile, lints
 - [x] GPUI window showing Markdown as raw text (sample, files, clipboard)
 - [x] Single-instance handoff: Windows named pipe, Unix socket
 - [x] Startup instrumentation and `cargo xtask bench-startup`
 - [x] CI on Windows (primary), Linux, macOS; cargo-deny; Windows release artifact
-- [ ] **Gate:** p95 cold and warm startup measured on reference Windows hardware, and the
-      direct-launch vs resident-mode decision recorded in [ADR 0004](adr/0004-startup-budget-and-gate.md)
+- [x] **Gate:** p95 cold and warm startup measured on reference Windows hardware, and the
+      direct-launch vs resident-mode decision recorded in [ADR 0004](adr/0004-startup-budget-and-gate.md):
+      resident mode with a ready window, p95 47.5 ms at 4K @ 30 Hz (direct launch 352 ms)
+- [ ] Re-measure with the ready window pre-sized (expected ≈ 20 ms less)
+- [ ] Resident by default: autostart at login, a way to see and quit the process, docs
 
 Measured so far (release, 20 runs, `cargo xtask bench-startup`):
 
@@ -32,8 +35,10 @@ on Linux: p50 27.6 ms, p95 29.5 ms (first launch into a windowless instance 180 
 the reference Windows machine: p95 150-188 ms, of which the resident instance's window open to
 first frame is 86-93 ms. A timing-instrumented GPUI build attributed it: per process, the D3D11
 device (97 ms) and DirectWrite's check for new fonts (130 ms, avoidable); per window, creating
-(39-59 ms) and showing (59-87 ms) it. Next: trace inside showing the window, and try a resident
-instance that keeps a hidden window ready. See ADR 0004.
+(39-59 ms) and showing (59-87 ms) it. A second trace found showing is mostly resizing the render
+targets and activation; a resident instance that keeps a hidden window ready shows it with its
+content ≈ 27 ms after the launch arrives: p95 47.5 ms from spawning the launching process. See
+ADR 0004.
 
 ## Phase 2: headless core (`tachyon-text`, `tachyon-md`, `tachyon-doc`) (done)
 
@@ -99,6 +104,10 @@ the end of 512 KiB 7 ms. All corpus tests pass.
 - [x] Save / Save As with atomic writes; unsaved-changes prompt on close and quit
 - [x] Keyboard support in prompts on Linux (own in-window prompt; Windows and macOS keep native
       dialogs)
+
+- [ ] Exit criteria shown on the reference Windows machine: the paste (one 17.9 ms frame in six
+      runs, at 1440p @ 59 Hz) and typing key-to-present p99 in a 1 MB document (not yet measured
+      there)
 
 **Exit:** pasting 5 MB of LLM output produces no frame over 16.6 ms, with visible text in the same
 frame; typing in a 1 MB document keeps key-to-present p99 within one 60 Hz frame.

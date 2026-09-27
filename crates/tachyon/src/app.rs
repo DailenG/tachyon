@@ -4,8 +4,8 @@ use std::time::Instant;
 
 use futures::StreamExt as _;
 use gpui::{
-    App, Bounds, Context, Global, KeyBinding, QuitMode, SharedString, TitlebarOptions,
-    WindowBounds, WindowHandle, WindowOptions, actions, prelude::*, px, size,
+    App, Bounds, Context, Global, KeyBinding, Pixels, QuitMode, SharedString, Size,
+    TitlebarOptions, WindowBounds, WindowHandle, WindowOptions, actions, prelude::*, px, size,
 };
 use tachyon_doc::Document;
 use tachyon_editor::Editor;
@@ -113,6 +113,7 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
 
         if let Some(listener) = listener {
             serve_forwarded_launches(listener, cx);
+            prepare_ready_window(cx);
             if report_launches {
                 report_line("tachyon-ready");
             }
@@ -143,30 +144,39 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
     });
 }
 
-fn open_window(source: Source, cx: &mut App) -> Option<WindowHandle<Editor>> {
-    let options = WindowOptions {
-        window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
-            None,
-            size(px(900.), px(1000.)),
-            cx,
-        ))),
-        titlebar: Some(TitlebarOptions { title: Some(source.title()), ..Default::default() }),
+const WINDOW_SIZE: Size<Pixels> = size(px(900.), px(1000.));
+
+fn window_options(title: SharedString, show: bool, cx: &App) -> WindowOptions {
+    WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(Bounds::centered(None, WINDOW_SIZE, cx))),
+        titlebar: Some(TitlebarOptions { title: Some(title), ..Default::default() }),
         app_id: Some(APP_ID.to_owned()),
+        show,
+        focus: show,
         ..Default::default()
-    };
+    }
+}
+
+/// The document `source` opens with; files are loaded in the background.
+fn initial_document(source: &Source, cx: &App) -> Document {
+    match source {
+        Source::Sample => Document::new(SAMPLE),
+        Source::Clipboard => Document::new(
+            &cx.read_from_clipboard().and_then(|item| item.text()).unwrap_or_default(),
+        ),
+        Source::File(_) => Document::new(""),
+    }
+}
+
+fn open_window(source: Source, cx: &mut App) -> Option<WindowHandle<Editor>> {
+    let options = window_options(source.title(), true, cx);
     let result = cx.open_window(options, move |window, cx| {
-        cx.new(|cx| match source {
-            Source::Sample => Editor::new(SAMPLE, window, cx),
-            Source::Clipboard => {
-                let text =
-                    cx.read_from_clipboard().and_then(|item| item.text()).unwrap_or_default();
-                Editor::new(&text, window, cx)
-            }
-            Source::File(path) => {
-                let editor = Editor::new("", window, cx);
+        cx.new(|cx| {
+            let editor = Editor::with_document(initial_document(&source, cx), window, cx);
+            if let Source::File(path) = source {
                 load_file(path, cx);
-                editor
             }
+            editor
         })
     });
     match result {
@@ -205,6 +215,73 @@ fn load_file(path: PathBuf, cx: &mut Context<Editor>) {
     .detach();
 }
 
+/// A resident instance's window created in advance and hidden, so a launch
+/// only fills and shows it: creating a window costs 40-60 ms on Windows, and
+/// the ready window also already has its final size, which saves resizing
+/// its render targets while it is shown (docs/adr/0004).
+struct ReadyWindow(Option<WindowHandle<Editor>>);
+
+impl Global for ReadyWindow {}
+
+/// Prepared after a launch's first frame, so the work never competes with it.
+const READY_WINDOW_DELAY: std::time::Duration = std::time::Duration::from_millis(100);
+
+fn ready_windows_enabled(cx: &App) -> bool {
+    let lifecycle = cx.global::<Lifecycle>();
+    lifecycle.resident && !lifecycle.quitting && tachyon_platform::keeps_hidden_windows_hidden()
+}
+
+fn has_ready_window(cx: &App) -> bool {
+    cx.try_global::<ReadyWindow>().is_some_and(|ready| ready.0.is_some())
+}
+
+fn prepare_ready_window(cx: &mut App) {
+    if !ready_windows_enabled(cx) || has_ready_window(cx) {
+        return;
+    }
+    cx.spawn(async move |cx| {
+        cx.background_executor().timer(READY_WINDOW_DELAY).await;
+        cx.update(|cx| {
+            if !ready_windows_enabled(cx) || has_ready_window(cx) {
+                return;
+            }
+            let options = window_options("Tachyon".into(), false, cx);
+            match cx.open_window(options, |window, cx| cx.new(|cx| Editor::new("", window, cx))) {
+                Ok(handle) => {
+                    // A hidden window only gets its final size when shown,
+                    // and resizing the render targets then takes ≈ 20 ms.
+                    let _ = handle.update(cx, |_, window, _| window.resize(WINDOW_SIZE));
+                    cx.set_global(ReadyWindow(Some(handle)));
+                }
+                Err(e) => eprintln!("tachyon: could not prepare a window ({e:#})"),
+            }
+        });
+    })
+    .detach();
+}
+
+/// The ready window, filled with `source`; `source` back if there is none.
+fn take_ready_window(source: Source, cx: &mut App) -> Result<WindowHandle<Editor>, Source> {
+    if !ready_windows_enabled(cx) || !has_ready_window(cx) {
+        return Err(source);
+    }
+    let Some(handle) = cx.global_mut::<ReadyWindow>().0.take() else { return Err(source) };
+    // Closed behind our back (e.g. by the OS): open a window normally.
+    if handle.update(cx, |_, _, _| ()).is_err() {
+        return Err(source);
+    }
+    let doc = initial_document(&source, cx);
+    let title = source.title();
+    let _ = handle.update(cx, |editor, window, cx| {
+        window.set_window_title(&title);
+        editor.set_document(doc, cx);
+        if let Source::File(path) = source {
+            load_file(path, cx);
+        }
+    });
+    Ok(handle)
+}
+
 /// A line for `cargo xtask bench-startup`, flushed immediately.
 fn report_line(line: &str) {
     let mut stdout = std::io::stdout().lock();
@@ -225,16 +302,21 @@ fn serve_forwarded_launches(listener: Listener, cx: &mut App) {
             cx.update(|cx| {
                 let report = cx.global::<Lifecycle>().report_launches;
                 for source in Source::from_cli(cli) {
-                    if let Some(handle) = open_window(source, cx) {
+                    let handle = match take_ready_window(source, cx) {
+                        Ok(handle) => Some(handle),
+                        Err(source) => open_window(source, cx),
+                    };
+                    if let Some(handle) = handle {
                         let _ = handle.update(cx, |_, window, _| {
                             window.activate_window();
-                            if report {
-                                window.on_next_frame(move |window, _| {
+                            window.on_next_frame(move |window, cx| {
+                                if report {
                                     let us = received.elapsed().as_micros();
                                     report_line(&format!("tachyon-launch first_frame_us={us}"));
                                     window.remove_window();
-                                });
-                            }
+                                }
+                                prepare_ready_window(cx);
+                            });
                         });
                     }
                 }
