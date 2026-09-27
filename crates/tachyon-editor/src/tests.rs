@@ -814,3 +814,28 @@ fn nesting_renumbers_ordered_items_and_empty_nested_items_move_up(cx: &mut TestA
     cx.run_until_parked();
     assert_eq!(text(&editor, cx), "- a\n  - b\n- ", "Enter on an empty nested item moves it up");
 }
+
+#[gpui::test]
+fn tab_leaves_lines_the_selection_only_touches_or_that_are_code(cx: &mut TestAppContext) {
+    let doc = "- a\n- b\n- c\n";
+    let (editor, cx) = open(doc, cx);
+    // From inside "b" to the start of "c": "c" is not selected.
+    editor.update(cx, |e, cx| {
+        e.move_to(6, false, cx);
+        e.move_to(8, true, cx);
+    });
+    cx.simulate_keystrokes("tab");
+    cx.run_until_parked();
+    assert_eq!(text(&editor, cx), "- a\n  - b\n- c\n");
+
+    let doc = "- a\n- b\n\n```\n- code\n```\n";
+    let (editor, cx) = open(doc, cx);
+    let end = doc.find("code").expect("fixture");
+    editor.update(cx, |e, cx| {
+        e.move_to(6, false, cx);
+        e.move_to(end, true, cx);
+    });
+    cx.simulate_keystrokes("tab");
+    cx.run_until_parked();
+    assert_eq!(text(&editor, cx), "- a\n  - b\n\n```\n- code\n```\n", "the fenced line stays");
+}

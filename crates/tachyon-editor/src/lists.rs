@@ -158,7 +158,15 @@ impl Editor {
         }
         let rope = self.doc.buffer().rope();
         let start = movement::home(rope, self.selection.start);
-        let end = movement::end(rope, self.selection.end);
+        // A selection ending at a line start does not include that line.
+        let last = if self.selection.end > self.selection.start
+            && movement::home(rope, self.selection.end) == self.selection.end
+        {
+            self.selection.end - 1
+        } else {
+            self.selection.end
+        };
+        let end = movement::end(rope, last);
         let text = rope.byte_slice(start..end).to_string();
         let first_line = rope.byte_to_line(start);
         // Lines before the selection, nearest first, for finding siblings and parents.
@@ -173,8 +181,10 @@ impl Editor {
         let mut line_start = start;
         let mut any_item = false;
         for line in text.split('\n') {
-            any_item |= parse(line).is_some();
-            let edited = parse(line).and_then(|item| {
+            // A selection can reach into a code block, where `- x` is text, not an item.
+            let item = parse(line).filter(|_| self.in_list_context(line_start));
+            any_item |= item.is_some();
+            let edited = item.and_then(|item| {
                 let previous = done.iter().rev().chain(&before).map(String::as_str);
                 let indent = if outdent {
                     parent_indent(previous, &item)?
