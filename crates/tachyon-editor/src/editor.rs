@@ -1231,20 +1231,29 @@ impl Editor {
         let text = self.doc.buffer().to_saved_text();
         let version = self.doc.buffer().version();
         // Only the file this document came from has a version to protect.
-        let known = self.disk_stamp.filter(|_| !force && self.file.as_ref() == Some(&path));
+        let same_file = !force && self.file.as_ref() == Some(&path);
+        if same_file && self.disk_changed {
+            // Known (or possibly) changed on disk already: ask before writing anything.
+            return self.confirm_overwrite(path, window, cx, after);
+        }
+        let known = self.disk_stamp.filter(|_| same_file);
         cx.spawn_in(window, async move |this, cx| {
             let target = path.clone();
             let written = cx
                 .background_executor()
                 .spawn(async move {
-                    let current = DiskStamp::of(&target);
-                    if let (Some(known), Some(current)) = (known, current)
-                        && known != current
-                    {
+                    // The file is unchanged, or gone (saving recreates it).
+                    let unchanged = || {
+                        known.is_none_or(|known| {
+                            DiskStamp::of(&target).is_none_or(|current| current == known)
+                        })
+                    };
+                    if !unchanged() {
                         return Ok(None);
                     }
-                    write_atomically(&target, text.as_bytes())
-                        .map(|()| Some(DiskStamp::of(&target)))
+                    // Checked again right before the new file replaces the old one.
+                    let written = write_atomically_if(&target, text.as_bytes(), unchanged)?;
+                    io::Result::Ok(written.then(|| DiskStamp::of(&target)))
                 })
                 .await;
             let _ = this.update_in(cx, |editor, window, cx| match written {
@@ -1468,6 +1477,17 @@ pub(crate) fn map_drawn(drawn: &Range<usize>, old: &Range<usize>, new_len: usize
 /// `path`, so a crash or full disk never leaves a truncated file. Follows a
 /// symlink to its target and keeps the target's permissions.
 pub(crate) fn write_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    write_atomically_if(path, bytes, || true).map(drop)
+}
+
+/// Like [`write_atomically`], but asks `still_ok` right before the new file replaces the old one
+/// and leaves the old one if it says no (returning `false`): the latest point a concurrent change
+/// by another program can be noticed.
+pub(crate) fn write_atomically_if(
+    path: &Path,
+    bytes: &[u8],
+    still_ok: impl FnOnce() -> bool,
+) -> io::Result<bool> {
     let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let name = path
         .file_name()
@@ -1481,9 +1501,12 @@ pub(crate) fn write_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
         if let Ok(metadata) = std::fs::metadata(&path) {
             std::fs::set_permissions(&temp, metadata.permissions())?;
         }
-        std::fs::rename(&temp, &path)
+        if !still_ok() {
+            return Ok(false);
+        }
+        std::fs::rename(&temp, &path).map(|()| true)
     })();
-    if result.is_err() {
+    if !matches!(result, Ok(true)) {
         let _ = std::fs::remove_file(&temp);
     }
     result

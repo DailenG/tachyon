@@ -15,8 +15,9 @@ use crate::editor::{Editor, write_atomically};
 const BACKUP_DELAY: Duration = Duration::from_millis(1500);
 
 /// Where unsaved documents are backed up. Each has a `<slot>.md` file with its text (original line
-/// endings) and, if it belongs to a file, a `<slot>.path` file with that file's path and, on a
-/// second line, the file's version on disk when it was read (to notice later changes).
+/// endings) and, if it belongs to a file, a `<slot>.path` file: `stamp <version>` on the first
+/// line (the file's version on disk when it was read, to notice later changes; `stamp unknown` if
+/// it had none), then the file's path, which may itself contain line breaks.
 pub struct Backups {
     dir: PathBuf,
 }
@@ -54,9 +55,7 @@ impl Backups {
             .filter_map(|slot| {
                 let text = std::fs::read_to_string(&slot).ok()?;
                 let meta = std::fs::read_to_string(slot.with_extension("path")).unwrap_or_default();
-                let mut lines = meta.lines();
-                let file = lines.next().filter(|line| !line.is_empty()).map(PathBuf::from);
-                let stamp = lines.next().and_then(DiskStamp::decode);
+                let (file, stamp) = parse_meta(&meta);
                 Some(Restored { slot, text, file, stamp })
             })
             .collect()
@@ -88,14 +87,24 @@ fn write_slot(
     let path_file = slot.with_extension("path");
     match file.and_then(Path::to_str) {
         Some(file) => {
-            let stamp = stamp.map(DiskStamp::encode).unwrap_or_default();
-            write_atomically(&path_file, format!("{file}\n{stamp}").as_bytes())
+            let stamp = stamp.map_or_else(|| "unknown".to_owned(), DiskStamp::encode);
+            write_atomically(&path_file, format!("stamp {stamp}\n{file}").as_bytes())
         }
         None => match std::fs::remove_file(&path_file) {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
             _ => Ok(()),
         },
     }
+}
+
+/// The file and its version from a `<slot>.path` file. Backups written before versions were
+/// recorded hold just the path.
+fn parse_meta(meta: &str) -> (Option<PathBuf>, Option<DiskStamp>) {
+    let (stamp, path) = match meta.strip_prefix("stamp ").and_then(|rest| rest.split_once('\n')) {
+        Some((stamp, path)) => (DiskStamp::decode(stamp), path),
+        None => (None, meta),
+    };
+    ((!path.is_empty()).then(|| PathBuf::from(path)), stamp)
 }
 
 fn remove_slot(slot: &Path) {
@@ -108,6 +117,8 @@ impl Editor {
     /// as unsaved.
     pub fn adopt_backup(&mut self, restored: Restored, cx: &mut Context<Self>) {
         self.set_document(tachyon_doc::Document::new(&restored.text), cx);
+        // Without a recorded version the file may have changed since: Save asks first.
+        self.disk_changed = restored.file.is_some() && restored.stamp.is_none();
         self.file = restored.file;
         self.disk_stamp = restored.stamp;
         // No later version equals this one, so the document stays modified until saved.
@@ -179,5 +190,20 @@ impl Editor {
             self.backup_slot = Some(cx.try_global::<Backups>()?.new_slot());
         }
         self.backup_slot.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn metadata_keeps_paths_with_line_breaks_and_reads_old_backups() {
+        let stamp = DiskStamp { modified: None, len: 3 };
+        let meta = format!("stamp {}\n/odd\nname.md", stamp.encode());
+        assert_eq!(parse_meta(&meta), (Some(PathBuf::from("/odd\nname.md")), Some(stamp)));
+        assert_eq!(parse_meta("stamp unknown\n/a.md"), (Some(PathBuf::from("/a.md")), None));
+        assert_eq!(parse_meta("/old/format.md"), (Some(PathBuf::from("/old/format.md")), None));
+        assert_eq!(parse_meta(""), (None, None));
     }
 }

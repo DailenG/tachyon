@@ -24,23 +24,28 @@ impl DiskStamp {
         Some(DiskStamp { modified: metadata.modified().ok(), len: metadata.len() })
     }
 
-    /// Serialized for a hot-exit backup: nanoseconds since the epoch (or `-`) and the length.
+    /// Serialized for a hot-exit backup: signed nanoseconds from the epoch (`none` if the file
+    /// system has no modification time) and the length.
     pub(crate) fn encode(self) -> String {
-        let nanos = self
-            .modified
-            .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-            .map_or_else(|| "-".to_owned(), |d| d.as_nanos().to_string());
+        let nanos = self.modified.map_or_else(
+            || "none".to_owned(),
+            |t| match t.duration_since(SystemTime::UNIX_EPOCH) {
+                Ok(after) => after.as_nanos().to_string(),
+                Err(before) => format!("-{}", before.duration().as_nanos()),
+            },
+        );
         format!("{nanos} {}", self.len)
     }
 
     pub(crate) fn decode(text: &str) -> Option<Self> {
         let (nanos, len) = text.trim().split_once(' ')?;
+        let from_nanos = |n: &str| n.parse::<u64>().ok().map(std::time::Duration::from_nanos);
         let modified = match nanos {
-            "-" => None,
-            n => {
-                let nanos: u64 = n.parse().ok()?;
-                Some(SystemTime::UNIX_EPOCH + std::time::Duration::from_nanos(nanos))
-            }
+            "none" => None,
+            n => Some(match n.strip_prefix('-') {
+                Some(before) => SystemTime::UNIX_EPOCH.checked_sub(from_nanos(before)?)?,
+                None => SystemTime::UNIX_EPOCH.checked_add(from_nanos(n)?)?,
+            }),
         };
         Some(DiskStamp { modified, len: len.parse().ok()? })
     }
@@ -75,6 +80,7 @@ impl Editor {
                 .await;
             let _ = this.update(cx, |editor, cx| {
                 if let Ok(text) = text
+                    && editor.file.as_deref() == Some(path.as_path())
                     && !editor.is_modified()
                     && editor.disk_stamp == Some(known)
                 {
@@ -102,6 +108,11 @@ mod tests {
         assert_eq!(DiskStamp::decode(&stamp.encode()), Some(stamp));
         let unknown = DiskStamp { modified: None, len: 7 };
         assert_eq!(DiskStamp::decode(&unknown.encode()), Some(unknown));
+        let before_epoch = DiskStamp {
+            modified: Some(SystemTime::UNIX_EPOCH - std::time::Duration::from_secs(86_400)),
+            len: 1,
+        };
+        assert_eq!(DiskStamp::decode(&before_epoch.encode()), Some(before_epoch));
         assert_eq!(DiskStamp::decode("garbage"), None);
     }
 }
