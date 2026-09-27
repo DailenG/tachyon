@@ -271,7 +271,9 @@ fn take_ready_window(source: Source, cx: &mut App) -> Result<WindowHandle<Editor
         return Err(source);
     }
     let doc = initial_document(&source, cx);
-    let _ = handle.update(cx, |editor, _, cx| {
+    let title = source.title();
+    let _ = handle.update(cx, |editor, window, cx| {
+        window.set_window_title(&title);
         editor.set_document(doc, cx);
         if let Source::File(path) = source {
             load_file(path, cx);
