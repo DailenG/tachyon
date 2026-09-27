@@ -49,6 +49,16 @@ impl Render for Editor {
             .on_action(cx.listener(Self::end))
             .on_action(cx.listener(Self::document_start))
             .on_action(cx.listener(Self::document_end))
+            .on_drop(|paths: &gpui::ExternalPaths, _, cx| {
+                if let Some(open) = cx.try_global::<crate::editor::OpenPaths>().map(|o| o.0.clone())
+                {
+                    open(paths.paths().to_vec(), cx);
+                }
+            })
+            .on_action(cx.listener(Self::page_up))
+            .on_action(cx.listener(Self::page_down))
+            .on_action(cx.listener(Self::select_page_up))
+            .on_action(cx.listener(Self::select_page_down))
             .on_action(cx.listener(Self::select_left))
             .on_action(cx.listener(Self::select_right))
             .on_action(cx.listener(Self::select_up))

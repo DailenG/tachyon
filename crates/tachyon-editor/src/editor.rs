@@ -32,6 +32,10 @@ actions!(
         End,
         DocumentStart,
         DocumentEnd,
+        PageUp,
+        PageDown,
+        SelectPageUp,
+        SelectPageDown,
         SelectLeft,
         SelectRight,
         SelectUp,
@@ -84,6 +88,10 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("ctrl-home", DocumentStart, c),
         KeyBinding::new("cmd-up", DocumentStart, c),
         KeyBinding::new("ctrl-end", DocumentEnd, c),
+        KeyBinding::new("pageup", PageUp, c),
+        KeyBinding::new("pagedown", PageDown, c),
+        KeyBinding::new("shift-pageup", SelectPageUp, c),
+        KeyBinding::new("shift-pagedown", SelectPageDown, c),
         KeyBinding::new("cmd-down", DocumentEnd, c),
         KeyBinding::new("shift-left", SelectLeft, c),
         KeyBinding::new("shift-right", SelectRight, c),
@@ -424,6 +432,19 @@ impl Editor {
         self.move_to(target, select, cx);
     }
 
+    /// Scrolls by one viewport height and moves the caret by as many source lines as fit in it.
+    fn page(&mut self, direction: isize, select: bool, cx: &mut Context<Self>) {
+        let height = self.list.viewport_bounds().size.height;
+        let line_height = self
+            .active_layout
+            .as_ref()
+            .map_or(self.theme.text_size * 1.6, |(layout, _)| layout.line_height());
+        let lines = ((height / line_height) as isize - 1).max(1);
+        self.list.scroll_by(height * direction as f32);
+        let target = movement::vertical(self.doc.buffer().rope(), self.head(), lines * direction);
+        self.move_to(target, select, cx);
+    }
+
     fn update_active(&mut self) {
         let index = self.active_block();
         let id =
@@ -759,6 +780,28 @@ impl Editor {
         self.goal_x = None;
         self.move_to(self.doc.len(), false, cx);
     }
+    pub(crate) fn page_up(&mut self, _: &PageUp, _: &mut Window, cx: &mut Context<Self>) {
+        self.page(-1, false, cx);
+    }
+    pub(crate) fn page_down(&mut self, _: &PageDown, _: &mut Window, cx: &mut Context<Self>) {
+        self.page(1, false, cx);
+    }
+    pub(crate) fn select_page_up(
+        &mut self,
+        _: &SelectPageUp,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.page(-1, true, cx);
+    }
+    pub(crate) fn select_page_down(
+        &mut self,
+        _: &SelectPageDown,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.page(1, true, cx);
+    }
     pub(crate) fn select_left(&mut self, _: &SelectLeft, _: &mut Window, cx: &mut Context<Self>) {
         self.move_by(true, cx, movement::prev_grapheme);
     }
@@ -1054,6 +1097,15 @@ fn installed_code_font(window: &Window) -> Option<&'static str> {
             .copied()
     })
 }
+
+/// Opens files dropped onto an editor window. Set by the application, which owns windows; without
+/// it drops are ignored.
+pub struct OpenPaths(pub std::rc::Rc<OpenPathsFn>);
+
+/// Handler type for [`OpenPaths`].
+pub type OpenPathsFn = dyn Fn(Vec<PathBuf>, &mut App);
+
+impl gpui::Global for OpenPaths {}
 
 /// A large paste whose text is being prepared off the UI thread.
 struct PendingPaste {

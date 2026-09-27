@@ -124,3 +124,22 @@ the end of 512 KiB 7 ms. All corpus tests pass.
 
 **Exit:** pasting 5 MB of LLM output produces no frame over 16.6 ms, with visible text in the same
 frame; typing in a 1 MB document keeps key-to-present p99 within one 60 Hz frame.
+
+## Phase 4: everyday editing (in progress)
+
+What a scratchpad needs day to day, without giving up the budgets above.
+
+- [x] New window (`Ctrl+N`), Open (`Ctrl+O`, native dialog; several files open in their own
+      windows), files dropped onto a window open too; Page Up / Page Down (with Shift to select)
+- [ ] Find in the document (`Ctrl+F`): matches highlighted in rendered and raw blocks, Enter /
+      Shift+Enter (F3 / Shift+F3) to step through them, Escape to close
+- [ ] Replace (`Ctrl+H`): one match or all, as one undo step
+- [ ] Light theme, following the system appearance
+- [ ] Zoom (`Ctrl+=`, `Ctrl+-`, `Ctrl+0`)
+- [ ] Open links with `Ctrl+click`
+- [ ] Tray icon on Windows for the resident process (show a window, quit)
+- [ ] Read the clipboard off the UI thread (the Phase 3 follow-up above)
+
+**Exit:** every item above covered by a `gpui::test` or a live check; finding in a 5 MB document
+keeps every frame under 16.6 ms; startup budgets unchanged (`cargo xtask bench-startup --warm`).
+

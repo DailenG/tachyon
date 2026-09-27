@@ -10,7 +10,7 @@ mod prompt;
 mod render;
 mod theme;
 
-pub use crate::editor::{CloseWindow, Editor, KEY_CONTEXT, Save, SaveAs, key_bindings};
+pub use crate::editor::{CloseWindow, Editor, KEY_CONTEXT, OpenPaths, Save, SaveAs, key_bindings};
 pub use crate::prompt::keyboard_prompt;
 pub use crate::theme::Theme;
 
