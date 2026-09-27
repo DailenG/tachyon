@@ -1162,3 +1162,30 @@ fn settings_choose_theme_and_zoom_and_saving_them_applies_at_once(cx: &mut TestA
     assert_eq!(settings.theme, crate::ThemeChoice::Light);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[gpui::test]
+fn local_images_are_found_per_line_and_remote_ones_are_not_loaded(cx: &mut TestAppContext) {
+    let doc = "![diagram](img/d.png)\n\nSee ![remote](https://x.dev/r.png) here.\n";
+    let (editor, cx) = open(doc, cx);
+    let dir = std::env::temp_dir().join("tachyon-images");
+    editor.update(cx, |e, cx| e.set_file(dir.join("doc.md"), cx));
+    let images = editor.read_with(cx, |e, _| {
+        e.document()
+            .blocks()
+            .iter()
+            .enumerate()
+            .map(|(i, block)| {
+                let ir = &block.parsed().ir;
+                let start = e.document().block_range(i).start;
+                e.line_images(ir, &(0..ir.text.len()), start)
+                    .into_iter()
+                    .map(|(path, offset, visible)| (path, offset, visible, ir.text.len()))
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>()
+    });
+    // The first paragraph is just the image: its whole visible text is the alt text, and a click
+    // puts the caret at the alt text's source (after `![`).
+    assert_eq!(images[0], [(dir.join("img/d.png"), 2, 0..7, 7)]);
+    assert!(images[1].is_empty(), "remote images are not loaded");
+}

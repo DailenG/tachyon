@@ -2,12 +2,14 @@
 //! other block shows its rendered IR with syntax hidden.
 
 use std::ops::Range;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use gpui::{
     AnyElement, Context, ElementInputHandler, Entity, FontWeight, HighlightStyle, IntoElement,
-    MouseButton, MouseDownEvent, MouseMoveEvent, Render, SharedString, StyledText, TextLayout,
-    UnderlineStyle, Window, canvas, div, fill, list, prelude::*, px, relative, size,
+    MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit, Render, SharedString, StyledImage as _,
+    StyledText, TextLayout, UnderlineStyle, Window, canvas, div, fill, img, list, prelude::*, px,
+    relative, size,
 };
 use tachyon_md::{BlockKind, LineInfo, LineKind, Marker, ParsedBlock};
 
@@ -525,19 +527,83 @@ impl Editor {
                 continue;
             }
             let end = ir.lines.get(i + 1).map_or(ir.text.len(), |next| next.start - 1);
-            column = column.child(self.render_line(
-                line,
-                line.start..end,
-                &parsed,
-                block_start,
-                &marks,
-                cx,
-            ));
+            let images = self.line_images(ir, &(line.start..end), block_start);
+            // A line that is just an image shows the image instead of its alt text.
+            let image_only = images.len() == 1 && images[0].2 == (line.start..end);
+            if !image_only {
+                column = column.child(self.render_line(
+                    line,
+                    line.start..end,
+                    &parsed,
+                    block_start,
+                    &marks,
+                    cx,
+                ));
+            }
+            for (path, offset, _) in images {
+                column = column.child(self.render_image(path, offset, cx));
+            }
         }
         if let BlockKind::Heading(1 | 2) = parsed.kind {
             column = column.pb_1().border_b_1().border_color(self.theme.rule);
         }
         column.into_any_element()
+    }
+
+    /// Local images in `line` (visible range) of a rendered block: their file, the source offset
+    /// a click puts the caret at, and their visible range.
+    pub(crate) fn line_images(
+        &self,
+        ir: &tachyon_md::BlockIr,
+        line: &Range<usize>,
+        block_start: usize,
+    ) -> Vec<(PathBuf, usize, Range<usize>)> {
+        ir.links
+            .iter()
+            .filter(|link| line.start <= link.visible.start && link.visible.end <= line.end)
+            .filter(|link| {
+                ir.runs.iter().any(|run| {
+                    run.style.contains(tachyon_md::Style::IMAGE)
+                        && run.range.start <= link.visible.start
+                        && link.visible.start < run.range.end
+                })
+            })
+            .filter_map(|link| {
+                let path = crate::links::image_path(&link.dest, self.file.as_deref())?;
+                let offset = block_start + ir.visible_to_source(link.visible.start);
+                Some((path, offset, link.visible.clone()))
+            })
+            .collect()
+    }
+
+    /// An image, scaled down to fit the column; loaded and decoded off the UI thread by GPUI. A
+    /// click edits its Markdown.
+    fn render_image(&self, path: PathBuf, offset: usize, cx: &mut Context<Self>) -> AnyElement {
+        let theme = &self.theme;
+        let editor = cx.entity();
+        let missing = path.display().to_string();
+        let muted = theme.muted;
+        div()
+            .py_1()
+            .child(
+                img(path)
+                    .max_w_full()
+                    .max_h(theme.scaled(px(480.)))
+                    .object_fit(ObjectFit::ScaleDown)
+                    .with_fallback(move || {
+                        div()
+                            .text_color(muted)
+                            .child(format!("image not found: {missing}"))
+                            .into_any_element()
+                    }),
+            )
+            .on_mouse_down(MouseButton::Left, move |event: &MouseDownEvent, window, cx| {
+                editor.update(cx, |editor, cx| {
+                    editor.mouse_down(offset, event.modifiers, event.click_count, window, cx)
+                });
+                cx.stop_propagation();
+            })
+            .into_any_element()
     }
 
     fn render_line(

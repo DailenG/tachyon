@@ -8,6 +8,8 @@ All notable user-visible changes are recorded here. The format follows
 
 ### Added
 
+- Local images are shown in rendered text (paths relative to the document, absolute or `file:`);
+  remote images still show their alt text.
 - Settings (`Ctrl+,` opens `settings.toml`): theme (system, dark or light), zoom of new windows,
   and hot exit on or off. Saving the file applies the theme to open windows.
 - Open recent (`Ctrl+R`): pick one of the last 30 files you opened or saved; type to filter by
