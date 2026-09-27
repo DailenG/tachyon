@@ -38,28 +38,77 @@ pub(crate) fn is_dark(appearance: WindowAppearance) -> bool {
     matches!(appearance, WindowAppearance::Dark | WindowAppearance::VibrantDark)
 }
 
+/// Background surfaces.
+#[derive(Clone, Copy, Debug)]
+pub struct Surfaces {
+    /// The window and the rendered document.
+    pub canvas: Hsla,
+    /// The raw editing card, find bar, pickers and prompt.
+    pub raised: Hsla,
+    /// Inline and fenced code, table headers.
+    pub code: Hsla,
+}
+
+/// Text colors. Each meets 4.5:1 on every surface (see the contrast test).
+#[derive(Clone, Copy, Debug)]
+pub struct TextColors {
+    pub primary: Hsla,
+    /// Labels, list markers, quotes, metadata.
+    pub muted: Hsla,
+    pub link: Hsla,
+    /// Text on a solid `accent` fill (selected picker row, prompt button, checked task).
+    pub on_accent: Hsla,
+}
+
+/// 1 px boundaries.
+#[derive(Clone, Copy, Debug)]
+pub struct Borders {
+    /// Rules, table grid, heading underline, quote bar: decorative.
+    pub subtle: Hsla,
+    /// Boundaries that identify something interactive; at least 3:1 on every surface.
+    pub control: Hsla,
+    /// The focused element's boundary; at least 3:1 on every surface.
+    pub focus: Hsla,
+}
+
+/// Editing states. The fills are the only translucent colors in the editor.
+#[derive(Clone, Copy, Debug)]
+pub struct Editing {
+    pub selection: Hsla,
+    pub find_match: Hsla,
+    pub find_current: Hsla,
+    /// Opaque underline marking find matches (thicker under the current one).
+    pub find_underline: Hsla,
+    pub caret: Hsla,
+}
+
+/// Code token colors, and math.
+#[derive(Clone, Copy, Debug)]
+pub struct Syntax {
+    pub keyword: Hsla,
+    pub string: Hsla,
+    pub comment: Hsla,
+    pub number: Hsla,
+    pub function: Hsla,
+    pub type_: Hsla,
+    pub math: Hsla,
+}
+
+/// Semantic design tokens (docs/design/TOKENS_PROPOSAL.md) and type metrics. All values are
+/// compiled in: choosing a theme costs nothing at startup.
 #[derive(Clone, Debug)]
 pub struct Theme {
     /// Whether this is the dark theme.
     pub dark: bool,
     /// Zoom factor the sizes below are scaled by (1.0 = 100 %).
     pub zoom: f32,
-    pub background: Hsla,
-    pub foreground: Hsla,
-    pub muted: Hsla,
+    pub surface: Surfaces,
+    pub text: TextColors,
+    pub border: Borders,
+    /// The one solid brand blue: links, selected rows, prompt buttons, checked tasks.
     pub accent: Hsla,
-    pub code_background: Hsla,
-    pub raw_background: Hsla,
-    pub quote_bar: Hsla,
-    pub rule: Hsla,
-    pub selection: Hsla,
-    /// Find matches, and the selected one.
-    pub find_match: Hsla,
-    pub find_current: Hsla,
-    pub cursor: Hsla,
-    /// Code token colors: keyword, string, comment, number, function, type.
-    pub syntax: [Hsla; 6],
-    pub math: Hsla,
+    pub editing: Editing,
+    pub syntax: Syntax,
     pub text_size: Pixels,
     pub code_size: Pixels,
     /// Heading sizes for levels 1–6.
@@ -102,27 +151,39 @@ impl Theme {
     pub fn light() -> Self {
         Theme {
             dark: false,
-            background: rgb(0xffffff).into(),
-            foreground: rgb(0x1f2328).into(),
-            muted: rgb(0x6e7781).into(),
-            accent: rgb(0x0969da).into(),
-            code_background: rgb(0xeff1f3).into(),
-            raw_background: rgb(0xf6f8fa).into(),
-            quote_bar: rgb(0xd0d7de).into(),
-            rule: rgb(0xd8dee4).into(),
-            selection: rgba(0x0969da33).into(),
-            find_match: rgba(0xf2cc6080).into(),
-            find_current: rgba(0xf0a020c0).into(),
-            cursor: rgb(0x1f2328).into(),
-            syntax: [
-                rgb(0xcf222e).into(),
-                rgb(0x0a3069).into(),
-                rgb(0x6e7781).into(),
-                rgb(0x0550ae).into(),
-                rgb(0x8250df).into(),
-                rgb(0x953800).into(),
-            ],
-            math: rgb(0x8250df).into(),
+            surface: Surfaces {
+                canvas: rgb(0xfafbfe).into(),
+                raised: rgb(0xf1f5f9).into(),
+                code: rgb(0xe7edf5).into(),
+            },
+            text: TextColors {
+                primary: rgb(0x172335).into(),
+                muted: rgb(0x42566c).into(),
+                link: rgb(0x1356a4).into(),
+                on_accent: rgb(0xffffff).into(),
+            },
+            border: Borders {
+                subtle: rgb(0xb5c2d0).into(),
+                control: rgb(0x66798f).into(),
+                focus: rgb(0x1356a4).into(),
+            },
+            accent: rgb(0x1356a4).into(),
+            editing: Editing {
+                selection: rgba(0x1356a42b).into(),
+                find_match: rgba(0xe8ab4138).into(),
+                find_current: rgba(0xe8ab4154).into(),
+                find_underline: rgb(0x87400f).into(),
+                caret: rgb(0x172335).into(),
+            },
+            syntax: Syntax {
+                keyword: rgb(0x8b2a54).into(),
+                string: rgb(0x286430).into(),
+                comment: rgb(0x45596e).into(),
+                number: rgb(0x87400f).into(),
+                function: rgb(0x235892).into(),
+                type_: rgb(0x6a3b8c).into(),
+                math: rgb(0x693c91).into(),
+            },
             ..Self::dark()
         }
     }
@@ -131,27 +192,39 @@ impl Theme {
         Theme {
             dark: true,
             zoom: 1.,
-            background: rgb(0x1e1f22).into(),
-            foreground: rgb(0xd8dade).into(),
-            muted: rgb(0x80848e).into(),
-            accent: rgb(0x6cb6ff).into(),
-            code_background: rgb(0x2a2c31).into(),
-            raw_background: rgb(0x24262a).into(),
-            quote_bar: rgb(0x4b4f58).into(),
-            rule: rgb(0x3d4047).into(),
-            selection: rgba(0x3d6fb566).into(),
-            find_match: rgba(0xe5c07b40).into(),
-            find_current: rgba(0xe5c07baa).into(),
-            cursor: rgb(0xe6e8eb).into(),
-            syntax: [
-                rgb(0xc678dd).into(),
-                rgb(0x98c379).into(),
-                rgb(0x7f848e).into(),
-                rgb(0xd19a66).into(),
-                rgb(0x61afef).into(),
-                rgb(0xe5c07b).into(),
-            ],
-            math: rgb(0xd2a8ff).into(),
+            surface: Surfaces {
+                canvas: rgb(0x0e1623).into(),
+                raised: rgb(0x192434).into(),
+                code: rgb(0x131e2e).into(),
+            },
+            text: TextColors {
+                primary: rgb(0xebf2fa).into(),
+                muted: rgb(0xabbdd0).into(),
+                link: rgb(0x8bc3ff).into(),
+                on_accent: rgb(0x0e1623).into(),
+            },
+            border: Borders {
+                subtle: rgb(0x40526a).into(),
+                control: rgb(0x6f849b).into(),
+                focus: rgb(0x8bc3ff).into(),
+            },
+            accent: rgb(0x8bc3ff).into(),
+            editing: Editing {
+                selection: rgba(0x8bc3ff33).into(),
+                find_match: rgba(0xbe844730).into(),
+                find_current: rgba(0xbe84474d).into(),
+                find_underline: rgb(0xe4b17d).into(),
+                caret: rgb(0xebf2fa).into(),
+            },
+            syntax: Syntax {
+                keyword: rgb(0xf398c4).into(),
+                string: rgb(0xa9d28b).into(),
+                comment: rgb(0xabbdd0).into(),
+                number: rgb(0xe4b17d).into(),
+                function: rgb(0x8bc3ff).into(),
+                type_: rgb(0xd3aaff).into(),
+                math: rgb(0xc6a2ed).into(),
+            },
             text_size: px(15.),
             code_size: px(13.5),
             heading_sizes: [px(28.), px(23.), px(19.), px(17.), px(15.), px(14.)],
@@ -190,37 +263,162 @@ impl Theme {
         }
         if style.contains(Style::STRIKETHROUGH) {
             h.strikethrough =
-                Some(StrikethroughStyle { thickness: px(1.), color: Some(self.muted) });
+                Some(StrikethroughStyle { thickness: px(1.), color: Some(self.text.muted) });
         }
         if style.contains(Style::CODE) {
-            h.background_color = Some(self.code_background);
+            h.background_color = Some(self.surface.code);
         }
         if style.contains(Style::LINK) || style.contains(Style::IMAGE) {
-            h.color = Some(self.accent);
-            h.underline =
-                Some(UnderlineStyle { thickness: px(1.), color: Some(self.accent), wavy: false });
+            h.color = Some(self.text.link);
+            h.underline = Some(UnderlineStyle {
+                thickness: px(1.),
+                color: Some(self.text.link),
+                wavy: false,
+            });
         }
         if style.contains(Style::MATH) {
-            h.color = Some(self.math);
+            h.color = Some(self.syntax.math);
             h.font_style = Some(FontStyle::Italic);
         }
         if style.contains(Style::HTML) || style.contains(Style::FOOTNOTE_REF) {
-            h.color = Some(self.muted);
+            h.color = Some(self.text.muted);
         }
+        let s = &self.syntax;
         let tokens = [
-            Style::KEYWORD,
-            Style::STRING,
-            Style::COMMENT,
-            Style::NUMBER,
-            Style::FUNCTION,
-            Style::TYPE,
+            (Style::KEYWORD, s.keyword),
+            (Style::STRING, s.string),
+            (Style::COMMENT, s.comment),
+            (Style::NUMBER, s.number),
+            (Style::FUNCTION, s.function),
+            (Style::TYPE, s.type_),
         ];
-        if let Some(i) = tokens.iter().position(|&token| style.contains(token)) {
-            h.color = Some(self.syntax[i]);
-            if style.contains(Style::COMMENT) {
+        if let Some(&(token, color)) = tokens.iter().find(|&&(token, _)| style.contains(token)) {
+            h.color = Some(color);
+            if token == Style::COMMENT {
                 h.font_style = Some(FontStyle::Italic);
             }
         }
         h
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::{Hsla, Rgba};
+
+    use super::Theme;
+
+    /// 8-bit sRGB channels and alpha.
+    fn channels(color: Hsla) -> ([f32; 3], f32) {
+        let Rgba { r, g, b, a } = Rgba::from(color);
+        ([r, g, b].map(|c| (c * 255.).round()), a)
+    }
+
+    /// `color` blended over the opaque `surface` in 8-bit sRGB, as TOKENS_PROPOSAL.md measures.
+    fn over(color: Hsla, surface: Hsla) -> [f32; 3] {
+        let ((fg, a), (bg, _)) = (channels(color), channels(surface));
+        [0, 1, 2].map(|i| (a * fg[i] + (1. - a) * bg[i]).round())
+    }
+
+    fn luminance(rgb: [f32; 3]) -> f32 {
+        let [r, g, b] = rgb.map(|c| {
+            let c = c / 255.;
+            if c <= 0.039_28 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+        });
+        0.2126 * r + 0.7152 * g + 0.0722 * b
+    }
+
+    /// WCAG 2.x contrast ratio.
+    fn contrast(a: [f32; 3], b: [f32; 3]) -> f32 {
+        let (la, lb) = (luminance(a), luminance(b));
+        (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
+    }
+
+    fn opaque(color: Hsla) -> [f32; 3] {
+        channels(color).0
+    }
+
+    /// Every documented pair, for one theme: returns the failures.
+    fn failures(theme: &Theme) -> Vec<String> {
+        let t = &theme.text;
+        let s = &theme.syntax;
+        let texts = [
+            ("text.primary", t.primary),
+            ("text.muted", t.muted),
+            ("text.link", t.link),
+            ("syntax.keyword", s.keyword),
+            ("syntax.string", s.string),
+            ("syntax.comment", s.comment),
+            ("syntax.number", s.number),
+            ("syntax.function", s.function),
+            ("syntax.type", s.type_),
+            ("syntax.math", s.math),
+        ];
+        let surfaces = [
+            ("canvas", theme.surface.canvas),
+            ("raised", theme.surface.raised),
+            ("code", theme.surface.code),
+        ];
+        let e = &theme.editing;
+        let mut failures = Vec::new();
+        let mut check = |what: String, ratio: f32, min: f32| {
+            if ratio < min {
+                failures.push(format!("{what}: {ratio:.2} < {min}"));
+            }
+        };
+        for (surface_name, surface) in surfaces {
+            let bg = opaque(surface);
+            for (name, color) in texts {
+                check(format!("{name} on {surface_name}"), contrast(opaque(color), bg), 4.5);
+                // Text stays readable over the translucent editing highlights too.
+                for (fill_name, fill) in [
+                    ("selection", e.selection),
+                    ("find_match", e.find_match),
+                    ("find_current", e.find_current),
+                ] {
+                    let blended = over(fill, surface);
+                    check(
+                        format!("{name} over {fill_name} on {surface_name}"),
+                        contrast(opaque(color), blended),
+                        4.5,
+                    );
+                }
+            }
+            for (name, color) in [
+                ("border.control", theme.border.control),
+                ("border.focus", theme.border.focus),
+                ("editing.caret", e.caret),
+                ("editing.find_underline", e.find_underline),
+            ] {
+                check(format!("{name} on {surface_name}"), contrast(opaque(color), bg), 3.);
+            }
+            let under_match = over(e.find_match, surface);
+            check(
+                format!("find_underline over find_match on {surface_name}"),
+                contrast(opaque(e.find_underline), under_match),
+                3.,
+            );
+        }
+        check(
+            "text.on_accent on accent".to_owned(),
+            contrast(opaque(t.on_accent), opaque(theme.accent)),
+            4.5,
+        );
+        failures
+    }
+
+    #[test]
+    fn both_themes_meet_the_documented_contrast() {
+        for theme in [Theme::light(), Theme::dark()] {
+            let failures = failures(&theme);
+            assert!(failures.is_empty(), "dark={}: {failures:#?}", theme.dark);
+        }
+    }
+
+    #[test]
+    fn the_check_catches_a_failing_pair() {
+        let mut theme = Theme::light();
+        theme.text.muted = theme.surface.code;
+        assert!(failures(&theme).iter().any(|f| f.starts_with("text.muted on code")));
     }
 }

@@ -14,7 +14,10 @@ follows from that.
 
 Implemented: `tachyon`, `tachyon-platform`, `tachyon-text`, `tachyon-md`, `tachyon-doc`,
 `tachyon-editor`, `xtask`. The theme lives in `tachyon-editor` (`theme.rs`) until themes become
-user-configurable; a separate crate for one compiled-in theme would be ceremony. Empty placeholder
+user-configurable; a separate crate for one compiled-in theme would be ceremony. Its colors are
+semantic tokens (surfaces, text, borders, accent, editing states, syntax) with compiled-in values
+from the design direction (`docs/design/`); a unit test checks every documented contrast pair in
+both themes, including text over the blended selection and find highlights. Empty placeholder
 crates are not allowed.
 
 ```mermaid

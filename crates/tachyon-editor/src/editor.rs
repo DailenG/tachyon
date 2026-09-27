@@ -1386,7 +1386,7 @@ fn warm_fonts(window: &Window, theme: &Theme, code_font: Option<&'static str>) {
             let run = TextRun {
                 len: sample.len(),
                 font,
-                color: theme.foreground,
+                color: theme.text.primary,
                 background_color: None,
                 underline: None,
                 strikethrough: None,

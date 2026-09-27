@@ -35,8 +35,8 @@ impl Render for Editor {
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus)
             .size_full()
-            .bg(self.theme.background)
-            .text_color(self.theme.foreground)
+            .bg(self.theme.surface.canvas)
+            .text_color(self.theme.text.primary)
             .font_family(self.theme.text_font.clone())
             .text_size(self.theme.text_size)
             .line_height(relative(1.6))
@@ -171,22 +171,22 @@ impl Editor {
                         .px_3()
                         .py_1()
                         .rounded_md()
-                        .bg(theme.raw_background)
+                        .bg(theme.surface.raised)
                         .border_1()
-                        .border_color(theme.rule)
-                        .text_color(theme.foreground)
-                        .child(div().text_color(theme.muted).child("Find"))
+                        .border_color(theme.border.subtle)
+                        .text_color(theme.text.primary)
+                        .child(div().text_color(theme.text.muted).child("Find"))
                         .child(
                             div()
                                 .min_w(px(200.))
                                 .child(field(&find.query, !find.editing_replacement)),
                         )
-                        .child(div().text_color(theme.muted).child(find.status()))
+                        .child(div().text_color(theme.text.muted).child(find.status()))
                         .children(find.replacement.as_ref().map(|replacement| {
                             div()
                                 .flex()
                                 .gap_3()
-                                .child(div().text_color(theme.muted).child("Replace"))
+                                .child(div().text_color(theme.text.muted).child("Replace"))
                                 .child(
                                     div()
                                         .min_w(px(160.))
@@ -212,11 +212,11 @@ impl Editor {
                 .px_2()
                 .rounded_sm()
                 .pl(self.theme.scaled(px(8. + 14. * f32::from(item.indent))))
-                .when(row == picker.selected, |d| d.bg(theme.selection))
+                .when(row == picker.selected, |d| d.bg(theme.editing.selection))
                 .child(item.label.clone())
                 .children(item.detail.clone().map(|detail| {
                     div()
-                        .text_color(theme.muted)
+                        .text_color(theme.text.muted)
                         .overflow_hidden()
                         .whitespace_nowrap()
                         .child(detail)
@@ -247,19 +247,19 @@ impl Editor {
                         .py_2()
                         .w(self.theme.scaled(px(520.)))
                         .rounded_md()
-                        .bg(theme.raw_background)
+                        .bg(theme.surface.raised)
                         .border_1()
-                        .border_color(theme.rule)
-                        .text_color(theme.foreground)
+                        .border_color(theme.border.subtle)
+                        .text_color(theme.text.primary)
                         .child(
                             div()
                                 .flex()
                                 .gap_3()
-                                .child(div().text_color(theme.muted).child(picker.title))
+                                .child(div().text_color(theme.text.muted).child(picker.title))
                                 .child(field(&picker.query, true)),
                         )
                         .children(rows)
-                        .children(note.map(|note| div().text_color(theme.muted).child(note))),
+                        .children(note.map(|note| div().text_color(theme.text.muted).child(note))),
                 )
                 .into_any_element(),
         )
@@ -291,12 +291,16 @@ impl Editor {
         let mut marks = Vec::new();
         if let Some(find) = &self.find {
             for (m, current) in find.matches_in(block) {
-                let color = if current { self.theme.find_current } else { self.theme.find_match };
+                let color = if current {
+                    self.theme.editing.find_current
+                } else {
+                    self.theme.editing.find_match
+                };
                 marks.push((m, color));
             }
         }
         if !self.selection.is_empty() {
-            marks.push((self.selection.clone(), self.theme.selection));
+            marks.push((self.selection.clone(), self.theme.editing.selection));
         }
         marks
     }
@@ -321,12 +325,12 @@ impl Editor {
                 .right_2()
                 .px_2()
                 .rounded_md()
-                .bg(self.theme.raw_background)
+                .bg(self.theme.surface.raised)
                 .border_1()
-                .border_color(if over { gpui::red() } else { self.theme.rule })
+                .border_color(if over { gpui::red() } else { self.theme.border.subtle })
                 .font_family(self.theme.code_font.clone())
                 .text_size(px(12.))
-                .text_color(self.theme.muted)
+                .text_color(self.theme.text.muted)
                 .child(SharedString::from(text))
                 .into_any_element(),
         )
@@ -409,7 +413,7 @@ impl Editor {
                 HighlightStyle {
                     underline: Some(UnderlineStyle {
                         thickness: px(1.),
-                        color: Some(theme.foreground),
+                        color: Some(theme.text.primary),
                         wavy: false,
                     }),
                     ..Default::default()
@@ -422,7 +426,7 @@ impl Editor {
         let caret = (head >= base && head <= base + len).then(|| head - base);
         let editor = cx.entity();
         let focused = self.focus.is_focused(window);
-        let cursor_color = theme.cursor;
+        let cursor_color = theme.editing.caret;
         let paint_layout = layout.clone();
 
         let mut element = div()
@@ -430,7 +434,7 @@ impl Editor {
             .my_1()
             .px(theme.scaled(RAW_INSET))
             .rounded_md()
-            .bg(theme.raw_background)
+            .bg(theme.surface.raised)
             .cursor_text()
             .child(styled)
             .child(
@@ -545,7 +549,7 @@ impl Editor {
             }
         }
         if let BlockKind::Heading(1 | 2) = parsed.kind {
-            column = column.pb_1().border_b_1().border_color(self.theme.rule);
+            column = column.pb_1().border_b_1().border_color(self.theme.border.subtle);
         }
         column.into_any_element()
     }
@@ -582,7 +586,7 @@ impl Editor {
         let theme = &self.theme;
         let editor = cx.entity();
         let missing = path.display().to_string();
-        let muted = theme.muted;
+        let muted = theme.text.muted;
         div()
             .py_1()
             .child(
@@ -617,19 +621,24 @@ impl Editor {
     ) -> AnyElement {
         let theme = &self.theme;
         let content: AnyElement = match line.kind {
-            LineKind::Rule => div().w_full().h(px(1.)).my_3().bg(theme.rule).into_any_element(),
+            LineKind::Rule => {
+                div().w_full().h(px(1.)).my_3().bg(theme.border.subtle).into_any_element()
+            }
             LineKind::TableRow { header } => {
                 let mut row = div().flex().w_full();
                 let mut cell_start = visible.start;
                 let text = &parsed.ir.text[visible.clone()];
                 for cell in text.split('\t') {
                     let range = cell_start..cell_start + cell.len();
-                    let mut cell_el =
-                        div().flex_1().min_w_0().px_2().border_1().border_color(theme.rule).child(
-                            self.rendered_text(range.clone(), parsed, block_start, marks, cx),
-                        );
+                    let mut cell_el = div()
+                        .flex_1()
+                        .min_w_0()
+                        .px_2()
+                        .border_1()
+                        .border_color(theme.border.subtle)
+                        .child(self.rendered_text(range.clone(), parsed, block_start, marks, cx));
                     if header {
-                        cell_el = cell_el.font_weight(FontWeight::BOLD).bg(theme.code_background);
+                        cell_el = cell_el.font_weight(FontWeight::BOLD).bg(theme.surface.code);
                     }
                     row = row.child(cell_el);
                     cell_start = range.end + 1;
@@ -657,14 +666,14 @@ impl Editor {
                             .font_family(theme.code_font.clone())
                             .text_size(theme.code_size)
                             .line_height(relative(1.45))
-                            .bg(theme.code_background)
+                            .bg(theme.surface.code)
                             .px_3();
                     }
                     LineKind::Html => {
                         el = el
                             .font_family(theme.code_font.clone())
                             .text_size(theme.code_size)
-                            .text_color(theme.muted);
+                            .text_color(theme.text.muted);
                     }
                     _ => {}
                 }
@@ -676,9 +685,9 @@ impl Editor {
         if line.quote > 0 {
             row = row
                 .border_l_2()
-                .border_color(theme.quote_bar)
+                .border_color(theme.border.subtle)
                 .pl(theme.scaled(px(12. * f32::from(line.quote))))
-                .text_color(theme.muted);
+                .text_color(theme.text.muted);
         }
         let depth = line.indent.saturating_sub(u8::from(line.marker.is_some()));
         if depth > 0 {
@@ -694,7 +703,7 @@ impl Editor {
 
     fn marker(&self, marker: Marker) -> AnyElement {
         let theme = &self.theme;
-        let el = div().w(theme.scaled(px(INDENT))).flex_none().text_color(theme.muted);
+        let el = div().w(theme.scaled(px(INDENT))).flex_none().text_color(theme.text.muted);
         match marker {
             Marker::Bullet => el.child("•").into_any_element(),
             Marker::Ordered(n) => el.child(SharedString::from(format!("{n}."))).into_any_element(),
@@ -706,14 +715,14 @@ impl Editor {
                         .size(theme.scaled(px(13.)))
                         .rounded_sm()
                         .border_1()
-                        .border_color(theme.muted)
+                        .border_color(theme.text.muted)
                         .flex()
                         .items_center()
                         .justify_center()
                         .text_size(theme.scaled(px(11.)))
                         .line_height(theme.scaled(px(11.)))
                         .when(checked, |d| {
-                            d.bg(theme.accent).text_color(theme.background).child("✓")
+                            d.bg(theme.accent).text_color(theme.text.on_accent).child("✓")
                         }),
                 )
                 .into_any_element(),
