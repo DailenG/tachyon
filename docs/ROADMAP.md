@@ -30,8 +30,10 @@ takes 180-330 ms.
 Warm launches into a resident instance (`--resident`, `cargo xtask bench-startup --warm`) meet it
 on Linux: p50 27.6 ms, p95 29.5 ms (first launch into a windowless instance 180 ms), but not on
 the reference Windows machine: p95 150-188 ms, of which the resident instance's window open to
-first frame is 86-93 ms. Next: a timing-instrumented GPUI build on that machine to attribute
-platform init and per-window costs. See ADR 0004.
+first frame is 86-93 ms. A timing-instrumented GPUI build attributed it: per process, the D3D11
+device (97 ms) and DirectWrite's check for new fonts (130 ms, avoidable); per window, creating
+(39-59 ms) and showing (59-87 ms) it. Next: trace inside showing the window, and try a resident
+instance that keeps a hidden window ready. See ADR 0004.
 
 ## Phase 2: headless core (`tachyon-text`, `tachyon-md`, `tachyon-doc`) (done)
 
@@ -90,8 +92,10 @@ the end of 512 KiB 7 ms. All corpus tests pass.
       lays out about a screenful; fonts are loaded after the first frame, not by the first
       paste. Live, 5 MB from an empty scratch window: max frame 6.6-6.9 ms, 0 of 10-11 frames
       over 16.7 ms (was one ≈ 31 ms frame). A key typed right after Ctrl+V lands after the paste
-- [ ] Re-measure the paste on the reference Windows machine (before: one frame of 25-40 ms at
-      4K @ 30 Hz, 25-27 ms at 1440p @ 59 Hz)
+- [x] Re-measure the paste on the reference Windows machine: max frame 8.6-12.9 ms, no frame
+      over budget in 5 of 6 runs (one 17.9 ms frame at 1440p @ 59 Hz), where it used to be one
+      25-40 ms frame. A key typed right after Ctrl+V lands after the paste. The same runs showed
+      the view drifting to the top of the document while the parse streamed in, fixed since
 - [x] Save / Save As with atomic writes; unsaved-changes prompt on close and quit
 - [x] Keyboard support in prompts on Linux (own in-window prompt; Windows and macOS keep native
       dialogs)

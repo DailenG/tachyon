@@ -203,6 +203,29 @@ fn the_caret_stays_in_view_after_a_long_paste_and_ctrl_end(cx: &mut TestAppConte
 }
 
 #[gpui::test]
+fn streamed_parse_results_keep_the_view_on_the_same_text(cx: &mut TestAppContext) {
+    let (editor, cx) = open("", cx);
+    let text: String = (0..20_000).map(|i| format!("Paragraph {i}.\n\n")).collect();
+    editor.update(cx, |e, cx| e.replace(0..0, &text, cx));
+    // Look at the middle of the paste while its parse streams in, as if the
+    // user scrolled there (or the caret has not been drawn yet).
+    let wanted = text.find("Paragraph 10000.").expect("fixture");
+    editor.update(cx, |e, _| {
+        let item = e.document().block_at(wanted).expect("placeholder at the offset");
+        e.list.scroll_to(gpui::ListOffset { item_ix: item, offset_in_item: gpui::px(0.) });
+    });
+    let shown = editor
+        .read_with(cx, |e, _| e.document().block_range(e.list.logical_scroll_top().item_ix).start);
+    cx.run_until_parked();
+
+    let top = editor.read_with(cx, |e, _| {
+        assert!(!e.document().is_dirty());
+        e.document().block_range(e.list.logical_scroll_top().item_ix)
+    });
+    assert!(top.contains(&shown), "view moved from byte {shown} to block {top:?}");
+}
+
+#[gpui::test]
 fn ctrl_end_reveals_the_end_of_a_long_document(cx: &mut TestAppContext) {
     // Opened, not pasted: nothing below the first screen has been measured.
     let text: String = (0..8000).map(|i| format!("Paragraph {i}.\n\n")).collect();

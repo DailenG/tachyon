@@ -216,6 +216,11 @@ impl Document {
         !self.dirty.is_empty() || self.outstanding.is_some()
     }
 
+    /// Whether block-list changes are waiting for [`Document::take_splices`].
+    pub fn has_splices(&self) -> bool {
+        !self.splices.is_empty()
+    }
+
     /// Block-list changes since the last call, in order.
     pub fn take_splices(&mut self) -> Vec<Splice> {
         std::mem::take(&mut self.splices)
