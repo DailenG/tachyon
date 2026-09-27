@@ -234,7 +234,9 @@ accounts only the project owner has.
       pinned taskbar button show them): `build.rs` writes a `.res` file from the embedded
       `.ico` and the crate version, linked directly (checked on Windows: `VersionInfo` reads
       back Tachyon 0.1.0, and the executable's associated icon is the comet)
-- [ ] Linux: a `.desktop` entry and icons, installable per user
+- [x] Linux: a `.desktop` entry and icon, installed per user with `tachyon --desktop-entry on`
+      (launcher, "Open with" for Markdown and text; `desktop-file-validate` passes), removed with
+      `off`
 - [ ] *(owner)* Code signing for Windows and macOS, and where releases are published (GitHub
       Releases, winget, a package repository)
 

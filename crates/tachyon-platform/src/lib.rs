@@ -132,6 +132,18 @@ pub fn config_dir() -> Option<std::path::PathBuf> {
     }
 }
 
+/// Whether the per-user desktop entry (launcher and "Open with" item) is installed.
+pub fn desktop_entry_installed() -> io::Result<bool> {
+    imp::desktop_entry_installed()
+}
+
+/// Installs or removes the per-user desktop entry for `exe` with Tachyon's icon (Linux and BSD:
+/// `$XDG_DATA_HOME/applications/tachyon.desktop` and the hicolor icon theme). Unsupported
+/// elsewhere.
+pub fn set_desktop_entry(exe: &std::path::Path, enabled: bool) -> io::Result<()> {
+    imp::set_desktop_entry(exe, enabled)
+}
+
 /// Whether Tachyon starts in the background at login.
 pub fn autostart_enabled() -> io::Result<bool> {
     imp::autostart_enabled()

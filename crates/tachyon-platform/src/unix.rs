@@ -292,11 +292,10 @@ fn autostart_entry() -> io::Result<PathBuf> {
     Ok(config.join("autostart").join("tachyon.desktop"))
 }
 
-/// An XDG autostart entry running `exe --background`. The path is quoted as the Desktop Entry
-/// spec requires for `Exec` (backslash before `"`, `` ` ``, `$` and `\`, `%` doubled), then
-/// escaped as a desktop-file string (backslashes doubled).
+/// `exe` quoted as the Desktop Entry spec requires for `Exec` (backslash before `"`, `` ` ``, `$`
+/// and `\`, `%` doubled), then escaped as a desktop-file string (backslashes doubled).
 #[cfg(not(target_os = "macos"))]
-fn autostart_desktop_file(exe: &std::path::Path) -> String {
+fn desktop_exec(exe: &std::path::Path) -> String {
     let mut quoted = String::from("\"");
     for c in exe.to_string_lossy().chars() {
         match c {
@@ -309,15 +308,102 @@ fn autostart_desktop_file(exe: &std::path::Path) -> String {
         }
     }
     quoted.push('"');
-    let exec = quoted.replace('\\', "\\\\");
+    quoted.replace('\\', "\\\\")
+}
+
+/// An XDG autostart entry running `exe --background`.
+#[cfg(not(target_os = "macos"))]
+fn autostart_desktop_file(exe: &std::path::Path) -> String {
+    let exec = desktop_exec(exe);
     format!(
         "[Desktop Entry]\nType=Application\nName=Tachyon\nComment=Keep Tachyon ready in the background\nExec={exec} --background\nNoDisplay=true\nX-GNOME-Autostart-enabled=true\n"
     )
 }
 
+/// The application's desktop entry: it shows Tachyon in launchers and "Open with" menus for
+/// Markdown and text files. `StartupWMClass` matches the windows' app id, so the launcher and the
+/// windows share one icon.
+#[cfg(not(target_os = "macos"))]
+fn application_desktop_file(exe: &std::path::Path) -> String {
+    let exec = desktop_exec(exe);
+    format!(
+        "[Desktop Entry]\nType=Application\nName=Tachyon\nGenericName=Markdown Editor\nComment=Read and edit Markdown\nExec={exec} %F\nIcon=tachyon\nTerminal=false\nCategories=Utility;TextEditor;\nMimeType=text/markdown;text/x-markdown;text/plain;\nKeywords=markdown;notes;editor;scratchpad;\nStartupWMClass=tachyon\n"
+    )
+}
+
+/// `$XDG_DATA_HOME` (default `~/.local/share`).
+#[cfg(not(target_os = "macos"))]
+fn data_home() -> io::Result<PathBuf> {
+    std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_absolute())
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))
+        .ok_or_else(|| {
+            io::Error::new(io::ErrorKind::NotFound, "neither XDG_DATA_HOME nor HOME is set")
+        })
+}
+
+/// The desktop entry and its icon, per user.
+#[cfg(not(target_os = "macos"))]
+fn desktop_entry_paths() -> io::Result<(PathBuf, PathBuf)> {
+    let data = data_home()?;
+    Ok((
+        data.join("applications").join("tachyon.desktop"),
+        data.join("icons/hicolor/scalable/apps/tachyon.svg"),
+    ))
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn desktop_entry_installed() -> io::Result<bool> {
+    Ok(desktop_entry_paths()?.0.is_file())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn set_desktop_entry(exe: &std::path::Path, enabled: bool) -> io::Result<()> {
+    let (entry, icon) = desktop_entry_paths()?;
+    if !enabled {
+        for path in [entry, icon] {
+            match fs::remove_file(&path) {
+                Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
+                _ => {}
+            }
+        }
+        return Ok(());
+    }
+    for (path, contents) in [
+        (&icon, include_str!("../assets/tachyon.svg").to_owned()),
+        (&entry, application_desktop_file(exe)),
+    ] {
+        if let Some(dir) = path.parent() {
+            fs::create_dir_all(dir)?;
+        }
+        fs::write(path, contents)?;
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+pub fn desktop_entry_installed() -> io::Result<bool> {
+    Ok(false)
+}
+
+#[cfg(target_os = "macos")]
+pub fn set_desktop_entry(_exe: &std::path::Path, _enabled: bool) -> io::Result<()> {
+    Err(io::Error::new(io::ErrorKind::Unsupported, "desktop entries are a Linux and BSD feature"))
+}
+
 #[cfg(all(test, not(target_os = "macos")))]
 mod autostart_tests {
     use super::*;
+
+    #[test]
+    fn the_application_entry_opens_files_with_the_quoted_executable() {
+        let entry = application_desktop_file(std::path::Path::new("/opt/My Apps/tachyon"));
+        assert!(entry.contains("\nExec=\"/opt/My Apps/tachyon\" %F\n"));
+        assert!(entry.contains("\nIcon=tachyon\n"));
+        assert!(entry.contains("\nStartupWMClass=tachyon\n"));
+        assert!(entry.contains("MimeType=text/markdown;"));
+    }
 
     #[test]
     fn hidden_is_read_from_the_desktop_entry_group_only() {

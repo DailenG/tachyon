@@ -64,6 +64,7 @@ at once (`--no-resident` turns that off; on Linux and macOS it is opt-in with `-
 tachyon --autostart on   # start in the background at login
 tachyon --status         # is an instance running? does it start at login?
 tachyon --quit           # end it (unsaved documents come back next time)
+tachyon --desktop-entry on   # Linux: add it to the launcher and "Open with" menus
 ```
 
 `cargo xtask dist` builds a release archive in `target/dist/`. `tachyon --help` lists all options. Settings live in `settings.toml` (`Ctrl+,` opens it): theme,

@@ -10,6 +10,8 @@ All notable user-visible changes are recorded here. The format follows
 
 - Windows: `tachyon.exe` carries its icon and version information (Explorer, Task Manager,
   pinned taskbar buttons).
+- `tachyon --desktop-entry on|off` (Linux) adds Tachyon to the application launcher and "Open
+  with" menus, with its icon, or removes it.
 - `cargo xtask dist` packs a release archive: the binary with the README, changelog and licenses
   (`.zip` on Windows, `.tar.gz` elsewhere).
 - Local images are shown in rendered text (paths relative to the document, absolute or `file:`);

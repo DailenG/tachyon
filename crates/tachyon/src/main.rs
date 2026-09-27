@@ -29,6 +29,7 @@ fn main() -> ExitCode {
         Ok(Command::Run(cli)) => cli,
         Ok(Command::Status) => return status(),
         Ok(Command::Autostart(enabled)) => return autostart(enabled),
+        Ok(Command::DesktopEntry(enabled)) => return desktop_entry(enabled),
         Ok(Command::Help) => {
             print!("{}", cli::USAGE);
             return ExitCode::SUCCESS;
@@ -98,6 +99,22 @@ fn quit_running_instance(cli: &Cli) -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("tachyon: could not reach the running instance: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// `--desktop-entry on|off`.
+fn desktop_entry(enabled: bool) -> ExitCode {
+    let result =
+        std::env::current_exe().and_then(|exe| tachyon_platform::set_desktop_entry(&exe, enabled));
+    match result {
+        Ok(()) => {
+            println!("tachyon: desktop entry {}", if enabled { "installed" } else { "removed" });
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("tachyon: could not change the desktop entry: {e}");
             ExitCode::FAILURE
         }
     }
