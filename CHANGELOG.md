@@ -67,6 +67,9 @@ All notable user-visible changes are recorded here. The format follows
 
 ### Fixed
 
+- A large paste could keep a stray link: while its parse streamed in, a window that started
+  inside a fenced code block read a line of code as a link definition, and a `[label]` further
+  down kept linking to it after the code was parsed correctly.
 - Windows: `Ctrl+V` no longer stalls the window while the clipboard is read (≈ 12 ms for 5 MB);
   the text is read on a background thread.
 - Linux: bold and italic text rendered in the regular face unless IBM Plex Sans was installed.
