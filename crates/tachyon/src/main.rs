@@ -13,7 +13,7 @@ use crate::cli::{Cli, Command};
 
 /// Name of the single-instance channel. `TACHYON_INSTANCE_ID` overrides it
 /// so benchmarks and tests do not talk to the user's running instance.
-fn instance_id() -> String {
+pub(crate) fn instance_id() -> String {
     std::env::var("TACHYON_INSTANCE_ID").unwrap_or_else(|_| "tachyon".to_owned())
 }
 

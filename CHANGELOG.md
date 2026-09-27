@@ -8,6 +8,9 @@ All notable user-visible changes are recorded here. The format follows
 
 ### Added
 
+- Hot exit: Quit no longer asks about unsaved changes. Unsaved documents (scratch text and edited
+  files) are backed up as you type and reopen, still unsaved, at the next start. Closing a single
+  window still asks.
 - Syntax highlighting in fenced code blocks (Rust, Python, JavaScript/TypeScript, C-family,
   Go, Java, C#, shells, PowerShell, SQL, JSON, TOML, YAML), in both themes, also while editing.
 - Go to heading (`Ctrl+Shift+O`): type to filter the document's headings, `Enter` or a click

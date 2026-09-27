@@ -63,7 +63,7 @@ at once (`--no-resident` turns that off; on Linux and macOS it is opt-in with `-
 ```sh
 tachyon --autostart on   # start in the background at login
 tachyon --status         # is an instance running? does it start at login?
-tachyon --quit           # end it (asks about unsaved changes)
+tachyon --quit           # end it (unsaved documents come back next time)
 ```
 
 `tachyon --help` lists all options.

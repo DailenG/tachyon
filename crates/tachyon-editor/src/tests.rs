@@ -868,3 +868,84 @@ fn go_to_heading_filters_chooses_and_jumps(cx: &mut TestAppContext) {
     assert_eq!(selection(&editor, cx), target..target);
     assert!(editor.read_with(cx, |e, _| e.outline.is_none()));
 }
+
+/// A fresh backup directory for a test, removed first if an earlier run left it.
+fn backup_dir(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("tachyon-backups-{}-{name}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    dir
+}
+
+fn backups_in(dir: &std::path::Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
+    let mut texts: Vec<String> = entries
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|e| e == "md"))
+        .map(|p| std::fs::read_to_string(p).expect("readable backup"))
+        .collect();
+    texts.sort();
+    texts
+}
+
+#[gpui::test]
+fn unsaved_text_is_backed_up_after_a_pause_and_dropped_once_saved(cx: &mut TestAppContext) {
+    let dir = backup_dir("pause");
+    let file = dir.with_extension("md");
+    cx.update(|cx| cx.set_global(crate::Backups::new(dir.clone())));
+    let (editor, cx) = open("", cx);
+    editor.update(cx, |e, cx| e.set_file(file.clone(), cx));
+
+    cx.simulate_input("hello");
+    cx.run_until_parked();
+    assert!(backups_in(&dir).is_empty(), "not while typing");
+    cx.executor().advance_clock(std::time::Duration::from_secs(2));
+    cx.run_until_parked();
+    assert_eq!(backups_in(&dir), ["hello"]);
+
+    cx.simulate_input(" world");
+    cx.executor().advance_clock(std::time::Duration::from_secs(2));
+    cx.run_until_parked();
+    assert_eq!(backups_in(&dir), ["hello world"], "one backup per document, kept current");
+
+    cx.simulate_keystrokes("secondary-s");
+    cx.run_until_parked();
+    assert_eq!(std::fs::read_to_string(&file).expect("saved"), "hello world");
+    assert!(backups_in(&dir).is_empty(), "nothing unsaved, nothing backed up");
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_file(&file);
+}
+
+#[gpui::test]
+fn quit_closes_without_asking_and_the_backup_restores(cx: &mut TestAppContext) {
+    let dir = backup_dir("quit");
+    cx.update(|cx| {
+        cx.set_global(crate::Backups::new(dir.clone()));
+        cx.set_global(crate::HotExit);
+    });
+    let (_editor, vcx) = open("", cx);
+    vcx.simulate_input("draft");
+    vcx.dispatch_action(crate::CloseWindow);
+    vcx.run_until_parked();
+    assert!(!vcx.has_pending_prompt(), "no Save prompt during Quit");
+    assert!(vcx.windows().is_empty(), "the window closed");
+    assert_eq!(backups_in(&dir), ["draft"], "written right away, not after a pause");
+
+    // The next start: the backup comes back as an unsaved document in the same slot.
+    let restored = cx.update(|cx| cx.global::<crate::Backups>().restore());
+    assert_eq!(restored.len(), 1);
+    cx.update(|cx| cx.remove_global::<crate::HotExit>());
+    let (editor, vcx) = open("", cx);
+    let restored = restored.into_iter().next().expect("one backup");
+    editor.update(vcx, |e, cx| e.adopt_backup(restored, cx));
+    assert_eq!(text(&editor, vcx), "draft");
+    assert!(editor.read_with(vcx, |e, _| e.is_modified()));
+
+    // Closing it without saving (not Quit) asks, and "Don't Save" drops the backup.
+    vcx.dispatch_action(crate::CloseWindow);
+    vcx.run_until_parked();
+    assert!(vcx.has_pending_prompt());
+    vcx.simulate_prompt_answer("Don't Save");
+    vcx.run_until_parked();
+    assert!(backups_in(&dir).is_empty());
+    let _ = std::fs::remove_dir_all(&dir);
+}
