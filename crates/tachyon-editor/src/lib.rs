@@ -2,6 +2,7 @@
 //! The block holding the caret is shown and edited as raw Markdown; all other
 //! blocks are rendered with their syntax hidden.
 
+mod backup;
 mod editor;
 mod find;
 mod frame_log;
@@ -14,6 +15,7 @@ mod prompt;
 mod render;
 mod theme;
 
+pub use crate::backup::{Backups, HotExit, Restored};
 pub use crate::editor::{
     ClipboardReader, CloseWindow, Editor, KEY_CONTEXT, OpenPaths, Save, SaveAs, key_bindings,
 };

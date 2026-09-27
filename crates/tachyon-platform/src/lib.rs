@@ -85,6 +85,24 @@ pub fn query_system_appearance() -> Option<std::sync::mpsc::Receiver<bool>> {
     imp::query_system_appearance()
 }
 
+/// Per-user directory for state Tachyon keeps between runs (backups of unsaved documents):
+/// `%LOCALAPPDATA%\Tachyon` on Windows, `~/Library/Application Support/Tachyon` on macOS,
+/// `$XDG_STATE_HOME/tachyon` (default `~/.local/state/tachyon`) elsewhere. `None` if the
+/// environment names no home.
+pub fn state_dir() -> Option<std::path::PathBuf> {
+    use std::path::PathBuf;
+    let env = |name| std::env::var_os(name).filter(|v| !v.is_empty()).map(PathBuf::from);
+    if cfg!(target_os = "windows") {
+        env("LOCALAPPDATA").map(|dir| dir.join("Tachyon"))
+    } else if cfg!(target_os = "macos") {
+        env("HOME").map(|home| home.join("Library/Application Support/Tachyon"))
+    } else {
+        env("XDG_STATE_HOME")
+            .or_else(|| env("HOME").map(|home| home.join(".local/state")))
+            .map(|dir| dir.join("tachyon"))
+    }
+}
+
 /// Whether Tachyon starts in the background at login.
 pub fn autostart_enabled() -> io::Result<bool> {
     imp::autostart_enabled()

@@ -207,9 +207,15 @@ pub struct Editor {
     /// ones it is rendering in the current one.
     pub(crate) rendered: Range<usize>,
     pub(crate) rendering: Option<Range<usize>>,
-    file: Option<PathBuf>,
+    pub(crate) file: Option<PathBuf>,
     /// Buffer version last written to (or loaded from) `file`.
-    saved_version: u64,
+    pub(crate) saved_version: u64,
+    /// This document's backup file, once it has had unsaved changes (see `backup`).
+    pub(crate) backup_slot: Option<PathBuf>,
+    /// Buffer version last written to the backup.
+    pub(crate) backed_up_version: Option<u64>,
+    /// The pending backup write.
+    pub(crate) backup_task: Option<Task<()>>,
     /// Window title last set, to avoid resetting it every frame.
     shown_title: Option<String>,
     /// Frame-time overlay, when shown.
@@ -266,6 +272,9 @@ impl Editor {
             rendering: None,
             file: None,
             saved_version: 0,
+            backup_slot: None,
+            backed_up_version: None,
+            backup_task: None,
             shown_title: None,
             frame_stats: None,
             frame_log: crate::frame_log::FrameLog::from_env(),
@@ -339,6 +348,11 @@ impl Editor {
     fn should_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         self.flush_pending_paste(cx);
         if !self.is_modified() {
+            self.discard_backup();
+            return true;
+        }
+        // Quit with hot exit: the backup keeps the text for the next start.
+        if cx.has_global::<crate::HotExit>() && self.backup_now(cx) {
             return true;
         }
         let answer = window.prompt(
@@ -352,7 +366,10 @@ impl Editor {
             let choice = answer.await.ok();
             let _ = this.update_in(cx, |editor, window, cx| match choice {
                 Some(0) => editor.save_then(window, cx, |window, _| window.remove_window()),
-                Some(1) => window.remove_window(),
+                Some(1) => {
+                    editor.discard_backup();
+                    window.remove_window();
+                }
                 _ => {}
             });
         })
@@ -641,6 +658,7 @@ impl Editor {
     }
 
     fn after_edit(&mut self, cx: &mut Context<Self>) {
+        self.schedule_backup(cx);
         self.goal_x = None;
         self.refresh_find();
         self.reparse(self.head(), cx);
@@ -1185,6 +1203,7 @@ impl Editor {
                 Ok(()) => {
                     editor.file = Some(path);
                     editor.saved_version = version;
+                    editor.schedule_backup(cx);
                     editor.sync_title(window);
                     cx.notify();
                     after(window, cx);

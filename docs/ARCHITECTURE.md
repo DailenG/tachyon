@@ -176,7 +176,9 @@ pays for the hand-off and one window (about 30 ms on Linux instead of about 200 
 default on Windows (`tachyon_platform::resident_by_default`); `--resident` / `--no-resident`
 override it. GPUI runs with `QuitMode::Explicit`; the app quits when the last window closes unless
 resident, and Quit (`Ctrl+Q`, `tachyon --quit` forwarded over the instance channel, or the tray
-icon's menu) always ends the process after the windows have closed, asking about unsaved changes.
+icon's menu) always ends the process after the windows have closed. Quit does not ask about
+unsaved changes: the primary keeps a backup of every unsaved document and reopens them at its
+next start (hot exit, [ADR 0006](adr/0006-hot-exit.md); `tachyon_editor::Backups`).
 On Windows a resident primary shows a tray icon (`tachyon_platform::Tray`: a hidden window with
 its own message loop on a `tray` thread, events forwarded to GPUI over a channel); clicking it
 opens a window. The icon (`crates/tachyon-platform/assets/tachyon.ico`, drawn from

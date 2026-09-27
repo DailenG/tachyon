@@ -183,7 +183,9 @@ Typing Markdown by hand, and reading the code in LLM output, without leaving the
 - [x] Jump to a heading (`Ctrl+Shift+O`): the document's headings in a filterable list
       (case-insensitive substring, indented by level, opening on the heading above the caret);
       Up / Down choose, Enter or a click jumps, Escape closes
-- [ ] Scratch buffers survive a restart: unsaved windows are restored with their text
+- [x] Scratch buffers survive a restart: unsaved documents are backed up 1.5 s after the last
+      edit and Quit closes without asking; the next start reopens them, unsaved, with their files
+      ([ADR 0006](adr/0006-hot-exit.md))
 - [ ] Copy as rich text (`Ctrl+Shift+C`): the selection as HTML on the clipboard
 
 **Exit:** each item covered by a `gpui::test` or a live check; typing stays within one frame in a

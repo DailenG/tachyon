@@ -21,8 +21,8 @@ Options:
                        autostart); exits if an instance is already running
       --status         Report whether an instance is running and whether it
                        starts at login
-      --quit           Ask the running instance to quit (it asks about unsaved
-                       changes first)
+      --quit           Ask the running instance to quit (unsaved documents are
+                       kept and reopen at the next start)
       --autostart <on|off>
                        Start in the background at login, or stop doing so
       --startup-report Print startup timings after the first frame, then exit

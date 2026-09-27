@@ -22,6 +22,8 @@ const SAMPLE: &str = include_str!("sample.md");
 
 enum Source {
     Sample,
+    /// An unsaved document backed up by an earlier session (hot exit).
+    Restored(tachyon_editor::Restored),
     /// An empty, untitled document (New Window).
     Blank,
     Clipboard,
@@ -49,6 +51,10 @@ impl Source {
     fn title(&self) -> SharedString {
         match self {
             Source::Sample => "Tachyon".into(),
+            Source::Restored(restored) => match &restored.file {
+                Some(path) => Source::File(path.clone()).title(),
+                None => "Tachyon".into(),
+            },
             Source::Blank => "Tachyon".into(),
             Source::Clipboard => "Clipboard - Tachyon".into(),
             Source::File(path) => {
@@ -78,6 +84,11 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
     let resident = cli.resident() && listener.is_some();
     let report_launches = cli.report_launches && resident;
     let system_appearance = tachyon_platform::query_system_appearance();
+    // Hot exit: the primary backs up unsaved documents and restores them at the next start.
+    let primary_backups = listener
+        .as_ref()
+        .and_then(|_| tachyon_platform::state_dir())
+        .map(|dir| tachyon_editor::Backups::new(dir.join("backups").join(crate::instance_id())));
     // Window lifetime is ours to manage (resident mode); GPUI would otherwise
     // quit when the last window closes on Linux and Windows.
     gpui_platform::application().with_quit_mode(QuitMode::Explicit).run(move |cx: &mut App| {
@@ -119,6 +130,10 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
         // changes are asked about; the last window closing quits the app.
         cx.on_action(|_: &Quit, cx| {
             cx.global_mut::<Lifecycle>().quitting = true;
+            // With backups, windows close without asking: their unsaved text comes back next time.
+            if cx.has_global::<tachyon_editor::Backups>() {
+                cx.set_global(tachyon_editor::HotExit);
+            }
             // Deferred: the action is dispatched from inside a window update,
             // and updating that window again from here would fail.
             cx.defer(|cx| {
@@ -162,12 +177,24 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
             }
         }
 
+        // Documents left unsaved by the last Quit come back (primary instance only, so two
+        // processes never restore the same backups).
+        let restored: Vec<Source> = match &primary_backups {
+            Some(backups) => backups.restore().into_iter().map(Source::Restored).collect(),
+            None => Vec::new(),
+        };
+        if let Some(backups) = primary_backups {
+            cx.set_global(backups);
+        }
         // A background start with nothing to open (login autostart) stays
-        // windowless until the first launch arrives.
+        // windowless until the first launch arrives, which brings the restored documents along.
         let sources = if resident && cli.background && cli.opens_nothing() {
+            cx.set_global(PendingRestore(restored));
             Vec::new()
+        } else if !restored.is_empty() && cli.opens_nothing() {
+            restored
         } else {
-            Source::from_cli(cli)
+            restored.into_iter().chain(Source::from_cli(cli)).collect()
         };
         let mut first = true;
         for source in sources {
@@ -210,7 +237,7 @@ fn initial_document(source: &Source, cx: &App) -> Document {
         Source::Clipboard => Document::new(
             &cx.read_from_clipboard().and_then(|item| item.text()).unwrap_or_default(),
         ),
-        Source::Blank | Source::File(_) => Document::new(""),
+        Source::Blank | Source::File(_) | Source::Restored(_) => Document::new(""),
     }
 }
 
@@ -219,10 +246,8 @@ fn open_window(source: Source, cx: &mut App) -> Option<WindowHandle<Editor>> {
     let result = cx.open_window(options, move |window, cx| {
         tachyon_platform::set_window_icon(window);
         cx.new(|cx| {
-            let editor = Editor::with_document(initial_document(&source, cx), window, cx);
-            if let Source::File(path) = source {
-                load_file(path, cx);
-            }
+            let mut editor = Editor::with_document(initial_document(&source, cx), window, cx);
+            fill(&mut editor, source, cx);
             editor
         })
     });
@@ -237,6 +262,29 @@ fn open_window(source: Source, cx: &mut App) -> Option<WindowHandle<Editor>> {
 
 /// Reads and parses the file on the background executor so window creation
 /// never waits on disk I/O or a large parse, then hands the document over.
+/// What a new editor gets beyond its initial document: a file loads in the background, a backup is
+/// adopted.
+fn fill(editor: &mut Editor, source: Source, cx: &mut Context<Editor>) {
+    match source {
+        Source::File(path) => load_file(path, cx),
+        Source::Restored(restored) => editor.adopt_backup(restored, cx),
+        Source::Sample | Source::Blank | Source::Clipboard => {}
+    }
+}
+
+/// Documents restored at a background start, opened with the first launch.
+struct PendingRestore(Vec<Source>);
+
+impl Global for PendingRestore {}
+
+fn take_pending_restore(cx: &mut App) -> Vec<Source> {
+    if cx.has_global::<PendingRestore>() {
+        cx.remove_global::<PendingRestore>().0
+    } else {
+        Vec::new()
+    }
+}
+
 fn load_file(path: PathBuf, cx: &mut Context<Editor>) {
     cx.spawn(async move |editor, cx| {
         let read_path = path.clone();
@@ -328,9 +376,7 @@ fn take_ready_window(source: Source, cx: &mut App) -> Result<WindowHandle<Editor
     let _ = handle.update(cx, |editor, window, cx| {
         window.set_window_title(&title);
         editor.set_document(doc, cx);
-        if let Source::File(path) = source {
-            load_file(path, cx);
-        }
+        fill(editor, source, cx);
     });
     Ok(handle)
 }
@@ -364,8 +410,6 @@ fn report_line(line: &str) {
     let _ = stdout.flush();
 }
 
-/// Moves launches forwarded by secondary processes from the listener thread
-/// onto the main thread and opens them there.
 /// The resident instance's tray icon (Windows), removed when the app quits.
 struct TrayIcon {
     _tray: tachyon_platform::Tray,
@@ -395,7 +439,13 @@ fn show_tray(cx: &mut App) {
         while let Some(event) = rx.next().await {
             cx.update(|cx| match event {
                 TrayEvent::Open => {
-                    show_window(Source::Blank, cx);
+                    let restored = take_pending_restore(cx);
+                    if restored.is_empty() {
+                        show_window(Source::Blank, cx);
+                    }
+                    for source in restored {
+                        show_window(source, cx);
+                    }
                     cx.activate(true);
                 }
                 TrayEvent::Quit => cx.dispatch_action(&Quit),
@@ -405,6 +455,8 @@ fn show_tray(cx: &mut App) {
     .detach();
 }
 
+/// Moves launches forwarded by secondary processes from the listener thread
+/// onto the main thread and opens them there.
 fn serve_forwarded_launches(listener: Listener, cx: &mut App) {
     let (tx, mut rx) = futures::channel::mpsc::unbounded::<Vec<String>>();
     // Accepted once queued for the main thread; fails only while quitting.
@@ -419,7 +471,13 @@ fn serve_forwarded_launches(listener: Listener, cx: &mut App) {
             }
             cx.update(|cx| {
                 let report = cx.global::<Lifecycle>().report_launches;
-                for source in Source::from_cli(cli) {
+                let restored = take_pending_restore(cx);
+                let sources = if !restored.is_empty() && cli.opens_nothing() {
+                    restored
+                } else {
+                    restored.into_iter().chain(Source::from_cli(cli)).collect()
+                };
+                for source in sources {
                     if let Some(handle) = show_window(source, cx)
                         && report
                     {
