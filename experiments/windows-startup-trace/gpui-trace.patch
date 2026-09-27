@@ -1,0 +1,549 @@
+diff --git i/crates/gpui_windows/src/direct_write.rs w/crates/gpui_windows/src/direct_write.rs
+index dfe98a76be..324b2ccff2 100644
+--- i/crates/gpui_windows/src/direct_write.rs
++++ w/crates/gpui_windows/src/direct_write.rs
+@@ -164,7 +164,9 @@ impl GPUState {
+ 
+ impl DirectWriteTextSystem {
+     pub(crate) fn new(directx_devices: &DirectXDevices) -> Result<Self> {
+-        let factory: IDWriteFactory5 = unsafe { DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)? };
++        let factory: IDWriteFactory5 = crate::trace::span("dwrite.create_factory", || unsafe {
++            DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)
++        })?;
+         // The `IDWriteInMemoryFontFileLoader` here is supported starting from
+         // Windows 10 Creators Update, which consequently requires the entire
+         // `DirectWriteTextSystem` to run on `win10 1703`+.
+@@ -176,7 +178,7 @@ impl DirectWriteTextSystem {
+         let locale = HSTRING::from_wide(&locale);
+         let text_renderer = TextRendererWrapper::new(locale.clone());
+ 
+-        let gpu_state = GPUState::new(directx_devices)?;
++        let gpu_state = crate::trace::span("dwrite.gpu_state", || GPUState::new(directx_devices))?;
+ 
+         let system_subpixel_rendering = get_system_subpixel_rendering();
+         let system_ui_font_name = get_system_ui_font_name();
+@@ -190,13 +192,20 @@ impl DirectWriteTextSystem {
+             system_subpixel_rendering,
+         };
+ 
+-        let system_font_collection = unsafe {
+-            let mut result = None;
+-            components
+-                .factory
+-                .GetSystemFontCollection(false, &mut result, true)?;
+-            result.context("Failed to get system font collection")?
+-        };
++        // Experiment: GPUI_TRACE_FONT_NO_UPDATE_CHECK=1 skips DirectWrite's
++        // check for newly installed fonts.
++        let check_for_updates = std::env::var("GPUI_TRACE_FONT_NO_UPDATE_CHECK").as_deref() != Ok("1");
++        let system_font_collection = crate::trace::span(
++            &format!("dwrite.system_font_collection check_for_updates={check_for_updates}"),
++            || unsafe {
++                let mut result = None;
++                components
++                    .factory
++                    .GetSystemFontCollection(false, &mut result, check_for_updates)
++                    .map(|()| result)
++            },
++        )?
++        .context("Failed to get system font collection")?;
+         let custom_font_set = unsafe { components.builder.CreateFontSet()? };
+         let custom_font_collection = unsafe {
+             components
+diff --git i/crates/gpui_windows/src/directx_devices.rs w/crates/gpui_windows/src/directx_devices.rs
+index 8e65e6e626..50dc5ae259 100644
+--- i/crates/gpui_windows/src/directx_devices.rs
++++ w/crates/gpui_windows/src/directx_devices.rs
+@@ -47,7 +47,8 @@ impl DirectXDevices {
+     pub(crate) fn new() -> Result<Self> {
+         let debug_layer_available = check_debug_layer_available();
+         let dxgi_factory =
+-            get_dxgi_factory(debug_layer_available).context("Creating DXGI factory")?;
++            crate::trace::span("dx.create_factory", || get_dxgi_factory(debug_layer_available))
++                .context("Creating DXGI factory")?;
+         let (adapter, device, device_context, feature_level) =
+             get_adapter(&dxgi_factory, debug_layer_available).context("Getting DXGI adapter")?;
+         match feature_level {
+@@ -124,14 +125,27 @@ fn get_adapter(
+         // the device if it does.
+         let mut context: Option<ID3D11DeviceContext> = None;
+         let mut feature_level = D3D_FEATURE_LEVEL::default();
+-        if let Some(device) = get_device(
+-            &adapter,
+-            Some(&mut context),
+-            Some(&mut feature_level),
+-            debug_layer_available,
+-        )
+-        .log_err()
+-        {
++        let name = unsafe { adapter.GetDesc1() }
++            .map(|desc| {
++                format!(
++                    "{:?}/flags={:#x}",
++                    String::from_utf16_lossy(&desc.Description).trim_matches(char::from(0)),
++                    desc.Flags
++                )
++            })
++            .unwrap_or_default();
++        let device = crate::trace::span(
++            &format!("dx.create_device adapter={adapter_index} name={name}"),
++            || {
++                get_device(
++                    &adapter,
++                    Some(&mut context),
++                    Some(&mut feature_level),
++                    debug_layer_available,
++                )
++            },
++        );
++        if let Some(device) = device.log_err() {
+             return Ok((adapter, device, context.unwrap(), feature_level));
+         }
+     }
+diff --git i/crates/gpui_windows/src/directx_renderer.rs w/crates/gpui_windows/src/directx_renderer.rs
+index f8b86bc25b..f6147e5dc9 100644
+--- i/crates/gpui_windows/src/directx_renderer.rs
++++ w/crates/gpui_windows/src/directx_renderer.rs
+@@ -160,27 +160,38 @@ impl DirectXRenderer {
+             log::info!("Direct Composition is disabled.");
+         }
+ 
+-        let devices = DirectXRendererDevices::new(directx_devices, disable_direct_composition)
+-            .context("Creating DirectX devices")?;
+-        let atlas = Arc::new(DirectXAtlas::new(&devices.device, &devices.device_context));
++        use crate::trace::span;
++        let devices = span("renderer.devices", || {
++            DirectXRendererDevices::new(directx_devices, disable_direct_composition)
++        })
++        .context("Creating DirectX devices")?;
++        let atlas = span("renderer.atlas", || {
++            Arc::new(DirectXAtlas::new(&devices.device, &devices.device_context))
++        });
+ 
+-        let resources = DirectXResources::new(&devices, 1, 1, hwnd, disable_direct_composition)
+-            .context("Creating DirectX resources")?;
+-        let globals = DirectXGlobalElements::new(&devices.device)
++        let resources = span("renderer.resources", || {
++            DirectXResources::new(&devices, 1, 1, hwnd, disable_direct_composition)
++        })
++        .context("Creating DirectX resources")?;
++        let globals = span("renderer.globals", || DirectXGlobalElements::new(&devices.device))
+             .context("Creating DirectX global elements")?;
+-        let pipelines = DirectXRenderPipelines::new(&devices.device)
++        let pipelines = span("renderer.pipelines", || DirectXRenderPipelines::new(&devices.device))
+             .context("Creating DirectX render pipelines")?;
+ 
+         let direct_composition = if disable_direct_composition {
+             None
+         } else {
+-            let composition = DirectComposition::new(devices.dxgi_device.as_ref().unwrap(), hwnd)
+-                .context("Creating DirectComposition")?;
+-            composition
+-                .set_swap_chain(&resources.swap_chain)
+-                .context("Setting swap chain for DirectComposition")?;
++            let composition = span("renderer.direct_composition", || {
++                DirectComposition::new(devices.dxgi_device.as_ref().unwrap(), hwnd)
++                    .and_then(|composition| {
++                        composition.set_swap_chain(&resources.swap_chain)?;
++                        Ok(composition)
++                    })
++            })
++            .context("Creating DirectComposition")?;
+             Some(composition)
+         };
++        let font_info = span("renderer.font_info", Self::get_font_info);
+ 
+         Ok(DirectXRenderer {
+             hwnd,
+@@ -190,7 +201,7 @@ impl DirectXRenderer {
+             globals,
+             pipelines,
+             direct_composition,
+-            font_info: Self::get_font_info(),
++            font_info,
+             width: 1,
+             height: 1,
+             skip_draws: false,
+@@ -483,6 +494,11 @@ impl DirectXRenderer {
+     }
+ 
+     pub(crate) fn resize(&mut self, new_size: Size<DevicePixels>) -> Result<()> {
++        let label = format!("renderer.resize {}x{}", new_size.width.0, new_size.height.0);
++        crate::trace::span(&label, || self.resize_traced(new_size))
++    }
++
++    fn resize_traced(&mut self, new_size: Size<DevicePixels>) -> Result<()> {
+         let width = new_size.width.0.max(1) as u32;
+         let height = new_size.height.0.max(1) as u32;
+         if self.width == width && self.height == height {
+diff --git i/crates/gpui_windows/src/events.rs w/crates/gpui_windows/src/events.rs
+index f1910b56b5..7be2560940 100644
+--- i/crates/gpui_windows/src/events.rs
++++ w/crates/gpui_windows/src/events.rs
+@@ -1361,10 +1361,20 @@ impl WindowsWindowInner {
+             // will rebuild the scene with fresh atlas textures.
+             self.state.renderer.borrow_mut().mark_drawable();
+         }
++        let frame = self.state.trace_frames.get();
++        let frame_start = std::time::Instant::now();
+         request_frame(RequestFrameOptions {
+             require_presentation: false,
+             force_render,
+         });
++        if frame < 5 {
++            self.state.trace_frames.set(frame + 1);
++            crate::trace::note(&format!(
++                "frame#{frame} since_window={:.2} took={:.2}",
++                (frame_start - self.state.trace_created).as_secs_f64() * 1000.0,
++                frame_start.elapsed().as_secs_f64() * 1000.0
++            ));
++        }
+ 
+         self.state.callbacks.request_frame.set(Some(request_frame));
+         self.update_ime_enabled(handle);
+diff --git i/crates/gpui_windows/src/gpui_windows.rs w/crates/gpui_windows/src/gpui_windows.rs
+index e7a45a034d..fc5af3d1e1 100644
+--- i/crates/gpui_windows/src/gpui_windows.rs
++++ w/crates/gpui_windows/src/gpui_windows.rs
+@@ -1,5 +1,123 @@
+ #![cfg(target_os = "windows")]
+ 
++/// Tachyon startup experiment: `gpui-trace <label> at=<ms since process
++/// creation> took=<ms>` lines on stderr. Not for upstream.
++pub(crate) mod trace {
++    use std::time::Instant;
++    use windows::Win32::Foundation::FILETIME;
++    use windows::Win32::System::SystemInformation::GetSystemTimePreciseAsFileTime;
++    use windows::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes};
++
++    fn ticks(t: FILETIME) -> u64 {
++        (u64::from(t.dwHighDateTime) << 32) | u64::from(t.dwLowDateTime)
++    }
++
++    pub(crate) fn since_process_start_ms() -> f64 {
++        let mut created = FILETIME::default();
++        let (mut exit, mut kernel, mut user) =
++            (FILETIME::default(), FILETIME::default(), FILETIME::default());
++        unsafe {
++            if GetProcessTimes(GetCurrentProcess(), &mut created, &mut exit, &mut kernel, &mut user)
++                .is_err()
++            {
++                return -1.0;
++            }
++            let now = GetSystemTimePreciseAsFileTime();
++            ticks(now).saturating_sub(ticks(created)) as f64 / 10_000.0
++        }
++    }
++
++    pub(crate) fn span<T>(label: &str, f: impl FnOnce() -> T) -> T {
++        let at = since_process_start_ms();
++        let start = Instant::now();
++        let result = f();
++        eprintln!(
++            "gpui-trace {label} at={at:.1} took={:.2}",
++            start.elapsed().as_secs_f64() * 1000.0
++        );
++        result
++    }
++
++    pub(crate) fn note(line: &str) {
++        eprintln!("gpui-trace {line} at={:.1}", since_process_start_ms());
++    }
++
++    thread_local! {
++        static MESSAGES_UNTIL: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
++        static DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
++    }
++
++    /// Trace every window message handled on this thread for the next 3 s.
++    pub(crate) fn trace_messages_for_a_while() {
++        MESSAGES_UNTIL.with(|until| until.set(Some(Instant::now() + std::time::Duration::from_secs(3))));
++    }
++
++    /// Runs one window-procedure call, printing it if it took 0.3 ms or more
++    /// while message tracing is on. Nested calls (messages sent while handling
++    /// another) print with a higher depth; their time is included in the outer.
++    pub(crate) fn message<T>(msg: u32, f: impl FnOnce() -> T) -> T {
++        let active = MESSAGES_UNTIL.with(|until| until.get().is_some_and(|t| Instant::now() < t));
++        if !active {
++            return f();
++        }
++        let depth = DEPTH.with(|d| {
++            let depth = d.get();
++            d.set(depth + 1);
++            depth
++        });
++        let at = since_process_start_ms();
++        let start = Instant::now();
++        let result = f();
++        let took = start.elapsed().as_secs_f64() * 1000.0;
++        DEPTH.with(|d| d.set(depth));
++        if took >= 0.3 {
++            eprintln!(
++                "gpui-trace msg {} {:#06x} depth={depth} at={at:.1} took={took:.2}",
++                message_name(msg),
++                msg
++            );
++        }
++        result
++    }
++
++    fn message_name(msg: u32) -> &'static str {
++        match msg {
++            0x0001 => "WM_CREATE",
++            0x0003 => "WM_MOVE",
++            0x0005 => "WM_SIZE",
++            0x0006 => "WM_ACTIVATE",
++            0x0007 => "WM_SETFOCUS",
++            0x0008 => "WM_KILLFOCUS",
++            0x000C => "WM_SETTEXT",
++            0x000F => "WM_PAINT",
++            0x0014 => "WM_ERASEBKGND",
++            0x0018 => "WM_SHOWWINDOW",
++            0x001C => "WM_ACTIVATEAPP",
++            0x0020 => "WM_SETCURSOR",
++            0x0024 => "WM_GETMINMAXINFO",
++            0x003D => "WM_GETOBJECT",
++            0x0046 => "WM_WINDOWPOSCHANGING",
++            0x0047 => "WM_WINDOWPOSCHANGED",
++            0x007C => "WM_STYLECHANGING",
++            0x007D => "WM_STYLECHANGED",
++            0x007F => "WM_GETICON",
++            0x0081 => "WM_NCCREATE",
++            0x0083 => "WM_NCCALCSIZE",
++            0x0084 => "WM_NCHITTEST",
++            0x0085 => "WM_NCPAINT",
++            0x0086 => "WM_NCACTIVATE",
++            0x0281 => "WM_IME_SETCONTEXT",
++            0x0282 => "WM_IME_NOTIFY",
++            0x0288 => "WM_IME_REQUEST",
++            0x02E0 => "WM_DPICHANGED",
++            0x031F => "WM_DWMNCRENDERINGCHANGED",
++            0x0320 => "WM_DWMCOLORIZATIONCOLORCHANGED",
++            _ if msg >= 0x0400 => "WM_USER+",
++            _ => "WM_other",
++        }
++    }
++}
++
+ mod clipboard;
+ mod destination_list;
+ mod dialog;
+diff --git i/crates/gpui_windows/src/platform.rs w/crates/gpui_windows/src/platform.rs
+index 348aaa3f23..2243397929 100644
+--- i/crates/gpui_windows/src/platform.rs
++++ w/crates/gpui_windows/src/platform.rs
+@@ -162,13 +162,17 @@ impl Drop for PowerRequest {
+ 
+ impl WindowsPlatform {
+     pub fn new(headless: bool) -> Result<Self> {
+-        unsafe {
+-            OleInitialize(None).context("unable to initialize Windows OLE")?;
+-        }
++        crate::trace::span("platform.new", || Self::new_traced(headless))
++    }
++
++    fn new_traced(headless: bool) -> Result<Self> {
++        crate::trace::span("platform.ole_initialize", || unsafe { OleInitialize(None) })
++            .context("unable to initialize Windows OLE")?;
+         let (directx_devices, text_system, direct_write_text_system) = if !headless {
+-            let devices = DirectXDevices::new().context("Creating DirectX devices")?;
++            let devices = crate::trace::span("platform.directx_devices", DirectXDevices::new)
++                .context("Creating DirectX devices")?;
+             let dw_text_system = Arc::new(
+-                DirectWriteTextSystem::new(&devices)
++                crate::trace::span("platform.direct_write", || DirectWriteTextSystem::new(&devices))
+                     .context("Error creating DirectWriteTextSystem")?,
+             );
+             (
+@@ -192,6 +196,7 @@ impl WindowsPlatform {
+         };
+         let raw_window_handles = Arc::new(RwLock::new(SmallVec::new()));
+ 
++        let msg_window_start = std::time::Instant::now();
+         register_platform_window_class();
+         let mut context = PlatformWindowCreateContext {
+             inner: None,
+@@ -227,6 +232,10 @@ impl WindowsPlatform {
+             .take()
+             .context("CreateWindowExW did not run correctly")?;
+         let handle = result?;
++        crate::trace::note(&format!(
++            "platform.message_window took={:.2}",
++            msg_window_start.elapsed().as_secs_f64() * 1000.0
++        ));
+ 
+         let disable_direct_composition = std::env::var(DISABLE_DIRECT_COMPOSITION)
+             .is_ok_and(|value| value == "true" || value == "1");
+@@ -234,15 +243,17 @@ impl WindowsPlatform {
+         let foreground_executor = ForegroundExecutor::new(dispatcher);
+ 
+         let drop_target_helper: Option<IDropTargetHelper> = if !headless {
+-            Some(unsafe {
+-                CoCreateInstance(&CLSID_DragDropHelper, None, CLSCTX_INPROC_SERVER)
+-                    .context("Error creating drop target helper.")?
+-            })
++            Some(
++                crate::trace::span("platform.drag_drop_helper", || unsafe {
++                    CoCreateInstance(&CLSID_DragDropHelper, None, CLSCTX_INPROC_SERVER)
++                })
++                .context("Error creating drop target helper.")?,
++            )
+         } else {
+             None
+         };
+         let icon = if !headless {
+-            load_icon().unwrap_or_default()
++            crate::trace::span("platform.load_icon", load_icon).unwrap_or_default()
+         } else {
+             HICON::default()
+         };
+diff --git i/crates/gpui_windows/src/window.rs w/crates/gpui_windows/src/window.rs
+index 73f56d7a54..81fe927faf 100644
+--- i/crates/gpui_windows/src/window.rs
++++ w/crates/gpui_windows/src/window.rs
+@@ -43,6 +43,10 @@ impl std::ops::Deref for WindowsWindow {
+ }
+ 
+ pub struct WindowsWindowState {
++    /// Startup experiment: when the window state was created, and how many
++    /// frames were traced since.
++    pub trace_created: std::time::Instant,
++    pub trace_frames: Cell<u32>,
+     pub origin: Cell<Point<Pixels>>,
+     pub logical_size: Cell<Size<Pixels>>,
+     pub min_size: Option<Size<Pixels>>,
+@@ -141,8 +145,10 @@ impl WindowsWindowState {
+         };
+         let border_offset = WindowBorderOffset::default();
+         let restore_from_minimized = None;
+-        let renderer = DirectXRenderer::new(hwnd, directx_devices, disable_direct_composition)
+-            .context("Creating DirectX renderer")?;
++        let renderer = crate::trace::span("window.renderer", || {
++            DirectXRenderer::new(hwnd, directx_devices, disable_direct_composition)
++        })
++        .context("Creating DirectX renderer")?;
+         let callbacks = Callbacks::default();
+         let input_handler = None;
+         let pending_surrogate = None;
+@@ -154,10 +160,14 @@ impl WindowsWindowState {
+         let fullscreen = None;
+         let initial_placement = None;
+ 
+-        let direct_manipulation = DirectManipulationHandler::new(hwnd, scale_factor)
+-            .context("initializing Direct Manipulation")?;
++        let direct_manipulation = crate::trace::span("window.direct_manipulation", || {
++            DirectManipulationHandler::new(hwnd, scale_factor)
++        })
++        .context("initializing Direct Manipulation")?;
+ 
+         Ok(Self {
++            trace_created: std::time::Instant::now(),
++            trace_frames: Cell::new(0),
+             origin: Cell::new(origin),
+             logical_size: Cell::new(logical_size),
+             fullscreen_restore_bounds: Cell::new(fullscreen_restore_bounds),
+@@ -457,7 +467,9 @@ impl WindowsWindow {
+             invalidate_devices,
+             draw_coordinator,
+         } = creation_info;
+-        register_window_class(icon);
++        let open_start = std::time::Instant::now();
++        crate::trace::trace_messages_for_a_while();
++        crate::trace::span("window.register_class", || register_window_class(icon));
+         let parent_hwnd = if params.kind == WindowKind::Dialog {
+             let parent_window = unsafe { GetActiveWindow() };
+             if parent_window.is_invalid() {
+@@ -543,7 +555,7 @@ impl WindowsWindow {
+             draw_coordinator,
+             parent_hwnd,
+         };
+-        let creation_result = unsafe {
++        let creation_result = crate::trace::span("window.create_window_ex", || unsafe {
+             CreateWindowExW(
+                 dwexstyle,
+                 WINDOW_CLASS_NAME,
+@@ -558,7 +570,7 @@ impl WindowsWindow {
+                 Some(hinstance.into()),
+                 Some(&context as *const _ as *const _),
+             )
+-        };
++        });
+ 
+         // Failure to create a `WindowsWindowState` can cause window creation to fail,
+         // so check the inner result first.
+@@ -577,13 +589,28 @@ impl WindowsWindow {
+             if !params.focus {
+                 placement.showCmd = SW_SHOWNOACTIVATE.0 as u32;
+             }
+-            unsafe { SetWindowPlacement(hwnd, &placement)? };
++            crate::trace::span("window.set_placement", || unsafe {
++                SetWindowPlacement(hwnd, &placement)
++            })?;
+         } else {
++            // Experiment (GPUI_TRACE_PLACE_HIDDEN=1): move and size the hidden window now, still
++            // hidden, so showing it later does not also move it.
++            if std::env::var("GPUI_TRACE_PLACE_HIDDEN").as_deref() == Ok("1") {
++                let mut hidden = placement;
++                hidden.showCmd = SW_HIDE.0 as u32;
++                crate::trace::span("window.place_hidden", || unsafe {
++                    SetWindowPlacement(hwnd, &hidden)
++                })?;
++            }
+             this.state.initial_placement.set(Some(WindowOpenStatus {
+                 placement,
+                 state: WindowOpenState::Windowed,
+             }));
+         }
++        crate::trace::note(&format!(
++            "window.new took={:.2}",
++            open_start.elapsed().as_secs_f64() * 1000.0
++        ));
+ 
+         Ok(Self(this))
+     }
+@@ -815,7 +842,8 @@ impl PlatformWindow for WindowsWindow {
+         self.0
+             .executor
+             .spawn(async move {
+-                this.set_window_placement().log_err();
++                crate::trace::trace_messages_for_a_while();
++                crate::trace::span("activate.set_placement", || this.set_window_placement().log_err());
+ 
+                 unsafe {
+                     // If the window is minimized, restore it.
+@@ -823,8 +851,8 @@ impl PlatformWindow for WindowsWindow {
+                         ShowWindowAsync(hwnd, SW_RESTORE).ok().log_err();
+                     }
+ 
+-                    SetActiveWindow(hwnd).ok();
+-                    SetFocus(Some(hwnd)).ok();
++                    crate::trace::span("activate.set_active_window", || SetActiveWindow(hwnd).ok());
++                    crate::trace::span("activate.set_focus", || SetFocus(Some(hwnd)).ok());
+                 }
+ 
+                 // premium ragebait by windows, this is needed because the window
+@@ -1461,14 +1489,16 @@ unsafe extern "system" fn window_procedure(
+         return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
+     }
+     let inner = unsafe { &*ptr };
+-    let result = if let Some(inner) = inner.upgrade() {
+-        if msg == WM_NCDESTROY {
+-            inner.dialog_owner.close();
++    let result = crate::trace::message(msg, || {
++        if let Some(inner) = inner.upgrade() {
++            if msg == WM_NCDESTROY {
++                inner.dialog_owner.close();
++            }
++            inner.handle_msg(hwnd, msg, wparam, lparam)
++        } else {
++            unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+         }
+-        inner.handle_msg(hwnd, msg, wparam, lparam)
+-    } else {
+-        unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+-    };
++    });
+ 
+     if msg == WM_NCDESTROY {
+         unsafe { set_window_long(hwnd, GWLP_USERDATA, 0) };

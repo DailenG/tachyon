@@ -1,0 +1,23 @@
+[patch."https://github.com/zed-industries/zed"]
+collections = { path = "ZED_TRACE/crates/collections" }
+derive_refineable = { path = "ZED_TRACE/crates/refineable/derive_refineable" }
+gpui = { path = "ZED_TRACE/crates/gpui" }
+gpui_apple = { path = "ZED_TRACE/crates/gpui_apple" }
+gpui_linux = { path = "ZED_TRACE/crates/gpui_linux" }
+gpui_macos = { path = "ZED_TRACE/crates/gpui_macos" }
+gpui_macros = { path = "ZED_TRACE/crates/gpui_macros" }
+gpui_platform = { path = "ZED_TRACE/crates/gpui_platform" }
+gpui_shared_string = { path = "ZED_TRACE/crates/gpui_shared_string" }
+gpui_util = { path = "ZED_TRACE/crates/gpui_util" }
+gpui_web = { path = "ZED_TRACE/crates/gpui_web" }
+gpui_wgpu = { path = "ZED_TRACE/crates/gpui_wgpu" }
+gpui_windows = { path = "ZED_TRACE/crates/gpui_windows" }
+http_client = { path = "ZED_TRACE/crates/http_client" }
+perf = { path = "ZED_TRACE/tooling/perf" }
+refineable = { path = "ZED_TRACE/crates/refineable" }
+scheduler = { path = "ZED_TRACE/crates/scheduler" }
+sum_tree = { path = "ZED_TRACE/crates/sum_tree" }
+util_macros = { path = "ZED_TRACE/crates/util_macros" }
+zlog = { path = "ZED_TRACE/crates/zlog" }
+ztracing = { path = "ZED_TRACE/crates/ztracing" }
+ztracing_macro = { path = "ZED_TRACE/crates/ztracing_macro" }

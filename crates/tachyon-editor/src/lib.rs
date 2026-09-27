@@ -3,6 +3,7 @@
 //! blocks are rendered with their syntax hidden.
 
 mod editor;
+mod frame_log;
 mod frame_stats;
 mod movement;
 mod prompt;
@@ -20,7 +21,12 @@ pub fn init(cx: &mut gpui::App) {
     cx.bind_keys(key_bindings());
     cx.intercept_keystrokes(|_, window, cx| {
         if let Some(Some(editor)) = window.root::<Editor>() {
-            editor.update(cx, |editor, cx| editor.flush_pending_paste(cx));
+            editor.update(cx, |editor, cx| {
+                if let Some(log) = &mut editor.frame_log {
+                    log.key();
+                }
+                editor.flush_pending_paste(cx)
+            });
         }
     })
     .detach();

@@ -171,6 +171,8 @@ pub struct Editor {
     shown_title: Option<String>,
     /// Frame-time overlay, when shown.
     pub(crate) frame_stats: Option<crate::frame_stats::FrameStats>,
+    /// Experiment branch: `TACHYON_FRAME_LOG` per-frame timing log.
+    pub(crate) frame_log: Option<crate::frame_log::FrameLog>,
 }
 
 impl Editor {
@@ -211,6 +213,7 @@ impl Editor {
             saved_version: 0,
             shown_title: None,
             frame_stats: None,
+            frame_log: crate::frame_log::FrameLog::from_env(),
         };
         editor.doc.take_splices();
         editor.update_active();
@@ -490,13 +493,16 @@ impl Editor {
     pub(crate) fn replace(&mut self, range: Range<usize>, text: &str, cx: &mut Context<Self>) {
         let now = Instant::now();
         self.replace_at(now, range, Insert::Text(text), cx);
-        self.charge_work(now);
+        self.charge_work("edit", now);
     }
 
     /// Charges the time since `started` to the frame-time overlay.
-    fn charge_work(&mut self, started: Instant) {
+    fn charge_work(&mut self, label: &'static str, started: Instant) {
         if let Some(stats) = &mut self.frame_stats {
             stats.work(started);
+        }
+        if let Some(log) = &mut self.frame_log {
+            log.work(label, started);
         }
     }
 
@@ -587,7 +593,7 @@ impl Editor {
                     let focus = editor.viewport_offset();
                     editor.reparse(focus, cx);
                     editor.update_active();
-                    editor.charge_work(started);
+                    editor.charge_work("parse", started);
                     cx.notify();
                 });
             }));
@@ -812,7 +818,7 @@ impl Editor {
         self.flush_pending_paste(cx);
         let started = Instant::now();
         let text = cx.read_from_clipboard().and_then(|item| item.text());
-        self.charge_work(started);
+        self.charge_work("clipboard", started);
         let Some(text) = text else { return };
         self.moved_since_edit = true;
         if text.len() <= tachyon_doc::UNPARSED_SPLIT_THRESHOLD {
@@ -830,7 +836,7 @@ impl Editor {
                 if editor.pending_paste.take().is_some() {
                     let now = Instant::now();
                     editor.replace_at(now, editor.selection.clone(), Insert::Prepared(insert), cx);
-                    editor.charge_work(now);
+                    editor.charge_work("paste", now);
                 }
             });
         });

@@ -250,7 +250,14 @@ fn prepare_ready_window(cx: &mut App) {
                 Ok(handle) => {
                     // A hidden window only gets its final size when shown,
                     // and resizing the render targets then takes ≈ 20 ms.
-                    let _ = handle.update(cx, |_, window, _| window.resize(WINDOW_SIZE));
+                    let _ = handle.update(cx, |_, window, _| {
+                        window.resize(WINDOW_SIZE);
+                        // Experiment branch: TACHYON_EXP_NO_TRANSITIONS=1.
+                        if std::env::var("TACHYON_EXP_NO_TRANSITIONS").as_deref() == Ok("1") {
+                            let applied = tachyon_platform::disable_window_transitions(window);
+                            eprintln!("tachyon-exp no_transitions applied={applied}");
+                        }
+                    });
                     cx.set_global(ReadyWindow(Some(handle)));
                 }
                 Err(e) => eprintln!("tachyon: could not prepare a window ({e:#})"),

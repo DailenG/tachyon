@@ -12,9 +12,14 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[dependencies]
+# Experiment branch: raw window handle for the DWM transitions experiment.
+raw-window-handle = "0.6"
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { workspace = true, features = [
     "Win32_Foundation",
+    "Win32_Graphics_Dwm",
     "Win32_Security",
     "Win32_Security_Authorization",
     "Win32_Storage_FileSystem",
