@@ -57,6 +57,8 @@ impl Render for Editor {
             })
             .on_action(cx.listener(Self::shift_newline))
             .on_action(cx.listener(Self::find))
+            .on_action(cx.listener(Self::replace_bar))
+            .on_action(cx.listener(Self::replace_all))
             .on_action(cx.listener(Self::find_next))
             .on_action(cx.listener(Self::find_previous))
             .on_action(cx.listener(Self::cancel))
@@ -161,8 +163,23 @@ impl Editor {
                         .border_color(theme.rule)
                         .text_color(theme.foreground)
                         .child(div().text_color(theme.muted).child("Find"))
-                        .child(div().min_w(px(200.)).child(format!("{}\u{258f}", find.query)))
-                        .child(div().text_color(theme.muted).child(find.status())),
+                        .child(
+                            div()
+                                .min_w(px(200.))
+                                .child(field(&find.query, !find.editing_replacement)),
+                        )
+                        .child(div().text_color(theme.muted).child(find.status()))
+                        .children(find.replacement.as_ref().map(|replacement| {
+                            div()
+                                .flex()
+                                .gap_3()
+                                .child(div().text_color(theme.muted).child("Replace"))
+                                .child(
+                                    div()
+                                        .min_w(px(160.))
+                                        .child(field(replacement, find.editing_replacement)),
+                                )
+                        })),
                 )
                 .into_any_element(),
         )
@@ -571,6 +588,11 @@ impl Editor {
         };
         with_mouse(div().cursor_text().child(styled), layout, target, cx).into_any_element()
     }
+}
+
+/// A find-bar field's text, with a caret when it receives typing.
+fn field(text: &str, active: bool) -> String {
+    if active { format!("{text}\u{258f}") } else { text.to_owned() }
 }
 
 /// Horizontal padding of the active block's card: raw text sits this much to

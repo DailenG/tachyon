@@ -534,3 +534,35 @@ fn find_starts_with_the_selected_text(cx: &mut TestAppContext) {
     });
     assert_eq!((query.as_str(), status.as_str()), ("beta", "1/2"));
 }
+
+#[gpui::test]
+fn replace_one_then_all_with_one_undo_step_each(cx: &mut TestAppContext) {
+    let doc = "cat and cat\n\nthe cat sat\n";
+    let (editor, cx) = open(doc, cx);
+    cx.simulate_keystrokes("ctrl-h");
+    cx.simulate_input("cat");
+    cx.simulate_keystrokes("tab");
+    cx.simulate_input("dog");
+    cx.run_until_parked();
+    assert_eq!(text(&editor, cx), doc, "typing fills the fields, not the document");
+
+    // Enter in the replacement replaces the selected match and selects the next one.
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert_eq!(text(&editor, cx), "dog and cat\n\nthe cat sat\n");
+    let selected = editor.read_with(cx, |e, _| e.selection.clone());
+    assert_eq!(selected, 8..11);
+
+    cx.simulate_keystrokes("secondary-enter");
+    cx.run_until_parked();
+    assert_eq!(text(&editor, cx), "dog and dog\n\nthe dog sat\n");
+    let status = editor.read_with(cx, |e, _| e.find.as_ref().map(|f| f.status()));
+    assert_eq!(status.as_deref(), Some("no matches"));
+
+    cx.simulate_keystrokes("escape secondary-z");
+    cx.run_until_parked();
+    assert_eq!(text(&editor, cx), "dog and cat\n\nthe cat sat\n", "replace all undoes at once");
+    cx.simulate_keystrokes("secondary-z");
+    cx.run_until_parked();
+    assert_eq!(text(&editor, cx), doc);
+}
