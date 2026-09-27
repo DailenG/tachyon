@@ -566,3 +566,23 @@ fn replace_one_then_all_with_one_undo_step_each(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert_eq!(text(&editor, cx), doc);
 }
+
+#[gpui::test]
+fn appearance_hint_wins_until_the_window_catches_up(cx: &mut TestAppContext) {
+    // The test window reports light, like GPUI's Linux windows before the portal answers.
+    cx.update(|cx| cx.set_global(crate::AppearanceHint { dark: true }));
+    let (editor, cx) = open("# Title\n", cx);
+    let dark = |cx: &mut VisualTestContext| editor.read_with(cx, |e, _| e.theme.dark);
+    assert!(dark(cx), "the first frame uses the hinted dark theme");
+
+    // Decoration changes also fire appearance callbacks, still reporting light.
+    editor.update_in(cx, |e, window, cx| e.follow_appearance(window, cx));
+    assert!(dark(cx), "a stale light report does not flash the light theme");
+    assert!(cx.update(|_, cx| cx.has_global::<crate::AppearanceHint>()));
+}
+
+#[gpui::test]
+fn without_a_hint_the_window_appearance_decides(cx: &mut TestAppContext) {
+    let (editor, cx) = open("# Title\n", cx);
+    assert!(!editor.read_with(cx, |e, _| e.theme.dark), "the test window reports light");
+}

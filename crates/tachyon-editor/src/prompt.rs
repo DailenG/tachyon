@@ -29,7 +29,7 @@ pub fn keyboard_prompt(
         cancel: cancel_index(actions),
         selected: 0,
         focus: cx.focus_handle(),
-        theme: Theme::dark(),
+        theme: Theme::for_window(window, cx),
     });
     handle.with_view(prompt, window, cx)
 }

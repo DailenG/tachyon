@@ -225,6 +225,10 @@ pub fn disable_window_transitions(window: &impl raw_window_handle::HasWindowHand
     result == 0
 }
 
+pub fn query_system_appearance() -> Option<mpsc::Receiver<bool>> {
+    None
+}
+
 pub fn attach_parent_console() {
     use windows_sys::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
     // SAFETY: no pointers; failing (no parent console, or one already attached) is harmless.
