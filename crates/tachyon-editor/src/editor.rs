@@ -36,6 +36,8 @@ actions!(
         PageDown,
         ShiftNewline,
         Find,
+        Replace,
+        ReplaceAll,
         FindNext,
         FindPrevious,
         Cancel,
@@ -94,6 +96,9 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-up", DocumentStart, c),
         KeyBinding::new("ctrl-end", DocumentEnd, c),
         KeyBinding::new("secondary-f", Find, c),
+        KeyBinding::new("ctrl-h", Replace, c),
+        KeyBinding::new("cmd-alt-f", Replace, c),
+        KeyBinding::new("secondary-enter", ReplaceAll, c),
         KeyBinding::new("f3", FindNext, c),
         KeyBinding::new("shift-f3", FindPrevious, c),
         KeyBinding::new("secondary-g", FindNext, c),
@@ -525,6 +530,18 @@ impl Editor {
     // ---- editing --------------------------------------------------------
 
     /// Replaces `range` with `text` and puts the caret after it.
+    /// An edit that replaces `range` as its own undo step (find and replace).
+    pub(crate) fn replace_selection_with(
+        &mut self,
+        range: Range<usize>,
+        text: &str,
+        cx: &mut Context<Self>,
+    ) {
+        self.moved_since_edit = true;
+        self.replace(range, text, cx);
+        self.doc.seal_undo_group();
+    }
+
     pub(crate) fn replace(&mut self, range: Range<usize>, text: &str, cx: &mut Context<Self>) {
         let now = Instant::now();
         self.replace_at(now, range, Insert::Text(text), cx);
@@ -860,7 +877,7 @@ impl Editor {
     }
     pub(crate) fn newline(&mut self, _: &Newline, window: &mut Window, cx: &mut Context<Self>) {
         if self.finding() {
-            return self.find_next(&FindNext, window, cx);
+            return self.find_enter(window, cx);
         }
         self.replace(self.selection.clone(), "\n", cx);
     }
@@ -877,6 +894,9 @@ impl Editor {
         self.replace(self.selection.clone(), "\n", cx);
     }
     pub(crate) fn tab(&mut self, _: &Tab, _: &mut Window, cx: &mut Context<Self>) {
+        if self.find_switch_field(cx) {
+            return;
+        }
         self.replace(self.selection.clone(), "    ", cx);
     }
     pub(crate) fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {

@@ -1,15 +1,21 @@
-//! Find in the document (`Ctrl+F`). While the find bar is open, typed text, Backspace and paste
-//! edit the query instead of the document; Enter / Shift+Enter (and F3 / Shift+F3) step through
-//! the matches, Escape closes the bar. Matches are highlighted in rendered and raw blocks.
+//! Find and replace (`Ctrl+F`, `Ctrl+H`). While the bar is open, typed text, Backspace and paste
+//! edit its active field (query or replacement; Tab switches) instead of the document. In the
+//! query, Enter / Shift+Enter (and F3 / Shift+F3) step through the matches; in the replacement,
+//! Enter replaces the selected match and moves to the next, Ctrl+Enter replaces all of them as one
+//! undo step. Escape closes the bar. Matches are highlighted in rendered and raw blocks.
 
 use std::ops::Range;
 
 use gpui::{Context, Window};
 
-use crate::editor::{Cancel, Editor, Find, FindNext, FindPrevious};
+use crate::editor::{Cancel, Editor, Find, FindNext, FindPrevious, Replace, ReplaceAll};
 
 pub(crate) struct FindState {
     pub(crate) query: String,
+    /// The replacement, when the bar is in replace mode.
+    pub(crate) replacement: Option<String>,
+    /// Whether typing goes to the replacement (Tab switches).
+    pub(crate) editing_replacement: bool,
     /// Matches of `query` in the document, in order.
     pub(crate) matches: Vec<Range<usize>>,
     /// Index into `matches` of the selected match.
@@ -23,6 +29,13 @@ pub(crate) struct FindState {
 }
 
 impl FindState {
+    fn active_field(&mut self) -> &mut String {
+        match &mut self.replacement {
+            Some(replacement) if self.editing_replacement => replacement,
+            _ => &mut self.query,
+        }
+    }
+
     /// Status shown in the find bar: `3/17`, `no matches`, or nothing for an empty query.
     pub(crate) fn status(&self) -> String {
         if self.query.is_empty() {
@@ -56,6 +69,14 @@ impl FindState {
 
 impl Editor {
     pub(crate) fn find(&mut self, _: &Find, _: &mut Window, cx: &mut Context<Self>) {
+        self.open_find(false, cx);
+    }
+
+    pub(crate) fn replace_bar(&mut self, _: &Replace, _: &mut Window, cx: &mut Context<Self>) {
+        self.open_find(true, cx);
+    }
+
+    fn open_find(&mut self, replace: bool, cx: &mut Context<Self>) {
         // A selection on one line becomes the query; otherwise the previous query stays.
         let selected = self.selected_text();
         let query = if !selected.is_empty() && !selected.contains('\n') {
@@ -64,8 +85,12 @@ impl Editor {
             self.find.as_ref().map(|f| f.query.clone()).unwrap_or_default()
         };
         let origin = self.selection.start;
+        let previous = self.find.as_ref().and_then(|f| f.replacement.clone());
+        let replacement = replace.then(|| previous.unwrap_or_default());
         self.find = Some(FindState {
             query,
+            replacement,
+            editing_replacement: false,
             matches: Vec::new(),
             current: None,
             origin,
@@ -100,25 +125,88 @@ impl Editor {
         self.find.is_some()
     }
 
-    /// Replaces the query's composition (if any) with `text`; `composing` marks it as a new
-    /// uncommitted composition.
+    /// Replaces the active field's composition (if any) with `text`; `composing` marks it as a
+    /// new uncommitted composition.
     pub(crate) fn find_input(&mut self, text: &str, composing: bool, cx: &mut Context<Self>) {
         let Some(find) = &mut self.find else { return };
-        find.query.truncate(find.query.len() - find.composing);
-        // The query is one line.
+        let editing_query = !find.editing_replacement;
+        let composed = find.composing;
+        let field = find.active_field();
+        field.truncate(field.len() - composed);
+        // Both fields are one line.
         let text = text.lines().next().unwrap_or("");
-        find.query.push_str(text);
+        field.push_str(text);
         find.composing = if composing { text.len() } else { 0 };
-        self.research(cx);
+        if editing_query {
+            self.research(cx);
+        }
         cx.notify();
     }
 
     pub(crate) fn find_backspace(&mut self, cx: &mut Context<Self>) {
         let Some(find) = &mut self.find else { return };
         find.composing = 0;
-        find.query.pop();
-        self.research(cx);
+        let editing_query = !find.editing_replacement;
+        find.active_field().pop();
+        if editing_query {
+            self.research(cx);
+        }
         cx.notify();
+    }
+
+    /// Tab while the bar is in replace mode: switches between query and replacement.
+    pub(crate) fn find_switch_field(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(find) = &mut self.find else { return false };
+        if find.replacement.is_none() {
+            return false;
+        }
+        find.editing_replacement = !find.editing_replacement;
+        find.composing = 0;
+        cx.notify();
+        true
+    }
+
+    /// Enter in the replacement: replaces the selected match, then selects the next one.
+    pub(crate) fn find_enter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let replacing = self.find.as_ref().is_some_and(|f| f.editing_replacement);
+        if replacing {
+            self.replace_current(cx);
+        }
+        self.find_next(&FindNext, window, cx);
+    }
+
+    pub(crate) fn replace_all(&mut self, _: &ReplaceAll, _: &mut Window, cx: &mut Context<Self>) {
+        self.refresh_find();
+        let Some(find) = &self.find else { return };
+        let Some(replacement) = find.replacement.clone() else { return };
+        let (Some(first), Some(last)) = (find.matches.first(), find.matches.last()) else {
+            return;
+        };
+        // One edit over the span of all matches: one undo step, one reparse.
+        let span = first.start..last.end;
+        let text = self.doc.buffer().rope().byte_slice(span.clone()).to_string();
+        let mut replaced = String::with_capacity(text.len());
+        let mut at = span.start;
+        for m in &find.matches {
+            replaced.push_str(&text[at - span.start..m.start - span.start]);
+            replaced.push_str(&replacement);
+            at = m.end;
+        }
+        let start = span.start;
+        self.replace_selection_with(span, &replaced, cx);
+        self.move_to(start, false, cx);
+    }
+
+    /// Replaces the selection if it is exactly a match.
+    fn replace_current(&mut self, cx: &mut Context<Self>) {
+        self.refresh_find();
+        let Some(find) = &self.find else { return };
+        let Some(replacement) = find.replacement.clone() else { return };
+        if !find.matches.contains(&self.selection) {
+            return;
+        }
+        let selection = self.selection.clone();
+        self.replace_selection_with(selection, &replacement, cx);
     }
 
     pub(crate) fn find_end_composition(&mut self) {

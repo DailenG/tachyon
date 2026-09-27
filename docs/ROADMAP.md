@@ -135,7 +135,8 @@ What a scratchpad needs day to day, without giving up the budgets above.
       Shift+Enter (F3 / Shift+F3) to step through them, Escape to close; smart case; the selection
       seeds the query. `find_all` on 5 MiB: ≈ 1 ms; live, typing a query in a 5 MB document:
       max frame 3.7 ms
-- [ ] Replace (`Ctrl+H`): one match or all, as one undo step
+- [x] Replace (`Ctrl+H`, `Cmd+Alt+F`): Tab switches between query and replacement, Enter replaces
+      the selected match and moves on, `Ctrl+Enter` replaces all as one edit and one undo step
 - [ ] Light theme, following the system appearance
 - [ ] Zoom (`Ctrl+=`, `Ctrl+-`, `Ctrl+0`)
 - [ ] Open links with `Ctrl+click`
