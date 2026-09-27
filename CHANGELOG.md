@@ -99,6 +99,11 @@ All notable user-visible changes are recorded here. The format follows
   boxes have visible 1 px control borders; the selected picker row is solid accent. The find bar,
   pickers and prompt fit windows down to 480 × 360, and the Linux prompt no longer dims the
   document behind a translucent backdrop.
+- The find, replace and picker fields have a 1 px border that turns accent on the field receiving
+  typing, and a painted caret (the caret character showed colour fringes on Windows). While the
+  find bar or a picker takes typing, the document caret is hidden, so only one caret shows.
+- The find bar no longer covers the match it points at: revealing a match keeps it below the bar,
+  and at the top of the document the text moves down under an open bar.
 
 ### Fixed
 
