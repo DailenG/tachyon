@@ -8,6 +8,7 @@
 //!
 //! This crate must never depend on GPUI.
 
+mod autolink;
 mod defs;
 mod ir;
 mod presegment;
@@ -720,6 +721,7 @@ impl<'a> Builder<'a> {
             self.begin_leaf();
             self.open_line(LineKind::Text);
         }
+        autolink::autolink(&mut self.ir);
         Pending {
             kind: self.kind,
             content: range,

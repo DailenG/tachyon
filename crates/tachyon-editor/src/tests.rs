@@ -642,3 +642,17 @@ fn secondary_click_on_a_link_opens_it_without_moving_the_caret(cx: &mut TestAppC
     cx.run_until_parked();
     assert_eq!(editor.read_with(cx, |e, _| e.active_block()), Some(0), "a plain click edits");
 }
+
+#[gpui::test]
+fn secondary_click_on_a_bare_url_opens_it(cx: &mut TestAppContext) {
+    let doc = "https://example.com/docs, see above\n\nplain\n";
+    let (editor, cx) = open(doc, cx);
+    let url = rendered_glyph_point(&editor, 3, cx);
+    let plain = doc.find("plain").expect("fixture");
+    editor.update(cx, |e, cx| e.move_to(plain, false, cx));
+    cx.run_until_parked();
+
+    cx.simulate_click(url, gpui::Modifiers::secondary_key());
+    cx.run_until_parked();
+    assert_eq!(cx.opened_url().as_deref(), Some("https://example.com/docs"));
+}
