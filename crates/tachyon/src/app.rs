@@ -10,7 +10,7 @@ use gpui::{
 };
 use tachyon_doc::Document;
 use tachyon_editor::Editor;
-use tachyon_platform::Listener;
+use tachyon_platform::{Listener, TrayEvent};
 
 use crate::cli::{self, Cli};
 use crate::startup::Startup;
@@ -150,6 +150,9 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
 
         if let Some(listener) = listener {
             serve_forwarded_launches(listener, cx);
+            if resident {
+                show_tray(cx);
+            }
             prepare_ready_window(cx);
             if report_launches {
                 report_line("tachyon-ready");
@@ -211,6 +214,7 @@ fn initial_document(source: &Source, cx: &App) -> Document {
 fn open_window(source: Source, cx: &mut App) -> Option<WindowHandle<Editor>> {
     let options = window_options(source.title(), true, cx);
     let result = cx.open_window(options, move |window, cx| {
+        tachyon_platform::set_window_icon(window);
         cx.new(|cx| {
             let editor = Editor::with_document(initial_document(&source, cx), window, cx);
             if let Source::File(path) = source {
@@ -295,6 +299,7 @@ fn prepare_ready_window(cx: &mut App) {
                     let _ = handle.update(cx, |_, window, _| {
                         window.resize(WINDOW_SIZE);
                         tachyon_platform::disable_window_transitions(window);
+                        tachyon_platform::set_window_icon(window);
                     });
                     cx.set_global(ReadyWindow(Some(handle)));
                 }
@@ -358,6 +363,45 @@ fn report_line(line: &str) {
 
 /// Moves launches forwarded by secondary processes from the listener thread
 /// onto the main thread and opens them there.
+/// The resident instance's tray icon (Windows), removed when the app quits.
+struct TrayIcon {
+    _tray: tachyon_platform::Tray,
+}
+
+impl Global for TrayIcon {}
+
+/// Shows the tray icon: clicking it opens a window, its menu opens a window or quits.
+fn show_tray(cx: &mut App) {
+    let (tx, mut rx) = futures::channel::mpsc::unbounded::<TrayEvent>();
+    let Some(tray) = tachyon_platform::Tray::show("Tachyon", move |event| {
+        let _ = tx.unbounded_send(event);
+    }) else {
+        return;
+    };
+    cx.set_global(TrayIcon { _tray: tray });
+    // Without this the process would exit with the icon still shown until the pointer passes
+    // over it.
+    cx.on_app_quit(|cx| {
+        if cx.has_global::<TrayIcon>() {
+            cx.remove_global::<TrayIcon>();
+        }
+        async {}
+    })
+    .detach();
+    cx.spawn(async move |cx| {
+        while let Some(event) = rx.next().await {
+            cx.update(|cx| match event {
+                TrayEvent::Open => {
+                    show_window(Source::Blank, cx);
+                    cx.activate(true);
+                }
+                TrayEvent::Quit => cx.dispatch_action(&Quit),
+            });
+        }
+    })
+    .detach();
+}
+
 fn serve_forwarded_launches(listener: Listener, cx: &mut App) {
     let (tx, mut rx) = futures::channel::mpsc::unbounded::<Vec<String>>();
     // Accepted once queued for the main thread; fails only while quitting.

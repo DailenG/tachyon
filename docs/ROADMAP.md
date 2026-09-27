@@ -144,7 +144,9 @@ What a scratchpad needs day to day, without giving up the budgets above.
 - [x] Zoom (`Ctrl+=`, `Ctrl+-`, `Ctrl+0`): browser steps from 50 % to 300 %, per window; text,
       indents and rem-based spacing scale together
 - [ ] Open links with `Ctrl+click`
-- [ ] Tray icon on Windows for the resident process (show a window, quit)
+- [x] Tray icon on Windows for the resident process: click for a new window, menu with "New
+      window" and "Quit Tachyon"; re-added when Explorer restarts. Tachyon's windows get the same
+      icon (title bar, taskbar, Alt+Tab)
 - [ ] Read the clipboard off the UI thread (the Phase 3 follow-up above)
 
 **Exit:** every item above covered by a `gpui::test` or a live check; finding in a 5 MB document

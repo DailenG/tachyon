@@ -28,6 +28,9 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{ASFW_ANY, AllowSetForegroundWi
 
 use crate::protocol;
 
+mod tray;
+pub use tray::{Tray, set_window_icon, show_tray};
+
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 const REPLY_TIMEOUT: Duration = Duration::from_secs(2);
 const PIPE_BUFFER: u32 = 64 * 1024;
