@@ -145,25 +145,70 @@ pub fn set_autostart(_exe: &std::path::Path, _enabled: bool) -> io::Result<()> {
     Err(io::Error::new(io::ErrorKind::Unsupported, "autostart is not supported on macOS yet"))
 }
 
+/// The XDG autostart spec: a user entry overrides system entries (`$XDG_CONFIG_DIRS`, default
+/// `/etc/xdg`) with the same name, and `Hidden=true` disables it.
 #[cfg(not(target_os = "macos"))]
 pub fn autostart_enabled() -> io::Result<bool> {
-    Ok(autostart_entry()?.is_file())
+    let user = autostart_entry()?;
+    if user.is_file() {
+        return Ok(!is_hidden(&fs::read_to_string(&user)?));
+    }
+    for entry in system_autostart_entries() {
+        if let Ok(text) = fs::read_to_string(entry) {
+            return Ok(!is_hidden(&text));
+        }
+    }
+    Ok(false)
 }
 
+/// Turning it off removes the user entry, or replaces it with a `Hidden=true` override when a
+/// system entry would otherwise still start Tachyon.
 #[cfg(not(target_os = "macos"))]
 pub fn set_autostart(exe: &std::path::Path, enabled: bool) -> io::Result<()> {
     let entry = autostart_entry()?;
-    if enabled {
-        if let Some(dir) = entry.parent() {
-            fs::create_dir_all(dir)?;
+    let system = system_autostart_entries().into_iter().any(|path| path.is_file());
+    let contents = match (enabled, system) {
+        (true, _) => autostart_desktop_file(exe),
+        (false, true) => {
+            "[Desktop Entry]\nType=Application\nName=Tachyon\nHidden=true\n".to_owned()
         }
-        fs::write(&entry, autostart_desktop_file(exe))
-    } else {
-        match fs::remove_file(&entry) {
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
-            result => result,
+        (false, false) => {
+            return match fs::remove_file(&entry) {
+                Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+                result => result,
+            };
+        }
+    };
+    if let Some(dir) = entry.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    fs::write(&entry, contents)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn system_autostart_entries() -> Vec<PathBuf> {
+    let dirs = std::env::var("XDG_CONFIG_DIRS").ok().filter(|dirs| !dirs.is_empty());
+    dirs.as_deref()
+        .unwrap_or("/etc/xdg")
+        .split(':')
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_absolute())
+        .map(|dir| dir.join("autostart").join("tachyon.desktop"))
+        .collect()
+}
+
+/// Whether a desktop entry has `Hidden=true` in its `[Desktop Entry]` group.
+#[cfg(not(target_os = "macos"))]
+fn is_hidden(entry: &str) -> bool {
+    let mut in_group = false;
+    for line in entry.lines().map(str::trim) {
+        if line.starts_with('[') {
+            in_group = line == "[Desktop Entry]";
+        } else if in_group && let Some(value) = line.strip_prefix("Hidden=") {
+            return value.trim() == "true";
         }
     }
+    false
 }
 
 /// `$XDG_CONFIG_HOME/autostart/tachyon.desktop` (default `~/.config`).
@@ -205,6 +250,14 @@ fn autostart_desktop_file(exe: &std::path::Path) -> String {
 #[cfg(all(test, not(target_os = "macos")))]
 mod autostart_tests {
     use super::*;
+
+    #[test]
+    fn hidden_is_read_from_the_desktop_entry_group_only() {
+        assert!(is_hidden("[Desktop Entry]\nName=Tachyon\nHidden=true\n"));
+        assert!(!is_hidden("[Desktop Entry]\nHidden=false\n"));
+        assert!(!is_hidden(&autostart_desktop_file(std::path::Path::new("/t"))));
+        assert!(!is_hidden("[Desktop Entry]\nName=T\n[Desktop Action x]\nHidden=true\n"));
+    }
 
     #[test]
     fn desktop_entry_quotes_the_executable_path() {

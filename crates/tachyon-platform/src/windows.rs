@@ -232,61 +232,93 @@ pub fn attach_parent_console() {
 }
 
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+/// Task Manager's per-app startup switch for `Run` entries: a 12-byte REG_BINARY whose first byte
+/// is even when enabled and odd when disabled; absent means enabled.
+const APPROVED_KEY: &str =
+    r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
 const RUN_VALUE: &str = "Tachyon";
 
-pub fn autostart_enabled() -> io::Result<bool> {
+/// Reads a user registry value into `data` (`None` for a presence check). `Ok(None)` if absent.
+fn reg_get(key: &str, flags: u32, data: Option<&mut [u8]>) -> io::Result<Option<usize>> {
     use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
-    use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_SZ, RegGetValueW};
-    let (key, value) = (wide(RUN_KEY), wide(RUN_VALUE));
-    // SAFETY: `key` and `value` are NUL-terminated UTF-16 strings that outlive the call; a null
-    // data pointer with a null size pointer only queries whether the value exists.
+    use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, RegGetValueW};
+    let (key, value) = (wide(key), wide(RUN_VALUE));
+    let (ptr, mut len) = match data {
+        Some(buffer) => (buffer.as_mut_ptr(), u32::try_from(buffer.len()).unwrap_or(u32::MAX)),
+        None => (ptr::null_mut(), 0),
+    };
+    let len_ptr = if ptr.is_null() { ptr::null_mut() } else { &raw mut len };
+    // SAFETY: `key` and `value` are NUL-terminated UTF-16 strings that outlive the call; `ptr`
+    // is either null (presence check, with a null size pointer) or a buffer of `len` bytes.
     let status = unsafe {
         RegGetValueW(
             HKEY_CURRENT_USER,
             key.as_ptr(),
             value.as_ptr(),
-            RRF_RT_REG_SZ,
+            flags,
             ptr::null_mut(),
-            ptr::null_mut(),
-            ptr::null_mut(),
+            ptr.cast(),
+            len_ptr,
         )
     };
     match status {
-        ERROR_SUCCESS => Ok(true),
-        ERROR_FILE_NOT_FOUND => Ok(false),
+        ERROR_SUCCESS => Ok(Some(len as usize)),
+        ERROR_FILE_NOT_FOUND => Ok(None),
         code => Err(io::Error::from_raw_os_error(code as i32)),
     }
 }
 
-pub fn set_autostart(exe: &std::path::Path, enabled: bool) -> io::Result<()> {
+fn reg_delete(key: &str) -> io::Result<()> {
     use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
-    use windows_sys::Win32::System::Registry::{
-        HKEY_CURRENT_USER, REG_SZ, RegDeleteKeyValueW, RegSetKeyValueW,
-    };
+    use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, RegDeleteKeyValueW};
+    let (key, value) = (wide(key), wide(RUN_VALUE));
+    // SAFETY: `key` and `value` are NUL-terminated UTF-16 strings that outlive the call.
+    match unsafe { RegDeleteKeyValueW(HKEY_CURRENT_USER, key.as_ptr(), value.as_ptr()) } {
+        ERROR_SUCCESS | ERROR_FILE_NOT_FOUND => Ok(()),
+        code => Err(io::Error::from_raw_os_error(code as i32)),
+    }
+}
+
+/// On when the `Run` value exists and Task Manager has not disabled it.
+pub fn autostart_enabled() -> io::Result<bool> {
+    use windows_sys::Win32::System::Registry::{RRF_RT_REG_BINARY, RRF_RT_REG_SZ};
+    if reg_get(RUN_KEY, RRF_RT_REG_SZ, None)?.is_none() {
+        return Ok(false);
+    }
+    let mut approved = [0u8; 12];
+    Ok(match reg_get(APPROVED_KEY, RRF_RT_REG_BINARY, Some(&mut approved))? {
+        Some(len) if len > 0 => approved[0] % 2 == 0,
+        _ => true,
+    })
+}
+
+/// Turning it on also clears a Task Manager "disabled" mark (absent means enabled); turning it off
+/// removes both values.
+pub fn set_autostart(exe: &std::path::Path, enabled: bool) -> io::Result<()> {
+    use windows_sys::Win32::Foundation::ERROR_SUCCESS;
+    use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, REG_SZ, RegSetKeyValueW};
+    reg_delete(APPROVED_KEY)?;
+    if !enabled {
+        return reg_delete(RUN_KEY);
+    }
     let (key, value) = (wide(RUN_KEY), wide(RUN_VALUE));
-    let status = if enabled {
-        let command = wide(&format!("\"{}\" --background", exe.display()));
-        let bytes = u32::try_from(command.len() * 2)
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "path too long"))?;
-        // SAFETY: all strings are NUL-terminated UTF-16 that outlive the call, and `bytes` is the
-        // size of `command` including its terminator, as REG_SZ requires.
-        unsafe {
-            RegSetKeyValueW(
-                HKEY_CURRENT_USER,
-                key.as_ptr(),
-                value.as_ptr(),
-                REG_SZ,
-                command.as_ptr().cast(),
-                bytes,
-            )
-        }
-    } else {
-        // SAFETY: `key` and `value` are NUL-terminated UTF-16 strings that outlive the call.
-        unsafe { RegDeleteKeyValueW(HKEY_CURRENT_USER, key.as_ptr(), value.as_ptr()) }
+    let command = wide(&format!("\"{}\" --background", exe.display()));
+    let bytes = u32::try_from(command.len() * 2)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "path too long"))?;
+    // SAFETY: all strings are NUL-terminated UTF-16 that outlive the call, and `bytes` is the
+    // size of `command` including its terminator, as REG_SZ requires.
+    let status = unsafe {
+        RegSetKeyValueW(
+            HKEY_CURRENT_USER,
+            key.as_ptr(),
+            value.as_ptr(),
+            REG_SZ,
+            command.as_ptr().cast(),
+            bytes,
+        )
     };
     match status {
         ERROR_SUCCESS => Ok(()),
-        ERROR_FILE_NOT_FOUND if !enabled => Ok(()),
         code => Err(io::Error::from_raw_os_error(code as i32)),
     }
 }

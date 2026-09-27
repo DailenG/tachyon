@@ -176,6 +176,9 @@ the process after the windows have closed, asking about unsaved changes. `--back
 resident primary without a window, and a second background start with nothing to open exits,
 which makes it safe for login autostart; `--autostart on|off` registers or removes that start
 (the current user's `Run` key on Windows, `$XDG_CONFIG_HOME/autostart/tachyon.desktop` on Linux).
+Its state is the effective one: on Windows Task Manager's `StartupApproved` switch counts (turning
+autostart on clears a "disabled" mark), on Linux a system entry in `$XDG_CONFIG_DIRS` counts unless
+the user entry overrides it (turning autostart off then writes `Hidden=true`).
 `--status` reports whether an instance runs (exit code 0 or 1) and whether autostart is on; it
 claims the instance channel only for the check. Windows release builds are GUI-subsystem
 executables, so these commands attach to the parent console to print. `TACHYON_INSTANCE_ID` renames the instance channel so
