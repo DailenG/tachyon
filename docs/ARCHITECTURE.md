@@ -171,8 +171,13 @@ creation and loader time.
 pays for the hand-off and one window (about 30 ms on Linux instead of about 200 ms). It is the
 default on Windows (`tachyon_platform::resident_by_default`); `--resident` / `--no-resident`
 override it. GPUI runs with `QuitMode::Explicit`; the app quits when the last window closes unless
-resident, and Quit (`Ctrl+Q`, or `tachyon --quit` forwarded over the instance channel) always ends
-the process after the windows have closed, asking about unsaved changes. `--background` starts a
+resident, and Quit (`Ctrl+Q`, `tachyon --quit` forwarded over the instance channel, or the tray
+icon's menu) always ends the process after the windows have closed, asking about unsaved changes.
+On Windows a resident primary shows a tray icon (`tachyon_platform::Tray`: a hidden window with
+its own message loop on a `tray` thread, events forwarded to GPUI over a channel); clicking it
+opens a window. The icon (`crates/tachyon-platform/assets/tachyon.ico`, drawn from
+`tachyon.svg`) is embedded in the binary and also set on every window, since the executable has
+no icon resource for GPUI to find. `--background` starts a
 resident primary without a window, and a second background start with nothing to open exits,
 which makes it safe for login autostart; `--autostart on|off` registers or removes that start
 (the current user's `Run` key on Windows, `$XDG_CONFIG_HOME/autostart/tachyon.desktop` on Linux).

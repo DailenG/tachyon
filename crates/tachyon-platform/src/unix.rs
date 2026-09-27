@@ -135,6 +135,18 @@ pub fn disable_window_transitions(_window: &impl raw_window_handle::HasWindowHan
 
 pub fn attach_parent_console() {}
 
+/// No tray icon here yet; uninhabited, so no value exists.
+pub enum Tray {}
+
+pub fn show_tray(
+    _tooltip: &str,
+    _on_event: impl Fn(crate::TrayEvent) + Send + 'static,
+) -> Option<Tray> {
+    None
+}
+
+pub fn set_window_icon(_window: &impl raw_window_handle::HasWindowHandle) {}
+
 #[cfg(target_os = "macos")]
 pub fn query_system_appearance() -> Option<std::sync::mpsc::Receiver<bool>> {
     None

@@ -34,6 +34,35 @@ pub fn resident_by_default() -> bool {
     cfg!(target_os = "windows")
 }
 
+/// Gives `window` Tachyon's icon (title bar, taskbar, Alt+Tab) on Windows, where GPUI looks for
+/// an icon resource Tachyon's executable does not have. A no-op elsewhere.
+pub fn set_window_icon(window: &impl raw_window_handle::HasWindowHandle) {
+    imp::set_window_icon(window);
+}
+
+/// What the tray icon asks the application for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TrayEvent {
+    /// Clicking the icon, or its "New window" menu item.
+    Open,
+    /// The "Quit Tachyon" menu item.
+    Quit,
+}
+
+/// A resident instance's notification-area icon (Windows): clicking it opens a window, its menu
+/// opens a window or quits. Removed when dropped.
+pub struct Tray {
+    _inner: imp::Tray,
+}
+
+impl Tray {
+    /// Shows the icon with `tooltip`. `on_event` runs on the tray's own thread. `None` where
+    /// there is no tray support (Linux and macOS for now) or the shell refused the icon.
+    pub fn show(tooltip: &str, on_event: impl Fn(TrayEvent) + Send + 'static) -> Option<Self> {
+        imp::show_tray(tooltip, on_event).map(|inner| Tray { _inner: inner })
+    }
+}
+
 /// Lets command-line output (help, status) reach the console the program was started from.
 /// Windows GUI-subsystem executables get no console of their own; elsewhere a no-op.
 pub fn attach_parent_console() {
