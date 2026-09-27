@@ -212,6 +212,10 @@ pub struct Editor {
     pub(crate) file: Option<PathBuf>,
     /// Buffer version last written to (or loaded from) `file`.
     pub(crate) saved_version: u64,
+    /// The file's modification time and size as last read or written (see `disk`).
+    pub(crate) disk_stamp: Option<crate::disk::DiskStamp>,
+    /// The file changed on disk while the document had unsaved changes: Save asks first.
+    pub(crate) disk_changed: bool,
     /// This document's backup file, once it has had unsaved changes (see `backup`).
     pub(crate) backup_slot: Option<PathBuf>,
     /// Buffer version last written to the backup.
@@ -247,6 +251,12 @@ impl Editor {
             editor.follow_appearance(window, cx);
         })
         .detach();
+        cx.observe_window_activation(window, |editor, window, cx| {
+            if window.is_window_active() {
+                editor.check_disk(window, cx);
+            }
+        })
+        .detach();
         let list = ListState::new(doc.blocks().len(), ListAlignment::Top, px(1000.));
         let reported = is_dark(window.appearance());
         let hint = cx.try_global::<AppearanceHint>().map(|hint| hint.dark);
@@ -274,6 +284,8 @@ impl Editor {
             rendering: None,
             file: None,
             saved_version: 0,
+            disk_stamp: None,
+            disk_changed: false,
             backup_slot: None,
             backed_up_version: None,
             backup_task: None,
@@ -311,6 +323,8 @@ impl Editor {
     /// Associates the editor with a file: saves go there and the current
     /// text counts as saved.
     pub fn set_file(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        self.disk_stamp = crate::disk::DiskStamp::of(&path);
+        self.disk_changed = false;
         self.file = Some(path);
         self.saved_version = self.doc.buffer().version();
         cx.notify();
@@ -1170,7 +1184,7 @@ impl Editor {
     ) {
         self.flush_pending_paste(cx);
         match self.file.clone() {
-            Some(path) => self.write_to(path, window, cx, after),
+            Some(path) => self.write_to(path, false, window, cx, after),
             None => self.prompt_path_then_save(window, cx, after),
         }
     }
@@ -1196,30 +1210,48 @@ impl Editor {
         let chosen = cx.prompt_for_new_path(&directory, Some(&name));
         cx.spawn_in(window, async move |this, cx| {
             let Ok(Ok(Some(path))) = chosen.await else { return };
-            let _ =
-                this.update_in(cx, |editor, window, cx| editor.write_to(path, window, cx, after));
+            let _ = this.update_in(cx, |editor, window, cx| {
+                editor.write_to(path, false, window, cx, after)
+            });
         })
         .detach();
     }
 
-    /// Writes the text (original line endings restored) off the UI thread.
+    /// Writes the text (original line endings restored) off the UI thread. Unless `force`, asks
+    /// first if the file changed on disk since it was read or last written.
     fn write_to(
         &mut self,
         path: PathBuf,
+        force: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
         after: impl FnOnce(&mut Window, &mut App) + 'static,
     ) {
+        use crate::disk::DiskStamp;
         let text = self.doc.buffer().to_saved_text();
         let version = self.doc.buffer().version();
+        // Only the file this document came from has a version to protect.
+        let known = self.disk_stamp.filter(|_| !force && self.file.as_ref() == Some(&path));
         cx.spawn_in(window, async move |this, cx| {
             let target = path.clone();
             let written = cx
                 .background_executor()
-                .spawn(async move { write_atomically(&target, text.as_bytes()) })
+                .spawn(async move {
+                    let current = DiskStamp::of(&target);
+                    if let (Some(known), Some(current)) = (known, current)
+                        && known != current
+                    {
+                        return Ok(None);
+                    }
+                    write_atomically(&target, text.as_bytes())
+                        .map(|()| Some(DiskStamp::of(&target)))
+                })
                 .await;
             let _ = this.update_in(cx, |editor, window, cx| match written {
-                Ok(()) => {
+                Ok(None) => editor.confirm_overwrite(path, window, cx, after),
+                Ok(Some(stamp)) => {
+                    editor.disk_stamp = stamp;
+                    editor.disk_changed = false;
                     editor.file = Some(path);
                     editor.saved_version = version;
                     editor.schedule_backup(cx);
@@ -1239,6 +1271,34 @@ impl Editor {
                     ));
                 }
             });
+        })
+        .detach();
+    }
+
+    /// The file changed on disk since it was read: asks before overwriting it.
+    fn confirm_overwrite(
+        &mut self,
+        path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        after: impl FnOnce(&mut Window, &mut App) + 'static,
+    ) {
+        let name = path
+            .file_name()
+            .map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            &format!("{name} changed on disk"),
+            Some("Another program changed the file since it was opened. Saving replaces its changes."),
+            &["Overwrite", "Cancel"],
+            cx,
+        );
+        cx.spawn_in(window, async move |this, cx| {
+            if answer.await.ok() == Some(0) {
+                let _ = this.update_in(cx, |editor, window, cx| {
+                    editor.write_to(path, true, window, cx, after)
+                });
+            }
         })
         .detach();
     }

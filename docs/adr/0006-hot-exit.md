@@ -36,7 +36,7 @@ unsaved documents across restarts.
 - Unsaved text now persists on disk in the user's state directory until it is saved or
   discarded. That is the point, but it is also a place where private text stays; closing the
   window with "Don't Save" removes it.
-- A restored document belonging to a file is saved back to that file, even if the file changed on
-  disk meanwhile; detecting that is future work.
+- A restored document belonging to a file remembers the file's version (modification time and
+  size) from its backup, so Save asks before overwriting changes made to the file meanwhile.
 - Revisit if users expect Quit to ask (an opt-out setting would need configuration, which startup
   deliberately does not read yet).

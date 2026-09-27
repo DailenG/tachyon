@@ -3,6 +3,7 @@
 //! blocks are rendered with their syntax hidden.
 
 mod backup;
+mod disk;
 mod editor;
 mod find;
 mod frame_log;

@@ -8,13 +8,15 @@ use std::time::Duration;
 
 use gpui::{Context, Global};
 
+use crate::disk::DiskStamp;
 use crate::editor::{Editor, write_atomically};
 
 /// How long after an edit the backup is written: typing bursts share one write.
 const BACKUP_DELAY: Duration = Duration::from_millis(1500);
 
 /// Where unsaved documents are backed up. Each has a `<slot>.md` file with its text (original line
-/// endings) and, if it belongs to a file, a `<slot>.path` file with that file's path.
+/// endings) and, if it belongs to a file, a `<slot>.path` file with that file's path and, on a
+/// second line, the file's version on disk when it was read (to notice later changes).
 pub struct Backups {
     dir: PathBuf,
 }
@@ -31,6 +33,7 @@ pub struct Restored {
     pub slot: PathBuf,
     pub text: String,
     pub file: Option<PathBuf>,
+    stamp: Option<DiskStamp>,
 }
 
 impl Backups {
@@ -50,9 +53,11 @@ impl Backups {
             .into_iter()
             .filter_map(|slot| {
                 let text = std::fs::read_to_string(&slot).ok()?;
-                let file =
-                    std::fs::read_to_string(slot.with_extension("path")).ok().map(PathBuf::from);
-                Some(Restored { slot, text, file })
+                let meta = std::fs::read_to_string(slot.with_extension("path")).unwrap_or_default();
+                let mut lines = meta.lines();
+                let file = lines.next().filter(|line| !line.is_empty()).map(PathBuf::from);
+                let stamp = lines.next().and_then(DiskStamp::decode);
+                Some(Restored { slot, text, file, stamp })
             })
             .collect()
     }
@@ -69,15 +74,23 @@ impl Backups {
     }
 }
 
-/// Writes a backup: the text, then the file path next to it (or removes a stale one).
-fn write_slot(slot: &Path, text: &str, file: Option<&Path>) -> std::io::Result<()> {
+/// Writes a backup: the text, then the file path and version next to it (or removes a stale one).
+fn write_slot(
+    slot: &Path,
+    text: &str,
+    file: Option<&Path>,
+    stamp: Option<DiskStamp>,
+) -> std::io::Result<()> {
     if let Some(dir) = slot.parent() {
         std::fs::create_dir_all(dir)?;
     }
     write_atomically(slot, text.as_bytes())?;
     let path_file = slot.with_extension("path");
     match file.and_then(Path::to_str) {
-        Some(file) => write_atomically(&path_file, file.as_bytes()),
+        Some(file) => {
+            let stamp = stamp.map(DiskStamp::encode).unwrap_or_default();
+            write_atomically(&path_file, format!("{file}\n{stamp}").as_bytes())
+        }
         None => match std::fs::remove_file(&path_file) {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
             _ => Ok(()),
@@ -96,6 +109,7 @@ impl Editor {
     pub fn adopt_backup(&mut self, restored: Restored, cx: &mut Context<Self>) {
         self.set_document(tachyon_doc::Document::new(&restored.text), cx);
         self.file = restored.file;
+        self.disk_stamp = restored.stamp;
         // No later version equals this one, so the document stays modified until saved.
         self.saved_version = self.doc.buffer().version().wrapping_sub(1);
         self.backup_slot = Some(restored.slot);
@@ -132,9 +146,10 @@ impl Editor {
         let Some(slot) = self.slot(cx) else { return };
         let text = self.doc.buffer().to_saved_text();
         let file = self.file.clone();
+        let stamp = self.disk_stamp;
         self.backed_up_version = Some(version);
         cx.background_executor()
-            .spawn(async move { write_slot(&slot, &text, file.as_deref()) })
+            .spawn(async move { write_slot(&slot, &text, file.as_deref(), stamp) })
             .detach();
     }
 
@@ -143,7 +158,7 @@ impl Editor {
         self.backup_task = None;
         let Some(slot) = self.slot(cx) else { return false };
         let text = self.doc.buffer().to_saved_text();
-        let written = write_slot(&slot, &text, self.file.as_deref()).is_ok();
+        let written = write_slot(&slot, &text, self.file.as_deref(), self.disk_stamp).is_ok();
         if written {
             self.backed_up_version = Some(self.doc.buffer().version());
         }

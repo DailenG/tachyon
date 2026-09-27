@@ -8,6 +8,8 @@ All notable user-visible changes are recorded here. The format follows
 
 ### Added
 
+- Files changed by another program reload when you return to the window, unless you have unsaved
+  changes; saving over such a change asks first.
 - Copy as HTML (`Ctrl+Shift+C`): the selection, or the whole document, rendered as HTML. On
   Windows it is pasted as formatted text in Word, Outlook, Teams and browsers (plain-text targets
   get the Markdown); on Linux and macOS the HTML source is copied as text.
