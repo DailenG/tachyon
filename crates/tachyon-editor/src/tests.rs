@@ -445,3 +445,30 @@ fn double_click_selects_a_word(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert_eq!(selection(&editor, cx), find("gamma")..find("gamma") + "gamma".len());
 }
+
+#[gpui::test]
+fn page_down_and_up_move_by_about_a_screen(cx: &mut TestAppContext) {
+    let text: String = (0..400).map(|i| format!("Line {i}\n")).collect();
+    let (editor, cx) = open(&text, cx);
+    let line_of = |cx: &mut VisualTestContext| {
+        editor.read_with(cx, |e, _| e.document().buffer().rope().byte_to_line(e.head()))
+    };
+    cx.simulate_keystrokes("pagedown");
+    cx.run_until_parked();
+    let after_down = line_of(cx);
+    assert!(after_down > 10, "moved {after_down} lines");
+    cx.simulate_keystrokes("pagedown");
+    cx.run_until_parked();
+    assert!(line_of(cx) > after_down);
+
+    cx.simulate_keystrokes("shift-pageup");
+    cx.run_until_parked();
+    let (line, selected) = editor.read_with(cx, |e, _| {
+        (e.document().buffer().rope().byte_to_line(e.head()), !e.selection.is_empty())
+    });
+    assert_eq!(line, after_down);
+    assert!(selected, "shift extends the selection");
+    cx.simulate_keystrokes("pageup pageup pageup");
+    cx.run_until_parked();
+    assert_eq!(line_of(cx), 0);
+}

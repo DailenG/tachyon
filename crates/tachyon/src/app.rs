@@ -4,8 +4,9 @@ use std::time::Instant;
 
 use futures::StreamExt as _;
 use gpui::{
-    App, Bounds, Context, Global, KeyBinding, Pixels, QuitMode, SharedString, Size,
-    TitlebarOptions, WindowBounds, WindowHandle, WindowOptions, actions, prelude::*, px, size,
+    App, Bounds, Context, Global, KeyBinding, PathPromptOptions, Pixels, QuitMode, SharedString,
+    Size, TitlebarOptions, WindowBounds, WindowHandle, WindowOptions, actions, prelude::*, px,
+    size,
 };
 use tachyon_doc::Document;
 use tachyon_editor::Editor;
@@ -14,13 +15,15 @@ use tachyon_platform::Listener;
 use crate::cli::{self, Cli};
 use crate::startup::Startup;
 
-actions!(tachyon, [Quit]);
+actions!(tachyon, [Quit, NewWindow, Open]);
 
 const APP_ID: &str = "tachyon";
 const SAMPLE: &str = include_str!("sample.md");
 
 enum Source {
     Sample,
+    /// An empty, untitled document (New Window).
+    Blank,
     Clipboard,
     File(PathBuf),
 }
@@ -46,6 +49,7 @@ impl Source {
     fn title(&self) -> SharedString {
         match self {
             Source::Sample => "Tachyon".into(),
+            Source::Blank => "Tachyon".into(),
             Source::Clipboard => "Clipboard - Tachyon".into(),
             Source::File(path) => {
                 let name = path.file_name().unwrap_or(path.as_os_str()).to_string_lossy();
@@ -80,7 +84,29 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
         cx.set_global(startup);
         cx.set_global(Lifecycle { resident, quitting: false, report_launches });
 
-        cx.bind_keys([KeyBinding::new("secondary-q", Quit, None)]);
+        cx.bind_keys([
+            KeyBinding::new("secondary-q", Quit, None),
+            KeyBinding::new("secondary-n", NewWindow, None),
+            KeyBinding::new("secondary-o", Open, None),
+        ]);
+        cx.on_action(|_: &NewWindow, cx| {
+            show_window(Source::Blank, cx);
+        });
+        cx.on_action(|_: &Open, cx| {
+            let chosen = cx.prompt_for_paths(PathPromptOptions {
+                files: true,
+                directories: false,
+                multiple: true,
+                prompt: None,
+            });
+            cx.spawn(async move |cx| {
+                if let Ok(Ok(Some(paths))) = chosen.await {
+                    cx.update(|cx| open_paths(paths, cx));
+                }
+            })
+            .detach();
+        });
+        cx.set_global(tachyon_editor::OpenPaths(std::rc::Rc::new(open_paths)));
         tachyon_editor::init(cx);
         if !tachyon_platform::has_native_prompts() {
             cx.set_prompt_builder(tachyon_editor::keyboard_prompt);
@@ -164,7 +190,7 @@ fn initial_document(source: &Source, cx: &App) -> Document {
         Source::Clipboard => Document::new(
             &cx.read_from_clipboard().and_then(|item| item.text()).unwrap_or_default(),
         ),
-        Source::File(_) => Document::new(""),
+        Source::Blank | Source::File(_) => Document::new(""),
     }
 }
 
@@ -287,6 +313,28 @@ fn take_ready_window(source: Source, cx: &mut App) -> Result<WindowHandle<Editor
     Ok(handle)
 }
 
+/// Opens `source` in the ready window if there is one, else in a new window, and brings it to the
+/// front.
+fn show_window(source: Source, cx: &mut App) -> Option<WindowHandle<Editor>> {
+    let handle = match take_ready_window(source, cx) {
+        Ok(handle) => Some(handle),
+        Err(source) => open_window(source, cx),
+    }?;
+    let _ = handle.update(cx, |_, window, _| window.activate_window());
+    let prepare = handle.update(cx, |_, window, _| {
+        window.on_next_frame(|_, cx| prepare_ready_window(cx));
+    });
+    prepare.ok().map(|()| handle)
+}
+
+/// Opens each path in its own window (Open dialog, files dropped onto a window).
+fn open_paths(paths: Vec<PathBuf>, cx: &mut App) {
+    for path in paths.into_iter().filter(|path| !path.is_dir()) {
+        show_window(Source::File(std::path::absolute(&path).unwrap_or(path)), cx);
+    }
+    cx.activate(true);
+}
+
 /// A line for `cargo xtask bench-startup`, flushed immediately.
 fn report_line(line: &str) {
     let mut stdout = std::io::stdout().lock();
@@ -311,20 +359,14 @@ fn serve_forwarded_launches(listener: Listener, cx: &mut App) {
             cx.update(|cx| {
                 let report = cx.global::<Lifecycle>().report_launches;
                 for source in Source::from_cli(cli) {
-                    let handle = match take_ready_window(source, cx) {
-                        Ok(handle) => Some(handle),
-                        Err(source) => open_window(source, cx),
-                    };
-                    if let Some(handle) = handle {
+                    if let Some(handle) = show_window(source, cx)
+                        && report
+                    {
                         let _ = handle.update(cx, |_, window, _| {
-                            window.activate_window();
-                            window.on_next_frame(move |window, cx| {
-                                if report {
-                                    let us = received.elapsed().as_micros();
-                                    report_line(&format!("tachyon-launch first_frame_us={us}"));
-                                    window.remove_window();
-                                }
-                                prepare_ready_window(cx);
+                            window.on_next_frame(move |window, _| {
+                                let us = received.elapsed().as_micros();
+                                report_line(&format!("tachyon-launch first_frame_us={us}"));
+                                window.remove_window();
                             });
                         });
                     }
