@@ -35,6 +35,7 @@ impl Render for Editor {
             .size_full()
             .bg(self.theme.background)
             .text_color(self.theme.foreground)
+            .font_family(self.theme.text_font.clone())
             .text_size(self.theme.text_size)
             .line_height(relative(1.6))
             .on_action(cx.listener(Self::backspace))

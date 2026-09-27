@@ -111,6 +111,7 @@ impl Render for KeyboardPrompt {
             .border_color(theme.rule)
             .bg(theme.raw_background)
             .text_color(theme.foreground)
+            .font_family(theme.text_font.clone())
             .flex()
             .flex_col()
             .gap_2()

@@ -1,6 +1,8 @@
 //! Built-in themes, dark and light, following the system appearance. Compiled in so startup
 //! reads no configuration.
 
+use std::sync::OnceLock;
+
 use gpui::{
     App, FontStyle, FontWeight, Global, HighlightStyle, Hsla, Pixels, SharedString,
     StrikethroughStyle, UnderlineStyle, Window, WindowAppearance, px, rgb, rgba,
@@ -15,6 +17,22 @@ pub struct AppearanceHint {
 }
 
 impl Global for AppearanceHint {}
+
+/// GPUI's name for the platform's UI font.
+const SYSTEM_FONT: &str = ".SystemUIFont";
+
+/// The first installed family among `candidates`. The system fonts are listed once per process:
+/// that walks the whole font collection, and a resident instance opens many windows.
+pub(crate) fn installed_font(window: &Window, candidates: &[&'static str]) -> Option<&'static str> {
+    static INSTALLED: OnceLock<Vec<String>> = OnceLock::new();
+    let installed = INSTALLED.get_or_init(|| window.text_system().all_font_names());
+    candidates.iter().find(|family| installed.iter().any(|name| name == *family)).copied()
+}
+
+/// The family for body text (see `tachyon_platform::text_font_candidates`).
+fn text_font(window: &Window) -> SharedString {
+    installed_font(window, tachyon_platform::text_font_candidates()).unwrap_or(SYSTEM_FONT).into()
+}
 
 pub(crate) fn is_dark(appearance: WindowAppearance) -> bool {
     matches!(appearance, WindowAppearance::Dark | WindowAppearance::VibrantDark)
@@ -48,6 +66,8 @@ pub struct Theme {
     /// (see `Editor::resolve_code_font`).
     pub code_font: SharedString,
     pub content_width: Pixels,
+    /// Body text family. Resolved when a window is available (`Theme::for_window`).
+    pub text_font: SharedString,
 }
 
 impl Theme {
@@ -55,10 +75,26 @@ impl Theme {
         if dark { Self::dark() } else { Self::light() }
     }
 
-    /// The theme for the system appearance: the [`AppearanceHint`] if set, else `window`'s.
+    /// The theme for the system appearance (the [`AppearanceHint`] if set, else `window`'s), with
+    /// its text font resolved.
     pub fn for_window(window: &Window, cx: &App) -> Self {
         let hint = cx.try_global::<AppearanceHint>().map(|hint| hint.dark);
-        Self::for_dark(hint.unwrap_or_else(|| is_dark(window.appearance())))
+        Self::for_dark(hint.unwrap_or_else(|| is_dark(window.appearance()))).with_text_font(window)
+    }
+
+    /// This theme with the text font installed on the system.
+    pub fn with_text_font(self, window: &Window) -> Self {
+        Theme { text_font: text_font(window), ..self }
+    }
+
+    /// The dark or light theme with this theme's fonts and zoom.
+    pub fn restyled(&self, dark: bool) -> Self {
+        Theme {
+            code_font: self.code_font.clone(),
+            text_font: self.text_font.clone(),
+            ..Self::for_dark(dark)
+        }
+        .zoomed(self.zoom)
     }
 
     pub fn light() -> Self {
@@ -103,6 +139,7 @@ impl Theme {
             heading_sizes: [px(28.), px(23.), px(19.), px(17.), px(15.), px(14.)],
             code_font: tachyon_platform::monospace_font_candidates()[0].into(),
             content_width: px(820.),
+            text_font: SYSTEM_FONT.into(),
         }
     }
 
