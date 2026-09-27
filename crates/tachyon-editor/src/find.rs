@@ -84,6 +84,7 @@ impl Editor {
         } else {
             self.find.as_ref().map(|f| f.query.clone()).unwrap_or_default()
         };
+        self.outline = None;
         let origin = self.selection.start;
         let previous = self.find.as_ref().and_then(|f| f.replacement.clone());
         let replacement = replace.then(|| previous.unwrap_or_default());
@@ -115,19 +116,22 @@ impl Editor {
     }
 
     pub(crate) fn cancel(&mut self, _: &Cancel, _: &mut Window, cx: &mut Context<Self>) {
-        if self.find.take().is_some() {
+        if self.find.take().is_some() | self.outline.take().is_some() {
             cx.notify();
         }
     }
 
     /// Whether input goes to the find bar.
-    pub(crate) fn finding(&self) -> bool {
-        self.find.is_some()
+    pub(crate) fn bar_open(&self) -> bool {
+        self.find.is_some() || self.outline.is_some()
     }
 
     /// Replaces the active field's composition (if any) with `text`; `composing` marks it as a
     /// new uncommitted composition.
     pub(crate) fn find_input(&mut self, text: &str, composing: bool, cx: &mut Context<Self>) {
+        if self.outline.is_some() {
+            return self.outline_input(text, composing, cx);
+        }
         let Some(find) = &mut self.find else { return };
         let editing_query = !find.editing_replacement;
         let composed = find.composing;
@@ -144,6 +148,9 @@ impl Editor {
     }
 
     pub(crate) fn find_backspace(&mut self, cx: &mut Context<Self>) {
+        if self.outline.is_some() {
+            return self.outline_backspace(cx);
+        }
         let Some(find) = &mut self.find else { return };
         find.composing = 0;
         let editing_query = !find.editing_replacement;
@@ -156,6 +163,10 @@ impl Editor {
 
     /// Tab while the bar is in replace mode: switches between query and replacement.
     pub(crate) fn find_switch_field(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.outline.is_some() {
+            // Tab does nothing in the heading list, and must not reach the document.
+            return true;
+        }
         let Some(find) = &mut self.find else { return false };
         if find.replacement.is_none() {
             return false;
@@ -168,6 +179,9 @@ impl Editor {
 
     /// Enter in the replacement: replaces the selected match, then selects the next one.
     pub(crate) fn find_enter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.outline.is_some() {
+            return self.outline_jump(None, cx);
+        }
         let replacing = self.find.as_ref().is_some_and(|f| f.editing_replacement);
         if replacing {
             self.replace_current(cx);
@@ -210,6 +224,7 @@ impl Editor {
     }
 
     pub(crate) fn find_end_composition(&mut self) {
+        self.outline_end_composition();
         if let Some(find) = &mut self.find {
             find.composing = 0;
         }

@@ -8,6 +8,8 @@ All notable user-visible changes are recorded here. The format follows
 
 ### Added
 
+- Go to heading (`Ctrl+Shift+O`): type to filter the document's headings, `Enter` or a click
+  jumps.
 - Lists continue on `Enter` with the next bullet, number or an unchecked task box; `Enter` on an
   empty item moves it up a level or ends the list. `Tab` / `Shift+Tab` nest and un-nest list
   items (all the selected ones), renumbering ordered lists.

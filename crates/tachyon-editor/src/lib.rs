@@ -9,6 +9,7 @@ mod frame_stats;
 mod links;
 mod lists;
 mod movement;
+mod outline;
 mod prompt;
 mod render;
 mod theme;
