@@ -7,11 +7,11 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::ptr;
-use std::sync::mpsc;
+use std::sync::{Mutex, PoisonError, mpsc};
 use std::time::{Duration, Instant};
 
 use windows_sys::Win32::Foundation::{
-    ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_PIPE_BUSY, ERROR_PIPE_CONNECTED,
+    ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_PIPE_BUSY, ERROR_PIPE_CONNECTED, HWND,
     INVALID_HANDLE_VALUE, LocalFree,
 };
 use windows_sys::Win32::Security::Authorization::{
@@ -270,12 +270,47 @@ pub fn clipboard_text_reader() -> Option<fn() -> Option<String>> {
 /// formats if needed.
 const CF_UNICODETEXT: u32 = 13;
 
-/// Reads the clipboard's text. The clipboard can be opened from any thread; while another window
-/// holds it open, this retries for up to about 50 ms.
+/// How long [`open_clipboard`] retries `OpenClipboard` while another task holds it.
+const OPEN_CLIPBOARD_DEADLINE: Duration = Duration::from_millis(50);
+
+/// Serializes every clipboard access this module makes (`read_clipboard_text`,
+/// `write_clipboard_html`), so at most one of *this process's* threads is ever between
+/// `OpenClipboard` and `CloseClipboard` at a time. `CloseClipboard` on one thread can invalidate
+/// the `GlobalLock`ed memory a `GlobalLock` on another thread is still reading, which is what
+/// crashed `tachyon.exe` (the Windows crash dumps that followed #47): `tachyon_editor`'s paste path already
+/// avoids that by construction (`PasteText::Reading`'s claim lets only one thread read the
+/// clipboard per paste), so this lock is defence in depth against any other caller added later.
+/// It cannot serialize against GPUI's own clipboard calls (`cx.read_from_clipboard`,
+/// `cx.write_to_clipboard`), which go through GPUI's platform layer, not this module.
+static CLIPBOARD_LOCK: Mutex<()> = Mutex::new(());
+
+/// Opens the clipboard for `owner` (`ptr::null_mut()` opens it for this task rather than a
+/// window), retrying while another task holds it. The retries are bounded by an [`Instant`]
+/// deadline, not by an attempt count: Windows only guarantees that `thread::sleep(1ms)` rounds up
+/// to the scheduler's timer granularity, which is commonly around 15.6 ms without
+/// `timeBeginPeriod`, so counting sleeps (as this used to) does not bound wall-clock time the way
+/// its old doc comment claimed.
+fn open_clipboard(owner: HWND) -> bool {
+    use windows_sys::Win32::System::DataExchange::OpenClipboard;
+
+    let deadline = Instant::now() + OPEN_CLIPBOARD_DEADLINE;
+    loop {
+        // SAFETY: `owner` is either null (opens for this task) or a live window handle.
+        if unsafe { OpenClipboard(owner) != 0 } {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+/// Reads the clipboard's text. The clipboard can be opened from any thread; while another task
+/// holds it, this retries for up to [`OPEN_CLIPBOARD_DEADLINE`]. Held under [`CLIPBOARD_LOCK`]
+/// for its whole `OpenClipboard`..`CloseClipboard` span: see that constant's docs for why.
 fn read_clipboard_text() -> Option<String> {
-    use windows_sys::Win32::System::DataExchange::{
-        CloseClipboard, GetClipboardData, OpenClipboard,
-    };
+    use windows_sys::Win32::System::DataExchange::{CloseClipboard, GetClipboardData};
     use windows_sys::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
 
     struct Open;
@@ -286,14 +321,8 @@ fn read_clipboard_text() -> Option<String> {
         }
     }
 
-    let opened = (0..50).any(|attempt| {
-        if attempt > 0 {
-            std::thread::sleep(Duration::from_millis(1));
-        }
-        // SAFETY: a NULL owner opens the clipboard for this task without associating a window.
-        unsafe { OpenClipboard(ptr::null_mut()) != 0 }
-    });
-    if !opened {
+    let _guard = CLIPBOARD_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+    if !open_clipboard(ptr::null_mut()) {
         return None;
     }
     let _open = Open;
@@ -309,6 +338,11 @@ fn read_clipboard_text() -> Option<String> {
     }
     // SAFETY: as above.
     let units = unsafe { GlobalSize(handle) } / size_of::<u16>();
+    if units == 0 {
+        // SAFETY: balances the GlobalLock above; nothing to read.
+        unsafe { GlobalUnlock(handle) };
+        return None;
+    }
     // SAFETY: `data` is locked and points at `units` UTF-16 code units until GlobalUnlock.
     let slice = unsafe { std::slice::from_raw_parts(data, units) };
     let len = slice.iter().position(|&unit| unit == 0).unwrap_or(units);
@@ -343,7 +377,7 @@ pub fn write_clipboard_html(
 ) -> bool {
     use windows_sys::Win32::Foundation::GlobalFree;
     use windows_sys::Win32::System::DataExchange::{
-        CloseClipboard, EmptyClipboard, OpenClipboard, RegisterClipboardFormatW, SetClipboardData,
+        CloseClipboard, EmptyClipboard, RegisterClipboardFormatW, SetClipboardData,
     };
     use windows_sys::Win32::System::Memory::{
         GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock,
@@ -376,6 +410,7 @@ pub fn write_clipboard_html(
         true
     }
 
+    let _guard = CLIPBOARD_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
     let Ok(handle) = window.window_handle() else { return false };
     let raw_window_handle::RawWindowHandle::Win32(win32) = handle.as_raw() else { return false };
     // SAFETY: the string is NUL-terminated UTF-16.
@@ -384,14 +419,7 @@ pub fn write_clipboard_html(
         return false;
     }
     // The window must own the clipboard: SetClipboardData fails after opening it with no owner.
-    let opened = (0..50).any(|attempt| {
-        if attempt > 0 {
-            std::thread::sleep(Duration::from_millis(1));
-        }
-        // SAFETY: `win32.hwnd` is the live window the action came from.
-        unsafe { OpenClipboard(win32.hwnd.get() as _) != 0 }
-    });
-    if !opened {
+    if !open_clipboard(win32.hwnd.get() as _) {
         return false;
     }
     let mut payload = cf_html(html).into_bytes();

@@ -110,6 +110,9 @@ All notable user-visible changes are recorded here. The format follows
 
 ### Fixed
 
+- Windows: pasting a large text and typing right away could crash Tachyon a few seconds later.
+  The clipboard is now read once per paste, on one thread; a key typed before the background read
+  finishes waits for that read instead of reading the clipboard again.
 - The in-window prompt (Linux) ignored the `theme` setting and followed the system appearance.
 - A large paste could keep a stray link: while its parse streamed in, a window that started
   inside a fenced code block read a line of code as a link definition, and a `[label]` further

@@ -728,9 +728,14 @@ thread_local! {
     /// Per thread: tests run in parallel, and GPUI's test executor runs "background" work on the
     /// test's thread.
     static READER_TEXT: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    /// How many times `read_reader_text` ran; reset by `open_with_reader`. Proves a paste reads
+    /// the clipboard exactly once, even when both the UI thread's flush and the background task
+    /// try to (the crash this fixes was two threads reading the clipboard for one paste).
+    static READER_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 fn read_reader_text() -> Option<String> {
+    READER_CALLS.set(READER_CALLS.get() + 1);
     READER_TEXT.with_borrow(Clone::clone)
 }
 
@@ -740,6 +745,7 @@ fn open_with_reader<'a>(
     cx: &'a mut TestAppContext,
 ) -> (Entity<Editor>, &'a mut VisualTestContext) {
     READER_TEXT.set(clipboard);
+    READER_CALLS.set(0);
     cx.update(|cx| cx.set_global(crate::ClipboardReader(read_reader_text)));
     open(text, cx)
 }
@@ -764,6 +770,28 @@ fn keys_typed_while_the_clipboard_is_read_land_after_the_paste(cx: &mut TestAppC
         cx.simulate_input("x");
         cx.run_until_parked();
         assert_eq!(text(&editor, cx), format!("start\n{paste}x"));
+    }
+}
+
+#[gpui::test]
+fn flushing_a_paste_before_the_background_read_starts_reads_the_clipboard_once(
+    cx: &mut TestAppContext,
+) {
+    // Regression test: before the clipboard-read claim, a key typed right after Ctrl+V could
+    // make `flush_pending_paste` read the clipboard on the UI thread while the background task
+    // (here, not even polled yet) went on to read it too, racing two threads inside the
+    // clipboard for the same paste (the Windows crash dumps that followed #47).
+    let big = "Pasted paragraph.\n\n".repeat(tachyon_doc::UNPARSED_SPLIT_THRESHOLD / 10);
+    for paste in ["small".to_owned(), big] {
+        let (editor, cx) = open_with_reader("start\n", Some(paste.clone()), cx);
+        cx.simulate_keystrokes("ctrl-end");
+        editor.update_in(cx, |e, window, cx| e.paste(&crate::editor::Paste, window, cx));
+        // The background task has only been scheduled, not polled: flushing must claim the read
+        // on this thread rather than wait on a background read that has not started.
+        cx.simulate_input("x");
+        cx.run_until_parked();
+        assert_eq!(text(&editor, cx), format!("start\n{paste}x"), "the key lands after the paste");
+        assert_eq!(READER_CALLS.get(), 1, "the clipboard is read exactly once");
     }
 }
 
