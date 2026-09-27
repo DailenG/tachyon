@@ -24,7 +24,8 @@ crates are needed whichever way the startup gate goes).
       transitions off: p95 19.3 ms, first frame ≤ 0.7 ms p95 after the launch arrives)
 - [x] Resident by default on Windows (`--no-resident` opts out; opt-in on Linux and macOS, where a
       shell would stay busy), `--background`, `--autostart on|off`, `--status`, `--quit`
-- [ ] A tray icon (or equivalent) that shows the resident process and quits it
+- [x] A tray icon (or equivalent) that shows the resident process and quits it: Windows tray
+      icon (Phase 4); `tachyon --status` / `--quit` everywhere
 
 Measured so far (release, 20 runs, `cargo xtask bench-startup`):
 
@@ -164,3 +165,16 @@ last 2 ms from drawing real bold and italic faces); the Windows paths the budget
 are unchanged apart from the icon and the tray, which a resident instance sets up ahead of
 launches.
 
+## Phase 5: writing comfort (planned)
+
+Typing Markdown by hand, and reading the code in LLM output, without leaving the budgets.
+
+- [ ] Lists continue on Enter (bullets, numbers incremented, task boxes unchecked); Enter on an
+      empty item ends the list; Tab / Shift+Tab indent and outdent list items
+- [ ] Syntax highlighting in fenced code blocks, computed off the UI thread
+- [ ] Jump to a heading (`Ctrl+Shift+O`): the document's headings in a filterable list
+- [ ] Scratch buffers survive a restart: unsaved windows are restored with their text
+- [ ] Copy as rich text (`Ctrl+Shift+C`): the selection as HTML on the clipboard
+
+**Exit:** each item covered by a `gpui::test` or a live check; typing stays within one frame in a
+1 MB document with highlighted code; startup budgets unchanged.
