@@ -8,6 +8,8 @@ All notable user-visible changes are recorded here. The format follows
 
 ### Added
 
+- The app icon (tray, windows, taskbar, executable, Linux launcher) is the new Tachyon mark, with
+  a simplified version at 16–32 px. `cargo xtask icons` regenerates it from `assets/brand/`.
 - Windows: `tachyon.exe` carries its icon and version information (Explorer, Task Manager,
   pinned taskbar buttons).
 - `tachyon --desktop-entry on|off` (Linux) adds Tachyon to the application launcher and "Open

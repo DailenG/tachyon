@@ -1,12 +1,8 @@
 //! The notification-area (tray) icon of a resident instance, and the icon of Tachyon's windows.
 //!
 //! The icon ships inside the binary as an `.ico` with 32-bit DIB images (no PNG, so creating an
-//! icon never loads an image codec). Regenerate it from `assets/tachyon.svg` with:
-//!
-//! ```sh
-//! for s in 16 20 24 32 40 48 64; do rsvg-convert -w $s -h $s tachyon.svg -o $s.png; done
-//! magick 16.png 20.png 24.png 32.png 40.png 48.png 64.png tachyon.ico
-//! ```
+//! icon never loads an image codec). `cargo xtask icons` regenerates it from the brand art in
+//! `assets/brand/` and checks that every image is a DIB.
 
 use std::ptr;
 use std::sync::{Mutex, mpsc};

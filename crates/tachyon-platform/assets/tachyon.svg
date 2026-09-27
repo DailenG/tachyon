@@ -1,15 +1,3 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#2f6fd6"/>
-      <stop offset="1" stop-color="#7b3fd6"/>
-    </linearGradient>
-    <linearGradient id="tail" x1="48" y1="208" x2="178" y2="78" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#ffffff" stop-opacity="0"/>
-      <stop offset="1" stop-color="#ffffff" stop-opacity="0.95"/>
-    </linearGradient>
-  </defs>
-  <rect width="256" height="256" rx="56" fill="url(#bg)"/>
-  <path d="M40 216 L150 64 A38 38 0 0 1 192 106 Z" fill="url(#tail)"/>
-  <circle cx="171" cy="85" r="34" fill="#ffffff"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Tachyon mark">
+<defs><linearGradient id="tachyon" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#6645E8"/><stop offset="1" stop-color="#21C8ED"/></linearGradient></defs><rect x="1" y="1" width="62" height="62" rx="14" fill="#101A2D" stroke="#6E879F" stroke-width="2"/><g transform="translate(6 19) scale(.1)" fill="url(#tachyon)"><path d="M 20,126 C 102,117 205,114 262,112 C 297,110 313,97 331,78 C 338,109 349,118 380,122 L 500,128 L 380,134 C 350,138 340,149 330,178 C 314,151 298,143 260,142 C 170,140 96,134 20,130 Z"/><path d="M 196,74 L 257,74 C 268,74 276,69 286,60 C 312,37 334,30 356,30 C 407,30 446,70 451,107 C 431,78 399,60 361,60 C 333,60 312,74 292,88 C 283,95 275,97 263,97 L 196,97 C 186,97 186,74 196,74 Z"/><path d="M 155,160 L 233,160 C 247,160 252,164 260,179 C 287,218 317,228 352,228 C 392,228 420,204 442,178 C 433,219 396,250 347,250 C 290,250 259,224 239,191 C 236,186 233,184 225,184 L 155,184 C 141,184 141,160 155,160 Z"/><path d="M 90,83 H 235 C 248,83 247,98 234,101 H 90 C 73,101 73,83 90,83 Z"/><path d="M 216,211 H 250 L 256,223 H 216 C 205,223 205,211 216,211 Z"/></g>
 </svg>

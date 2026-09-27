@@ -196,8 +196,8 @@ unsaved changes: the primary keeps a backup of every unsaved document and reopen
 next start (hot exit, [ADR 0006](adr/0006-hot-exit.md); `tachyon_editor::Backups`).
 On Windows a resident primary shows a tray icon (`tachyon_platform::Tray`: a hidden window with
 its own message loop on a `tray` thread, events forwarded to GPUI over a channel); clicking it
-opens a window. The icon (`crates/tachyon-platform/assets/tachyon.ico`, drawn from
-`tachyon.svg`) is embedded in the binary for the tray and set on every window at its DPI's
+opens a window. The icon (`crates/tachyon-platform/assets/tachyon.ico`, generated from the brand
+art in `assets/brand/` by `cargo xtask icons`) is embedded in the binary for the tray and set on every window at its DPI's
 sizes; `crates/tachyon/build.rs` also writes it, with version information, as resources of the
 executable (a `.res` file the MSVC linker takes directly, so no resource compiler is needed),
 which Explorer, Task Manager and GPUI's window class use. `--background` starts a
