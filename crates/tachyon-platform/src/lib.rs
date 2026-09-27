@@ -52,8 +52,9 @@ pub fn write_clipboard_html(
     imp::write_clipboard_html(window, html, text)
 }
 
-/// Gives `window` Tachyon's icon (title bar, taskbar, Alt+Tab) on Windows, where GPUI looks for
-/// an icon resource Tachyon's executable does not have. A no-op elsewhere.
+/// Gives `window` Tachyon's icon (title bar, taskbar, Alt+Tab) on Windows at the sizes its
+/// monitor's DPI asks for; GPUI only loads the executable's icon resource at the default size.
+/// A no-op elsewhere.
 pub fn set_window_icon(window: &impl raw_window_handle::HasWindowHandle) {
     imp::set_window_icon(window);
 }

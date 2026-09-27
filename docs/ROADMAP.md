@@ -230,8 +230,10 @@ accounts only the project owner has.
 - [x] `cargo xtask dist`: a release archive per platform (binary, README, changelog, licenses):
       `.zip` on Windows (4.2 MB; built and run from the extracted archive on the reference
       machine), `.tar.gz` elsewhere (9.7 MB on Linux)
-- [ ] Windows: icon and version information in the executable (so Explorer, Task Manager and the
-      pinned taskbar button show them), built from `assets/tachyon.svg`
+- [x] Windows: icon and version information in the executable (so Explorer, Task Manager and the
+      pinned taskbar button show them): `build.rs` writes a `.res` file from the embedded
+      `.ico` and the crate version, linked directly (checked on Windows: `VersionInfo` reads
+      back Tachyon 0.1.0, and the executable's associated icon is the comet)
 - [ ] Linux: a `.desktop` entry and icons, installable per user
 - [ ] *(owner)* Code signing for Windows and macOS, and where releases are published (GitHub
       Releases, winget, a package repository)
