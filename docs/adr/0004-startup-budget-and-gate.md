@@ -1,7 +1,7 @@
 # 0004: 50 ms startup budget and the Phase 1 gate
 
 - **Status:** Accepted: resident mode with a ready window. It meets the budget on the reference
-  Windows machine (p95 47.5 ms at 4K @ 30 Hz); direct launch cannot.
+  Windows machine (shipped build: p95 29.0 ms at 4K @ 30 Hz); direct launch cannot.
 - **Date:** 2026-09-25
 
 ## Context
@@ -116,15 +116,28 @@ opened hidden, so Linux keeps no ready window; its resident launches already tak
 The ready window is enabled per platform (`tachyon_platform::keeps_hidden_windows_hidden`) where
 measured; macOS is unmeasured.
 
+Shipped build (run 3, pre-sized ready window, traced GPUI, 4K @ 30 Hz, launches 500 ms apart;
+[`docs/measurements/windows-run-3-round-2-b866b36.md`](../measurements/windows-run-3-round-2-b866b36.md)):
+spawn -> first frame p50 20.0 ms, p95 29.0 ms; receipt -> first_frame p50 3.4 ms, p95 5.7 ms (a
+first round on the same build: p95 39.0 and 15.9 ms). The render-target resize (4-17 ms) now
+happens when the hidden window is prepared, ≈ 0.3 s before it is shown. Showing it
+(`SetWindowPlacement`) still takes 14-29 ms, but the first frame is drawn 2.6-4.5 ms into it; the
+rest delays the next input, not the first frame. Direct launch: p95 392 ms.
+
 ## Consequences
 
 - Resident mode means a background process and a tray or hotkey surface to design and document;
   it is still opt-in (`--resident`). Making it the default (autostart at login, a way to see and
   quit the process) is the next startup work.
-- The margin is small (47.5 ms against 50) and assumes the ready window exists when a launch
-  arrives; launches closer together than it takes to prepare one (≈ 20 ms plus 100 ms delay) open
-  a window the ordinary way. Pre-sizing the ready window is expected to take ≈ 20 ms off, still to
-  be measured on the reference machine.
+- The budget assumes the ready window exists when a launch arrives; launches closer together
+  than it takes to prepare one (≈ 20 ms plus 100 ms delay) open a window the ordinary way
+  (≈ 120 ms).
+- Showing the window still costs 14-29 ms after its first frame. Next: apply the window's
+  placement while it is hidden, so showing it does not also move it (a GPUI change; today GPUI
+  defers the placement of a hidden window until it is activated), and try disabling DWM's window
+  transitions for it (`DWMWA_TRANSITIONS_FORCEDISABLED`), which may also shorten the time until
+  the window visibly appears. Measure time to input readiness (activation handled), not only the
+  first frame.
 - A ready window costs one window's memory and GPU buffers while idle.
 - Every change on the startup path must include bench numbers (CONTRIBUTING).
 - DirectWrite's font update check (≈ 130 ms per process) should still be proposed upstream: it is

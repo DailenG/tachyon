@@ -13,8 +13,12 @@ crates are needed whichever way the startup gate goes).
 - [x] CI on Windows (primary), Linux, macOS; cargo-deny; Windows release artifact
 - [x] **Gate:** p95 cold and warm startup measured on reference Windows hardware, and the
       direct-launch vs resident-mode decision recorded in [ADR 0004](adr/0004-startup-budget-and-gate.md):
-      resident mode with a ready window, p95 47.5 ms at 4K @ 30 Hz (direct launch 352 ms)
-- [ ] Re-measure with the ready window pre-sized (expected ≈ 20 ms less)
+      resident mode with a ready window, p95 47.5 ms at 4K @ 30 Hz, 29.0 ms as shipped (direct
+      launch 352-392 ms)
+- [x] Re-measure with the ready window pre-sized: p95 29.0 ms (was 47.5), content drawn 3.4 ms
+      (p50) after the launch arrives
+- [ ] Cut showing the ready window (14-29 ms after its first frame): apply its placement while
+      hidden, try disabling DWM transitions, measure time to input readiness
 - [ ] Resident by default: autostart at login, a way to see and quit the process, docs
 
 Measured so far (release, 20 runs, `cargo xtask bench-startup`):
@@ -37,7 +41,8 @@ first frame is 86-93 ms. A timing-instrumented GPUI build attributed it: per pro
 device (97 ms) and DirectWrite's check for new fonts (130 ms, avoidable); per window, creating
 (39-59 ms) and showing (59-87 ms) it. A second trace found showing is mostly resizing the render
 targets and activation; a resident instance that keeps a hidden window ready shows it with its
-content ≈ 27 ms after the launch arrives: p95 47.5 ms from spawning the launching process. See
+content ≈ 27 ms after the launch arrives: p95 47.5 ms from spawning the launching process, 29.0 ms
+once the hidden window is sized in advance (shipped). See
 ADR 0004.
 
 ## Phase 2: headless core (`tachyon-text`, `tachyon-md`, `tachyon-doc`) (done)
@@ -105,9 +110,11 @@ the end of 512 KiB 7 ms. All corpus tests pass.
 - [x] Keyboard support in prompts on Linux (own in-window prompt; Windows and macOS keep native
       dialogs)
 
-- [ ] Exit criteria shown on the reference Windows machine: the paste (one 17.9 ms frame in six
-      runs, at 1440p @ 59 Hz) and typing key-to-present p99 in a 1 MB document (not yet measured
-      there)
+- [ ] Exit criteria shown on the reference Windows machine. Not met yet: in run 3 (4K @ 30 Hz)
+      two of three pastes stayed under 16.7 ms (max 11.3 and 9.6 ms) but one had a 16.9 ms frame,
+      and a Ctrl+Home to the top of the pasted document took 20.8 ms; typing key-to-present p99
+      in a 1 MB document is not measured there. Next: record per-frame timings (work and render,
+      and what caused the frame) so over-budget frames can be attributed, then measure typing
 
 **Exit:** pasting 5 MB of LLM output produces no frame over 16.6 ms, with visible text in the same
 frame; typing in a 1 MB document keeps key-to-present p99 within one 60 Hz frame.
