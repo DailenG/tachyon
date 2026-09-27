@@ -556,6 +556,10 @@ impl Editor {
     /// caret after an edit (the view is about to reveal it), else the top of
     /// the viewport.
     fn reparse(&mut self, focus: usize, cx: &mut Context<Self>) {
+        // Parse results keep the text in view where it is. After an edit the
+        // list is behind the document, so there is no anchor; the caret is
+        // revealed instead.
+        let anchor = (!self.doc.has_splices()).then(|| self.viewport_offset());
         while self.parse_task.is_none() {
             let Some(job) = self.doc.parse_job_near(focus, tachyon_doc::PARSE_CHUNK) else {
                 break;
@@ -570,13 +574,14 @@ impl Editor {
                 let _ = this.update(cx, |editor, cx| {
                     let started = Instant::now();
                     editor.parse_task = None;
+                    // Blocks replacing the top one by a different number lose
+                    // the scroll position. If the caret was on screen (just
+                    // pasted), keep it there; otherwise keep the same text.
                     let caret_drawn =
                         editor.active_block().is_some_and(|i| editor.rendered.contains(&i));
+                    let anchor = (!caret_drawn).then(|| editor.viewport_offset());
                     editor.doc.apply(result);
-                    // Blocks replacing the top one by a different number
-                    // lose the scroll position; if the caret was in view
-                    // (just pasted), keep it there.
-                    if editor.apply_splices() && caret_drawn {
+                    if editor.apply_splices(anchor) && caret_drawn {
                         editor.scroll_to_caret();
                     }
                     let focus = editor.viewport_offset();
@@ -587,7 +592,7 @@ impl Editor {
                 });
             }));
         }
-        self.apply_splices();
+        self.apply_splices(anchor);
     }
 
     /// Mirrors block-list changes into the list. `ListState::splice` resets
@@ -595,9 +600,14 @@ impl Editor {
     /// tall block scrolled half out of view would jump; for a one-for-one
     /// replacement keep the pixel offset instead.
     ///
-    /// Returns whether the top block was replaced by a different number of
-    /// blocks, which loses the position within it.
-    fn apply_splices(&mut self) -> bool {
+    /// When the top block is replaced by a different number of blocks, the
+    /// position within it is lost; with `anchor` (the byte offset of the top
+    /// block before the change, when the text did not change) the view moves
+    /// to the block now holding that byte. Anchoring on text matters for
+    /// streamed parse results: each chunk also reparses the block after it,
+    /// so without it the view would climb one chunk per result.
+    /// Returns whether the top block was displaced.
+    fn apply_splices(&mut self, anchor: Option<usize>) -> bool {
         let splices = self.doc.take_splices();
         let top = self.list.logical_scroll_top();
         let (mut item, mut offset) = (top.item_ix, top.offset_in_item);
@@ -619,7 +629,9 @@ impl Editor {
             self.rendered = map_drawn(&self.rendered, &old, new_len);
             self.list.splice(old, new_len);
         }
-        if offset > px(0.) && item < self.list.item_count() {
+        if displaced && let Some(index) = anchor.and_then(|at| self.doc.block_at(at)) {
+            self.list.scroll_to(ListOffset { item_ix: index, offset_in_item: px(0.) });
+        } else if offset > px(0.) && item < self.list.item_count() {
             self.list.scroll_to(ListOffset { item_ix: item, offset_in_item: offset });
         }
         displaced

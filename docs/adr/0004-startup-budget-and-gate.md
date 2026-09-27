@@ -1,6 +1,7 @@
 # 0004: 50 ms startup budget and the Phase 1 gate
 
-- **Status:** Proposed. Windows measured; neither option meets the budget yet, profiling next.
+- **Status:** Proposed. Windows profiled; neither option meets the budget. The per-window cost is
+  what remains to attribute.
 - **Date:** 2026-09-25
 
 ## Context
@@ -62,6 +63,32 @@ step 2 is ruled out and step 3 alone does not close the gate. Next: attribute th
 a timing-instrumented GPUI build (each platform-init and window-open step, and the first frames)
 on the reference machine, then decide which costs Tachyon can avoid (window options, deferred work,
 a resident instance that keeps a window ready) and which need a GPUI change.
+
+Windows results (step 2, traced GPUI, 4K @ 30 Hz, medians;
+[`docs/measurements/windows-trace-2f51c45.md`](../measurements/windows-trace-2f51c45.md)):
+
+| Cost | ms | Paid by |
+|---|---|---|
+| D3D11 device on the Intel Arc (the right adapter; the virtual display adapter is not involved) | 97 | every process |
+| DirectWrite system font collection with `bCheckForUpdates = true` | 130 | every process |
+| DXGI factory, OLE, drag-and-drop helper | 31 | every process |
+| `CreateWindowEx`, including GPUI's renderer (≈ 13 ms of swap chain, pipelines, DirectComposition) | 39-59 | every window |
+| `SetWindowPlacement`, which shows and activates the window | 59-87 | every window |
+| First frame | 6 | every window |
+
+- Checking for newly installed fonts is avoidable: with the check off, platform init drops from
+  289 to 169 ms and launch p50 from 475 to 382 ms. It needs a one-line GPUI change. Not taken yet:
+  it only helps direct launch, which cannot reach 50 ms anyway (device plus one window ≈ 215 ms),
+  and a patched GPUI copy is a maintenance cost ADR 0001 avoids. Propose it upstream instead.
+- Disabling DirectComposition changes nothing measurable.
+- A warm launch is dominated by the window itself: receipt to first frame p50 202 ms here, 93 ms
+  a week earlier on the same machine before Japanese and Chinese input methods were installed.
+  Showing and activating the window is the largest and most variable step. [INFERENCE] Text
+  Services Framework setup on focus is the likely addition; not yet measured.
+
+So resident mode can only meet the budget if the per-window cost goes: next, trace inside
+`SetWindowPlacement` (window messages, focus, input-method activation), and try a resident
+instance that keeps a created, hidden window ready and only shows it on launch.
 
 ## Consequences
 
