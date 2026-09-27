@@ -162,6 +162,14 @@ fn main() {
         start.elapsed()
     );
 
+    // Find runs on the UI thread on every keystroke in the find bar.
+    let found = Document::new(&paste);
+    for query in ["section", "Section 7815", "no such text"] {
+        let mut matches = 0;
+        time(runs, || matches = black_box(found.find_all(black_box(query))).len())
+            .print(&format!("find {query:?} in {} KiB ({matches} matches)", paste.len() >> 10));
+    }
+
     // The editor streams the same paste back in chunks, the caret's first.
     let mut pasted = Document::new("start\n");
     let end = pasted.len();

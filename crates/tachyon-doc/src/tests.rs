@@ -185,3 +185,18 @@ fn a_paste_that_defines_its_references_needs_one_job() {
     assert_matches_full_parse(&doc);
     assert_eq!(doc.blocks()[1].parsed().ir.links[0].dest, "/target/49");
 }
+
+#[test]
+fn find_all_is_smart_case_and_keeps_byte_offsets() {
+    let doc = Document::new("Émile met emile. EMILE!\n");
+    let starts = |q: &str| doc.find_all(q).into_iter().map(|r| r.start).collect::<Vec<_>>();
+    // Lowercase query: ASCII case-insensitive; non-ASCII letters match exactly.
+    assert_eq!(starts("mile"), vec![2, 12, 19]);
+    assert_eq!(starts("emile"), vec![11, 18]);
+    // An uppercase letter makes the search case-sensitive.
+    assert_eq!(starts("EMILE"), vec![18]);
+    assert_eq!(doc.find_all("Émile"), vec![0..6]);
+    assert!(doc.find_all("").is_empty());
+    let many = Document::new(&"a".repeat(MAX_FIND_MATCHES + 5));
+    assert_eq!(many.find_all("a").len(), MAX_FIND_MATCHES);
+}

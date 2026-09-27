@@ -46,6 +46,9 @@ pub const UNPARSED_EDGE_CHUNK: usize = 1024;
 /// near the viewport is formatted within a frame or two of a large paste.
 pub const PARSE_CHUNK: usize = 128 * 1024;
 
+/// [`Document::find_all`] stops after this many matches.
+pub const MAX_FIND_MATCHES: usize = 10_000;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct BlockId(u64);
 
@@ -210,6 +213,26 @@ impl Document {
     /// Ranges still awaiting a reparse.
     pub fn dirty_ranges(&self) -> &[Range<usize>] {
         &self.dirty
+    }
+
+    /// Byte ranges of `query` in the text, in order, not overlapping, at most
+    /// [`MAX_FIND_MATCHES`]. Smart case: case-insensitive (ASCII letters) unless `query` contains
+    /// an uppercase letter. An empty query matches nothing.
+    pub fn find_all(&self, query: &str) -> Vec<Range<usize>> {
+        if query.is_empty() {
+            return Vec::new();
+        }
+        let mut text = self.buffer.rope().to_string();
+        let mut query = std::borrow::Cow::Borrowed(query);
+        if !query.chars().any(char::is_uppercase) {
+            // ASCII-only lowering keeps every byte offset where it was.
+            text.make_ascii_lowercase();
+            query = std::borrow::Cow::Owned(query.to_ascii_lowercase());
+        }
+        text.match_indices(query.as_ref())
+            .take(MAX_FIND_MATCHES)
+            .map(|(at, found)| at..at + found.len())
+            .collect()
     }
 
     pub fn is_dirty(&self) -> bool {

@@ -43,6 +43,9 @@ All notable user-visible changes are recorded here. The format follows
 - `--startup-report` and `cargo xtask bench-startup` for measuring launch-to-first-frame latency
   against the 50 ms budget.
 - `Ctrl+Q` / `Cmd+Q` quits, `Ctrl+W` / `Cmd+W` closes the window.
+- Find (`Ctrl+F`): typed text goes to the find bar, matches are highlighted in rendered and raw
+  text, `Enter` / `Shift+Enter` (`F3` / `Shift+F3`) step through them, `Escape` closes. Lowercase
+  queries ignore case. A selection on one line becomes the query.
 - `Ctrl+N` opens a new window, `Ctrl+O` opens files (each in its own window), and files dropped
   onto a window open too. `Page Up` / `Page Down` move by a screen (`Shift` selects).
 - File paths given on the command line are made absolute before loading.
