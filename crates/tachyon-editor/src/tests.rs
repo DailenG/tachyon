@@ -982,3 +982,112 @@ fn copy_as_html_puts_rich_text_or_falls_back_to_the_source(cx: &mut TestAppConte
         Some(("<p>Some <strong>bold</strong></p>\n".to_owned(), "Some **bold**".to_owned()))
     );
 }
+
+/// An editor showing `path` as loaded from disk.
+fn open_file<'a>(
+    path: &std::path::Path,
+    cx: &'a mut TestAppContext,
+) -> (Entity<Editor>, &'a mut VisualTestContext) {
+    let (editor, cx) = open("", cx);
+    let loaded = tachyon_doc::Document::new(&std::fs::read_to_string(path).expect("readable"));
+    editor.update(cx, |e, cx| {
+        e.set_document(loaded, cx);
+        e.set_file(path.to_owned(), cx);
+    });
+    (editor, cx)
+}
+
+fn refocus(cx: &mut VisualTestContext) {
+    cx.deactivate_window();
+    cx.update(|window, _| window.activate_window());
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+fn a_file_changed_on_disk_reloads_when_the_window_is_activated(cx: &mut TestAppContext) {
+    let dir = backup_dir("reload");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let path = dir.join("note.md");
+    std::fs::write(&path, "first version\n").expect("write");
+    let (editor, cx) = open_file(&path, cx);
+
+    std::fs::write(&path, "second, longer version\n").expect("write");
+    refocus(cx);
+    assert_eq!(text(&editor, cx), "second, longer version\n");
+    assert!(!editor.read_with(cx, |e, _| e.is_modified()));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[gpui::test]
+fn saving_over_a_file_changed_on_disk_asks_first(cx: &mut TestAppContext) {
+    let dir = backup_dir("conflict");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let path = dir.join("note.md");
+    std::fs::write(&path, "original\n").expect("write");
+    let (editor, cx) = open_file(&path, cx);
+    cx.simulate_keystrokes("ctrl-end");
+    cx.simulate_input("mine");
+
+    std::fs::write(&path, "theirs, from another program\n").expect("write");
+    refocus(cx);
+    assert_eq!(text(&editor, cx), "original\nmine", "unsaved changes are kept");
+
+    cx.simulate_keystrokes("secondary-s");
+    cx.run_until_parked();
+    assert!(cx.has_pending_prompt(), "asks before overwriting");
+    cx.simulate_prompt_answer("Cancel");
+    cx.run_until_parked();
+    assert_eq!(std::fs::read_to_string(&path).expect("read"), "theirs, from another program\n");
+
+    cx.simulate_keystrokes("secondary-s");
+    cx.run_until_parked();
+    cx.simulate_prompt_answer("Overwrite");
+    cx.run_until_parked();
+    assert_eq!(std::fs::read_to_string(&path).expect("read"), "original\nmine");
+    assert!(!editor.read_with(cx, |e, _| e.is_modified()));
+
+    // Saved now: the next save needs no confirmation.
+    cx.simulate_input("!");
+    cx.simulate_keystrokes("secondary-s");
+    cx.run_until_parked();
+    assert!(!cx.has_pending_prompt());
+    assert_eq!(std::fs::read_to_string(&path).expect("read"), "original\nmine!");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_checked_write_keeps_the_old_file_when_the_check_fails() {
+    let dir = backup_dir("checked-write");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let path = dir.join("f.md");
+    std::fs::write(&path, "theirs").expect("write");
+    let written =
+        crate::editor::write_atomically_if(&path, b"mine", || false).expect("no io error");
+    assert!(!written);
+    assert_eq!(std::fs::read_to_string(&path).expect("read"), "theirs");
+    assert_eq!(std::fs::read_dir(&dir).expect("dir").count(), 1, "no temporary file left");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[gpui::test]
+fn a_restored_file_without_a_recorded_version_asks_before_saving(cx: &mut TestAppContext) {
+    let dir = backup_dir("unknown-version");
+    let backups = dir.join("backups");
+    std::fs::create_dir_all(&backups).expect("temp dir");
+    let file = dir.join("note.md");
+    std::fs::write(&file, "changed while Tachyon was closed\n").expect("write");
+    // A backup in the format that predates recorded versions: just the path.
+    std::fs::write(backups.join("1.md"), "my unsaved text\n").expect("write");
+    std::fs::write(backups.join("1.path"), file.to_str().expect("utf-8")).expect("write");
+
+    let restored = crate::Backups::new(backups).restore().pop().expect("one backup");
+    let (editor, cx) = open("", cx);
+    editor.update(cx, |e, cx| e.adopt_backup(restored, cx));
+    cx.simulate_keystrokes("secondary-s");
+    cx.run_until_parked();
+    assert!(cx.has_pending_prompt(), "the file may have changed: ask first");
+    cx.simulate_prompt_answer("Cancel");
+    cx.run_until_parked();
+    assert_eq!(std::fs::read_to_string(&file).expect("read"), "changed while Tachyon was closed\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
