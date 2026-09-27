@@ -38,6 +38,13 @@ pub fn options() -> Options {
         | Options::ENABLE_GFM
 }
 
+/// `markdown` rendered as HTML, with the same dialect as the editor (for copying as rich text).
+pub fn to_html(markdown: &str) -> String {
+    let mut html = String::with_capacity(markdown.len() * 3 / 2);
+    pulldown_cmark::html::push_html(&mut html, Parser::new_ext(markdown, options()));
+    html
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Alignment {
     None,

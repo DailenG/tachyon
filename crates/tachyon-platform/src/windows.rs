@@ -284,6 +284,93 @@ fn read_clipboard_text() -> Option<String> {
     Some(text)
 }
 
+/// The `HTML Format` clipboard payload for `fragment`: a header of byte offsets (UTF-8), then the
+/// fragment wrapped in a minimal document with the fragment markers Word and browsers look for.
+fn cf_html(fragment: &str) -> String {
+    const PREFIX: &str = "<html><body>\r\n<!--StartFragment-->";
+    const SUFFIX: &str = "<!--EndFragment-->\r\n</body></html>";
+    let header = |start_html: usize, end_html: usize, start: usize, end: usize| {
+        format!(
+            "Version:0.9\r\nStartHTML:{start_html:010}\r\nEndHTML:{end_html:010}\r\n\
+             StartFragment:{start:010}\r\nEndFragment:{end:010}\r\n"
+        )
+    };
+    let start_html = header(0, 0, 0, 0).len();
+    let start = start_html + PREFIX.len();
+    let end = start + fragment.len();
+    let end_html = end + SUFFIX.len();
+    format!("{}{PREFIX}{fragment}{SUFFIX}", header(start_html, end_html, start, end))
+}
+
+pub fn write_clipboard_html(
+    window: &impl raw_window_handle::HasWindowHandle,
+    html: &str,
+    text: &str,
+) -> bool {
+    use windows_sys::Win32::Foundation::GlobalFree;
+    use windows_sys::Win32::System::DataExchange::{
+        CloseClipboard, EmptyClipboard, OpenClipboard, RegisterClipboardFormatW, SetClipboardData,
+    };
+    use windows_sys::Win32::System::Memory::{
+        GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock,
+    };
+
+    /// Copies `bytes` into a movable global block and hands it to the clipboard.
+    fn set(format: u32, bytes: &[u8]) -> bool {
+        // SAFETY: allocates a block the clipboard takes ownership of on success.
+        let block = unsafe { GlobalAlloc(GMEM_MOVEABLE, bytes.len()) };
+        if block.is_null() {
+            return false;
+        }
+        // SAFETY: `block` was just allocated with room for `bytes`.
+        let data = unsafe { GlobalLock(block) }.cast::<u8>();
+        if data.is_null() {
+            // SAFETY: the block is ours until SetClipboardData succeeds.
+            unsafe { GlobalFree(block) };
+            return false;
+        }
+        // SAFETY: `data` points at `bytes.len()` writable bytes; the regions do not overlap.
+        unsafe { ptr::copy_nonoverlapping(bytes.as_ptr(), data, bytes.len()) };
+        // SAFETY: balances the GlobalLock above.
+        unsafe { GlobalUnlock(block) };
+        // SAFETY: the clipboard is open and emptied by this task; on success it owns `block`.
+        if unsafe { SetClipboardData(format, block) }.is_null() {
+            // SAFETY: not taken by the clipboard, so still ours.
+            unsafe { GlobalFree(block) };
+            return false;
+        }
+        true
+    }
+
+    let Ok(handle) = window.window_handle() else { return false };
+    let raw_window_handle::RawWindowHandle::Win32(win32) = handle.as_raw() else { return false };
+    // SAFETY: the string is NUL-terminated UTF-16.
+    let format = unsafe { RegisterClipboardFormatW(wide("HTML Format").as_ptr()) };
+    if format == 0 {
+        return false;
+    }
+    // The window must own the clipboard: SetClipboardData fails after opening it with no owner.
+    let opened = (0..50).any(|attempt| {
+        if attempt > 0 {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        // SAFETY: `win32.hwnd` is the live window the action came from.
+        unsafe { OpenClipboard(win32.hwnd.get() as _) != 0 }
+    });
+    if !opened {
+        return false;
+    }
+    let mut payload = cf_html(html).into_bytes();
+    payload.push(0);
+    let plain: Vec<u8> = text.encode_utf16().chain(Some(0)).flat_map(u16::to_le_bytes).collect();
+    // SAFETY: the clipboard is open by this task.
+    let written =
+        unsafe { EmptyClipboard() } != 0 && set(format, &payload) && set(CF_UNICODETEXT, &plain);
+    // SAFETY: balances the OpenClipboard above.
+    unsafe { CloseClipboard() };
+    written
+}
+
 pub fn query_system_appearance() -> Option<mpsc::Receiver<bool>> {
     None
 }
@@ -383,5 +470,22 @@ pub fn set_autostart(exe: &std::path::Path, enabled: bool) -> io::Result<()> {
     match status {
         ERROR_SUCCESS => Ok(()),
         code => Err(io::Error::from_raw_os_error(code as i32)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cf_html;
+
+    #[test]
+    fn cf_html_offsets_point_at_the_document_and_the_fragment() {
+        let payload = cf_html("<p>h\u{e9}llo</p>");
+        let offset = |key: &str| -> usize {
+            let at = payload.find(key).expect("header field") + key.len();
+            payload[at..at + 10].parse().expect("ten digits")
+        };
+        assert_eq!(&payload[offset("StartFragment:")..offset("EndFragment:")], "<p>h\u{e9}llo</p>");
+        assert!(payload[offset("StartHTML:")..].starts_with("<html>"));
+        assert_eq!(offset("EndHTML:"), payload.len());
     }
 }

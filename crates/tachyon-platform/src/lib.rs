@@ -41,6 +41,17 @@ pub fn clipboard_text_reader() -> Option<fn() -> Option<String>> {
     imp::clipboard_text_reader()
 }
 
+/// Puts `html` on the clipboard as rich text, with `text` as its plain-text form, for `window`'s
+/// process (Windows: the `HTML Format` and `CF_UNICODETEXT` formats). Returns whether it did;
+/// `false` where rich text is not supported yet (Linux and macOS: GPUI's clipboard is text only).
+pub fn write_clipboard_html(
+    window: &impl raw_window_handle::HasWindowHandle,
+    html: &str,
+    text: &str,
+) -> bool {
+    imp::write_clipboard_html(window, html, text)
+}
+
 /// Gives `window` Tachyon's icon (title bar, taskbar, Alt+Tab) on Windows, where GPUI looks for
 /// an icon resource Tachyon's executable does not have. A no-op elsewhere.
 pub fn set_window_icon(window: &impl raw_window_handle::HasWindowHandle) {

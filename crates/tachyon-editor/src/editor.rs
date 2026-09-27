@@ -59,6 +59,7 @@ actions!(
         Newline,
         Tab,
         Outdent,
+        CopyAsHtml,
         Copy,
         Cut,
         Paste,
@@ -135,6 +136,7 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("shift-enter", ShiftNewline, c),
         KeyBinding::new("tab", Tab, c),
         KeyBinding::new("shift-tab", Outdent, c),
+        KeyBinding::new("secondary-shift-c", CopyAsHtml, c),
         KeyBinding::new("secondary-c", Copy, c),
         KeyBinding::new("secondary-x", Cut, c),
         KeyBinding::new("secondary-v", Paste, c),
@@ -1008,6 +1010,23 @@ impl Editor {
             cx.write_to_clipboard(ClipboardItem::new_string(self.selected_text()));
         }
     }
+    /// Copies the selection (or, with none, the document) rendered as HTML: as rich text where
+    /// the application can put HTML on the clipboard (`HtmlClipboard`), with the Markdown as its
+    /// plain-text form; elsewhere the HTML source as text.
+    pub(crate) fn copy_as_html(
+        &mut self,
+        _: &CopyAsHtml,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.flush_pending_paste(cx);
+        let markdown = if self.selection.is_empty() { self.text() } else { self.selected_text() };
+        let html = tachyon_md::to_html(&markdown);
+        let rich = cx.try_global::<HtmlClipboard>().map(|writer| writer.0);
+        if !rich.is_some_and(|write| write(window, &html, &markdown)) {
+            cx.write_to_clipboard(ClipboardItem::new_string(html));
+        }
+    }
     pub(crate) fn cut(&mut self, _: &Cut, _: &mut Window, cx: &mut Context<Self>) {
         if !self.selection.is_empty() {
             cx.write_to_clipboard(ClipboardItem::new_string(self.selected_text()));
@@ -1330,6 +1349,13 @@ async fn prepare_paste(this: gpui::WeakEntity<Editor>, text: Arc<str>, cx: &mut 
         }
     });
 }
+
+/// Puts HTML on the clipboard as rich text, with a plain-text form; returns whether it did. Set by
+/// the application (`tachyon_platform::write_clipboard_html`); without it, or when it fails, Copy
+/// as HTML copies the HTML source as text.
+pub struct HtmlClipboard(pub fn(&Window, &str, &str) -> bool);
+
+impl gpui::Global for HtmlClipboard {}
 
 /// Reads the clipboard's text off the UI thread. Set by the application where the platform
 /// allows that (`tachyon_platform::clipboard_text_reader`); without it the clipboard is read

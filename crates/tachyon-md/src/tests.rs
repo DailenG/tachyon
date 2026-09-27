@@ -333,3 +333,11 @@ fn fenced_code_is_highlighted_by_language() {
         assert!(blocks(src)[0].ir.runs.iter().all(|r| !r.style.is_code_token()), "{src:?}");
     }
 }
+
+#[test]
+fn html_uses_the_editor_dialect() {
+    assert_eq!(
+        to_html("# Hi\n\n**bold** ~~gone~~\n\n- [x] done\n"),
+        "<h1>Hi</h1>\n<p><strong>bold</strong> <del>gone</del></p>\n<ul>\n<li><input disabled=\"\" type=\"checkbox\" checked=\"\"/>\ndone</li>\n</ul>\n"
+    );
+}

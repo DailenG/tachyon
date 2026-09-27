@@ -949,3 +949,36 @@ fn quit_closes_without_asking_and_the_backup_restores(cx: &mut TestAppContext) {
     assert!(backups_in(&dir).is_empty());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+thread_local! {
+    /// What the fake rich-text clipboard received: (html, text).
+    static RICH: std::cell::RefCell<Option<(String, String)>> = const { std::cell::RefCell::new(None) };
+}
+
+#[gpui::test]
+fn copy_as_html_puts_rich_text_or_falls_back_to_the_source(cx: &mut TestAppContext) {
+    let (editor, vcx) = open("# Title\n\nSome **bold** text\n", cx);
+    // Without rich-text support: the HTML source, for the whole document when nothing is selected.
+    vcx.simulate_keystrokes("secondary-shift-c");
+    let copied = vcx.read_from_clipboard().and_then(|item| item.text());
+    assert_eq!(copied.as_deref(), Some("<h1>Title</h1>\n<p>Some <strong>bold</strong> text</p>\n"));
+
+    // With it: HTML plus the selected Markdown as plain text.
+    vcx.update(|_, cx| {
+        cx.set_global(crate::HtmlClipboard(|_, html, text| {
+            RICH.set(Some((html.to_owned(), text.to_owned())));
+            true
+        }));
+    });
+    let start = "# Title\n\n".len();
+    editor.update(vcx, |e, cx| {
+        e.move_to(start, false, cx);
+        e.move_to(start + "Some **bold**".len(), true, cx);
+    });
+    vcx.simulate_keystrokes("secondary-shift-c");
+    let rich = RICH.with_borrow(Clone::clone);
+    assert_eq!(
+        rich,
+        Some(("<p>Some <strong>bold</strong></p>\n".to_owned(), "Some **bold**".to_owned()))
+    );
+}
