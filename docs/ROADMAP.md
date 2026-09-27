@@ -165,7 +165,7 @@ last 2 ms from drawing real bold and italic faces); the Windows paths the budget
 are unchanged apart from the icon and the tray, which a resident instance sets up ahead of
 launches.
 
-## Phase 5: writing comfort (in progress)
+## Phase 5: writing comfort (done)
 
 Typing Markdown by hand, and reading the code in LLM output, without leaving the budgets.
 
@@ -186,7 +186,14 @@ Typing Markdown by hand, and reading the code in LLM output, without leaving the
 - [x] Scratch buffers survive a restart: unsaved documents are backed up 1.5 s after the last
       edit and Quit closes without asking; the next start reopens them, unsaved, with their files
       ([ADR 0006](adr/0006-hot-exit.md))
-- [ ] Copy as rich text (`Ctrl+Shift+C`): the selection as HTML on the clipboard
+- [x] Copy as rich text (`Ctrl+Shift+C`): the selection (or the whole document) rendered by
+      `pulldown-cmark` with the editor's dialect; on Windows as `HTML Format` with the Markdown as
+      its plain text (checked on Windows: offsets and both formats read back); on Linux and macOS,
+      whose GPUI clipboard is text only, the HTML source as text
 
 **Exit:** each item covered by a `gpui::test` or a live check; typing stays within one frame in a
 1 MB document with highlighted code; startup budgets unchanged.
+Met: every item has `gpui::test`s and a live check (Linux; the HTML clipboard on Windows); typing
+in a Rust block of a 1 MB document (Linux, release): key to paint p95 1.3 ms, max frame 1.5 ms,
+none over 16.7 ms; startup paths untouched apart from reading the (usually empty) backup
+directory at a primary's start.
