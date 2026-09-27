@@ -15,7 +15,7 @@ use tachyon_platform::{Listener, TrayEvent};
 use crate::cli::{self, Cli};
 use crate::startup::Startup;
 
-actions!(tachyon, [Quit, NewWindow, Open]);
+actions!(tachyon, [Quit, NewWindow, Open, OpenSettings]);
 
 const APP_ID: &str = "tachyon";
 const SAMPLE: &str = include_str!("sample.md");
@@ -85,6 +85,16 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
     let report_launches = cli.report_launches && resident;
     let system_appearance = tachyon_platform::query_system_appearance();
     // Hot exit: the primary backs up unsaved documents and restores them at the next start.
+    // Settings are read on a thread while GPUI starts; the first window waits briefly for them.
+    let settings_file = tachyon_platform::config_dir().map(|dir| dir.join("settings.toml"));
+    let settings_read = settings_file.clone().map(|file| {
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        std::thread::spawn(move || {
+            let text = std::fs::read_to_string(file).unwrap_or_default();
+            let _ = sender.send(tachyon_editor::Settings::parse(&text).0);
+        });
+        receiver
+    });
     let primary_backups = listener
         .as_ref()
         .and_then(|_| tachyon_platform::state_dir())
@@ -100,7 +110,21 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
             KeyBinding::new("secondary-q", Quit, None),
             KeyBinding::new("secondary-n", NewWindow, None),
             KeyBinding::new("secondary-o", Open, None),
+            KeyBinding::new("secondary-,", OpenSettings, None),
         ]);
+        cx.on_action(|_: &OpenSettings, cx| {
+            let Some(file) = cx.try_global::<tachyon_editor::SettingsFile>().map(|f| f.0.clone())
+            else {
+                return;
+            };
+            if !file.exists() {
+                if let Some(dir) = file.parent() {
+                    let _ = std::fs::create_dir_all(dir);
+                }
+                let _ = std::fs::write(&file, tachyon_editor::DEFAULT_SETTINGS);
+            }
+            open_paths(vec![file], cx);
+        });
         cx.on_action(|_: &NewWindow, cx| {
             show_window(Source::Blank, cx);
         });
@@ -138,7 +162,8 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
         cx.on_action(|_: &Quit, cx| {
             cx.global_mut::<Lifecycle>().quitting = true;
             // With backups, windows close without asking: their unsaved text comes back next time.
-            if cx.has_global::<tachyon_editor::Backups>() {
+            let hot_exit = cx.try_global::<tachyon_editor::Settings>().is_none_or(|s| s.hot_exit);
+            if hot_exit && cx.has_global::<tachyon_editor::Backups>() {
                 cx.set_global(tachyon_editor::HotExit);
             }
             // Deferred: the action is dispatched from inside a window update,
@@ -184,6 +209,14 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
             }
         }
 
+        let settings = settings_read
+            .and_then(|read| read.recv_timeout(SETTINGS_WAIT).ok())
+            .unwrap_or_default();
+        let primary_backups = primary_backups.filter(|_| settings.hot_exit);
+        cx.set_global(settings);
+        if let Some(file) = settings_file {
+            cx.set_global(tachyon_editor::SettingsFile(file));
+        }
         // Documents left unsaved by the last Quit come back (primary instance only, so two
         // processes never restore the same backups).
         let restored: Vec<Source> = match &primary_backups {
@@ -222,6 +255,9 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
 }
 
 const WINDOW_SIZE: Size<Pixels> = size(px(900.), px(1000.));
+
+/// How long start-up waits for the settings file to be read (it is small and local).
+const SETTINGS_WAIT: std::time::Duration = std::time::Duration::from_millis(15);
 
 /// How long start-up waits for the system appearance (see `query_system_appearance`).
 const APPEARANCE_WAIT: std::time::Duration = std::time::Duration::from_millis(15);

@@ -66,7 +66,8 @@ tachyon --status         # is an instance running? does it start at login?
 tachyon --quit           # end it (unsaved documents come back next time)
 ```
 
-`tachyon --help` lists all options.
+`tachyon --help` lists all options. Settings live in `settings.toml` (`Ctrl+,` opens it): theme,
+zoom of new windows, and whether Quit keeps unsaved documents.
 
 ## Development
 
