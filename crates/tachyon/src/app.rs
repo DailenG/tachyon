@@ -77,6 +77,7 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
     // later launches arrive on.
     let resident = cli.resident() && listener.is_some();
     let report_launches = cli.report_launches && resident;
+    let system_appearance = tachyon_platform::query_system_appearance();
     // Window lifetime is ours to manage (resident mode); GPUI would otherwise
     // quit when the last window closes on Linux and Windows.
     gpui_platform::application().with_quit_mode(QuitMode::Explicit).run(move |cx: &mut App| {
@@ -137,6 +138,16 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
         })
         .detach();
 
+        // Where windows learn the system appearance late, wait briefly for our own query so the
+        // first frame is not painted in the wrong theme. A portal that is still starting up is
+        // not waited for.
+        if let Some(query) = system_appearance {
+            if let Ok(dark) = query.recv_timeout(APPEARANCE_WAIT) {
+                cx.set_global(tachyon_editor::AppearanceHint { dark });
+            }
+            cx.global_mut::<Startup>().mark("appearance");
+        }
+
         if let Some(listener) = listener {
             serve_forwarded_launches(listener, cx);
             prepare_ready_window(cx);
@@ -171,6 +182,9 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
 }
 
 const WINDOW_SIZE: Size<Pixels> = size(px(900.), px(1000.));
+
+/// How long start-up waits for the system appearance (see `query_system_appearance`).
+const APPEARANCE_WAIT: std::time::Duration = std::time::Duration::from_millis(15);
 
 fn window_options(title: SharedString, show: bool, cx: &App) -> WindowOptions {
     WindowOptions {

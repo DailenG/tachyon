@@ -1,13 +1,29 @@
-//! Built-in theme. Compiled in so startup reads no configuration.
+//! Built-in themes, dark and light, following the system appearance. Compiled in so startup
+//! reads no configuration.
 
 use gpui::{
-    FontStyle, FontWeight, HighlightStyle, Hsla, Pixels, SharedString, StrikethroughStyle,
-    UnderlineStyle, px, rgb, rgba,
+    App, FontStyle, FontWeight, Global, HighlightStyle, Hsla, Pixels, SharedString,
+    StrikethroughStyle, UnderlineStyle, Window, WindowAppearance, px, rgb, rgba,
 };
 use tachyon_md::Style;
 
+/// The system appearance, known before GPUI's windows report it (Linux: GPUI asks the desktop
+/// portal asynchronously, so its first windows report light). Set it before opening the first
+/// window; editors drop it once a window reports the same appearance.
+pub struct AppearanceHint {
+    pub dark: bool,
+}
+
+impl Global for AppearanceHint {}
+
+pub(crate) fn is_dark(appearance: WindowAppearance) -> bool {
+    matches!(appearance, WindowAppearance::Dark | WindowAppearance::VibrantDark)
+}
+
 #[derive(Clone, Debug)]
 pub struct Theme {
+    /// Whether this is the dark theme.
+    pub dark: bool,
     pub background: Hsla,
     pub foreground: Hsla,
     pub muted: Hsla,
@@ -33,8 +49,39 @@ pub struct Theme {
 }
 
 impl Theme {
+    pub fn for_dark(dark: bool) -> Self {
+        if dark { Self::dark() } else { Self::light() }
+    }
+
+    /// The theme for the system appearance: the [`AppearanceHint`] if set, else `window`'s.
+    pub fn for_window(window: &Window, cx: &App) -> Self {
+        let hint = cx.try_global::<AppearanceHint>().map(|hint| hint.dark);
+        Self::for_dark(hint.unwrap_or_else(|| is_dark(window.appearance())))
+    }
+
+    pub fn light() -> Self {
+        Theme {
+            dark: false,
+            background: rgb(0xffffff).into(),
+            foreground: rgb(0x1f2328).into(),
+            muted: rgb(0x6e7781).into(),
+            accent: rgb(0x0969da).into(),
+            code_background: rgb(0xeff1f3).into(),
+            raw_background: rgb(0xf6f8fa).into(),
+            quote_bar: rgb(0xd0d7de).into(),
+            rule: rgb(0xd8dee4).into(),
+            selection: rgba(0x0969da33).into(),
+            find_match: rgba(0xf2cc6080).into(),
+            find_current: rgba(0xf0a020c0).into(),
+            cursor: rgb(0x1f2328).into(),
+            math: rgb(0x8250df).into(),
+            ..Self::dark()
+        }
+    }
+
     pub fn dark() -> Self {
         Theme {
+            dark: true,
             background: rgb(0x1e1f22).into(),
             foreground: rgb(0xd8dade).into(),
             muted: rgb(0x80848e).into(),

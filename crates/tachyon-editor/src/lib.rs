@@ -13,7 +13,7 @@ mod theme;
 
 pub use crate::editor::{CloseWindow, Editor, KEY_CONTEXT, OpenPaths, Save, SaveAs, key_bindings};
 pub use crate::prompt::keyboard_prompt;
-pub use crate::theme::Theme;
+pub use crate::theme::{AppearanceHint, Theme};
 
 /// Registers the editor's key bindings, and applies a large paste still
 /// being prepared before any later keystroke is handled (so a key typed

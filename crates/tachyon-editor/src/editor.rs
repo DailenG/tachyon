@@ -13,7 +13,7 @@ use tachyon_doc::{BlockId, Document, PreparedInsert, Splice};
 use tachyon_md::{BlockKind, ParsedBlock};
 
 use crate::movement;
-use crate::theme::Theme;
+use crate::theme::{AppearanceHint, Theme, is_dark};
 
 actions!(
     editor,
@@ -169,6 +169,9 @@ pub struct Editor {
     pub(crate) list: ListState,
     pub(crate) focus: FocusHandle,
     pub(crate) theme: Theme,
+    /// The theme follows an [`AppearanceHint`] that GPUI's window appearance has not caught up
+    /// with yet; until it does, the window's (default) appearance is ignored.
+    appearance_unconfirmed: bool,
     /// Block (and leaf within it) shown raw, as last laid out.
     active: Option<(BlockId, Option<usize>)>,
     /// Layout of the active block's raw text as last painted, with the
@@ -215,7 +218,13 @@ impl Editor {
             editor.update(cx, |editor, cx| editor.should_close(window, cx)).unwrap_or(true)
         });
         cx.on_next_frame(window, |editor, window, cx| editor.resolve_code_font(window, cx));
+        cx.observe_window_appearance(window, |editor, window, cx| {
+            editor.follow_appearance(window, cx);
+        })
+        .detach();
         let list = ListState::new(doc.blocks().len(), ListAlignment::Top, px(1000.));
+        let reported = is_dark(window.appearance());
+        let hint = cx.try_global::<AppearanceHint>().map(|hint| hint.dark);
         let mut editor = Editor {
             doc,
             selection: 0..0,
@@ -224,7 +233,8 @@ impl Editor {
             goal_x: None,
             list,
             focus,
-            theme: Theme::dark(),
+            theme: Theme::for_dark(hint.unwrap_or(reported)),
+            appearance_unconfirmed: hint.is_some_and(|dark| dark != reported),
             active: None,
             active_layout: None,
             parse_task: None,
@@ -381,6 +391,27 @@ impl Editor {
 
     /// Picks the first installed monospace family once the window exists,
     /// off the startup path, and loads the fonts the editor draws with.
+    /// Switches between the dark and light theme when the system appearance changes.
+    pub(crate) fn follow_appearance(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let reported = is_dark(window.appearance());
+        if self.appearance_unconfirmed {
+            if reported != self.theme.dark {
+                return;
+            }
+            // GPUI knows the system appearance now; later windows can trust it.
+            self.appearance_unconfirmed = false;
+            if cx.has_global::<AppearanceHint>() {
+                cx.remove_global::<AppearanceHint>();
+            }
+        }
+        if reported == self.theme.dark {
+            return;
+        }
+        let code_font = self.theme.code_font.clone();
+        self.theme = Theme { code_font, ..Theme::for_dark(reported) };
+        cx.notify();
+    }
+
     fn resolve_code_font(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         warm_fonts(window, &self.theme, installed_code_font(window));
         if let Some(family) = installed_code_font(window)

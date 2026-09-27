@@ -136,6 +136,49 @@ pub fn disable_window_transitions(_window: &impl raw_window_handle::HasWindowHan
 pub fn attach_parent_console() {}
 
 #[cfg(target_os = "macos")]
+pub fn query_system_appearance() -> Option<std::sync::mpsc::Receiver<bool>> {
+    None
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn query_system_appearance() -> Option<std::sync::mpsc::Receiver<bool>> {
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    std::thread::Builder::new()
+        .name("appearance".to_owned())
+        .spawn(move || {
+            if let Some(dark) = portal_prefers_dark() {
+                let _ = sender.send(dark);
+            }
+        })
+        .ok()?;
+    Some(receiver)
+}
+
+/// `org.freedesktop.appearance color-scheme` from the desktop portal: 1 prefers dark, 2 light,
+/// 0 no preference (treated as light, as GPUI does).
+#[cfg(not(target_os = "macos"))]
+fn portal_prefers_dark() -> Option<bool> {
+    use zbus::zvariant::{OwnedValue, Value};
+    let connection = zbus::blocking::Connection::session().ok()?;
+    let reply = connection
+        .call_method(
+            Some("org.freedesktop.portal.Desktop"),
+            "/org/freedesktop/portal/desktop",
+            Some("org.freedesktop.portal.Settings"),
+            "ReadOne",
+            &("org.freedesktop.appearance", "color-scheme"),
+        )
+        .ok()?;
+    let value: OwnedValue = reply.body().deserialize().ok()?;
+    // Some portals wrap the value in a second variant.
+    let scheme = match &*value {
+        Value::Value(inner) => u32::try_from(&**inner).ok()?,
+        other => u32::try_from(other).ok()?,
+    };
+    Some(scheme == 1)
+}
+
+#[cfg(target_os = "macos")]
 pub fn autostart_enabled() -> io::Result<bool> {
     Ok(false)
 }

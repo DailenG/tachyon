@@ -40,6 +40,15 @@ pub fn attach_parent_console() {
     imp::attach_parent_console();
 }
 
+/// Starts asking whether the system prefers a dark appearance, where GPUI only learns it after its
+/// first windows exist: on Linux and BSD it asks the desktop portal asynchronously, so its first
+/// windows report light. There this spawns a thread for the D-Bus round trip (about 1 ms warm; a
+/// portal that has to be started takes far longer) and the receiver gets the answer, if any.
+/// `None` elsewhere: a window's appearance is right from the start.
+pub fn query_system_appearance() -> Option<std::sync::mpsc::Receiver<bool>> {
+    imp::query_system_appearance()
+}
+
 /// Whether Tachyon starts in the background at login.
 pub fn autostart_enabled() -> io::Result<bool> {
     imp::autostart_enabled()

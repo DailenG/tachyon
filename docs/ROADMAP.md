@@ -137,7 +137,10 @@ What a scratchpad needs day to day, without giving up the budgets above.
       max frame 3.7 ms
 - [x] Replace (`Ctrl+H`, `Cmd+Alt+F`): Tab switches between query and replacement, Enter replaces
       the selected match and moves on, `Ctrl+Enter` replaces all as one edit and one undo step
-- [ ] Light theme, following the system appearance
+- [x] Light theme, following the system appearance, live. On Linux GPUI learns the appearance
+      from the desktop portal only after its first windows exist, so start-up asks the portal
+      itself on a thread (≈ 1 ms warm, waited for at most 15 ms) and the first frame is already
+      in the right theme
 - [ ] Zoom (`Ctrl+=`, `Ctrl+-`, `Ctrl+0`)
 - [ ] Open links with `Ctrl+click`
 - [ ] Tray icon on Windows for the resident process (show a window, quit)
