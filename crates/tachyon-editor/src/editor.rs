@@ -978,6 +978,11 @@ impl Editor {
     }
     pub(crate) fn paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
         self.flush_pending_paste(cx);
+        if !self.finding()
+            && let Some(read) = cx.try_global::<ClipboardReader>().map(|reader| reader.0)
+        {
+            return self.paste_read_off_thread(read, cx);
+        }
         let started = Instant::now();
         let text = cx.read_from_clipboard().and_then(|item| item.text());
         self.charge_work("clipboard", started);
@@ -990,30 +995,65 @@ impl Editor {
             self.replace(self.selection.clone(), &text, cx);
             return;
         }
-        // Normalizing, building the rope and pre-segmenting megabytes take
-        // milliseconds: do them off the UI thread, then splice the result in.
         let text: Arc<str> = text.into();
         let shared = Arc::clone(&text);
-        let task = cx.spawn(async move |this, cx| {
-            let insert =
-                cx.background_executor().spawn(async move { PreparedInsert::new(&shared) }).await;
-            let _ = this.update(cx, |editor, cx| {
-                if editor.pending_paste.take().is_some() {
-                    let now = Instant::now();
-                    editor.replace_at(now, editor.selection.clone(), Insert::Prepared(insert), cx);
-                    editor.charge_work("paste", now);
-                }
-            });
-        });
-        self.pending_paste = Some(PendingPaste { text, _task: task });
+        let task = cx.spawn(async move |this, cx| prepare_paste(this, shared, cx).await);
+        self.pending_paste = Some(PendingPaste { text: PasteText::Read(text), _task: task });
     }
 
-    /// Applies a paste still being prepared, from its text on this thread.
-    /// Called before any other input so edits keep their order.
-    pub(crate) fn flush_pending_paste(&mut self, cx: &mut Context<Self>) {
-        if let Some(paste) = self.pending_paste.take() {
-            self.replace(self.selection.clone(), &paste.text, cx);
+    /// Pastes with the clipboard read on a background thread, then continues like `paste`.
+    fn paste_read_off_thread(&mut self, read: fn() -> Option<String>, cx: &mut Context<Self>) {
+        self.moved_since_edit = true;
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let reading = cx.background_executor().spawn(async move {
+            let _ = sender.send(read());
+        });
+        let task = cx.spawn(async move |this, cx| {
+            reading.await;
+            let text = this.update(cx, |editor, cx| editor.take_read_paste(cx)).ok().flatten();
+            if let Some(text) = text {
+                prepare_paste(this, text, cx).await;
+            }
+        });
+        self.pending_paste =
+            Some(PendingPaste { text: PasteText::Reading { receiver, read }, _task: task });
+    }
+
+    /// The clipboard text read for the pending paste. Pastes it right away if it is small (and
+    /// returns `None`); returns it to be prepared off the UI thread if it is large.
+    fn take_read_paste(&mut self, cx: &mut Context<Self>) -> Option<Arc<str>> {
+        let paste = self.pending_paste.as_mut()?;
+        let PasteText::Reading { receiver, .. } = &paste.text else { return None };
+        let Some(text) = receiver.try_recv().ok().flatten() else {
+            self.pending_paste = None;
+            return None;
+        };
+        if text.len() <= tachyon_doc::UNPARSED_SPLIT_THRESHOLD {
+            self.pending_paste = None;
+            self.replace(self.selection.clone(), &text, cx);
+            return None;
         }
+        let text: Arc<str> = text.into();
+        paste.text = PasteText::Read(Arc::clone(&text));
+        Some(text)
+    }
+
+    /// Applies a paste still being read or prepared, on this thread (reading the clipboard here
+    /// if the background read has not finished). Called before any other input so edits keep
+    /// their order.
+    pub(crate) fn flush_pending_paste(&mut self, cx: &mut Context<Self>) {
+        let Some(paste) = self.pending_paste.take() else { return };
+        let text = match paste.text {
+            PasteText::Read(text) => text,
+            PasteText::Reading { receiver, read } => {
+                let started = Instant::now();
+                let text = receiver.try_recv().unwrap_or_else(|_| read());
+                self.charge_work("clipboard", started);
+                let Some(text) = text else { return };
+                text.into()
+            }
+        };
+        self.replace(self.selection.clone(), &text, cx);
     }
     pub(crate) fn undo(&mut self, _: &Undo, _: &mut Window, cx: &mut Context<Self>) {
         if let Some(edits) = self.doc.undo() {
@@ -1222,11 +1262,42 @@ impl gpui::Global for OpenPaths {}
 
 /// A large paste whose text is being prepared off the UI thread.
 struct PendingPaste {
-    text: Arc<str>,
+    text: PasteText,
     /// Applies the prepared text when ready; dropped (cancelled) when the
     /// paste is applied from `text` instead.
     _task: Task<()>,
 }
+
+/// The text of a pending paste.
+enum PasteText {
+    /// Still being read from the clipboard on a background thread, which sends the text (`None`
+    /// if it held none); `read` reads it again on the UI thread if it is needed first.
+    Reading {
+        receiver: std::sync::mpsc::Receiver<Option<String>>,
+        read: fn() -> Option<String>,
+    },
+    Read(Arc<str>),
+}
+
+/// Normalizing, building the rope and pre-segmenting megabytes take milliseconds: does that off
+/// the UI thread, then splices the result in, unless the paste was applied meanwhile.
+async fn prepare_paste(this: gpui::WeakEntity<Editor>, text: Arc<str>, cx: &mut gpui::AsyncApp) {
+    let insert = cx.background_executor().spawn(async move { PreparedInsert::new(&text) }).await;
+    let _ = this.update(cx, |editor, cx| {
+        if editor.pending_paste.take().is_some() {
+            let now = Instant::now();
+            editor.replace_at(now, editor.selection.clone(), Insert::Prepared(insert), cx);
+            editor.charge_work("paste", now);
+        }
+    });
+}
+
+/// Reads the clipboard's text off the UI thread. Set by the application where the platform
+/// allows that (`tachyon_platform::clipboard_text_reader`); without it the clipboard is read
+/// through GPUI on the UI thread, which takes ≈ 12 ms for 5 MB on Windows.
+pub struct ClipboardReader(pub fn() -> Option<String>);
+
+impl gpui::Global for ClipboardReader {}
 
 /// Text to insert: as is, or prepared off the UI thread.
 enum Insert<'a> {
