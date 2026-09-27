@@ -81,6 +81,26 @@ pub fn monospace_font_candidates() -> &'static [&'static str] {
     }
 }
 
+/// Font families to try for body text, most preferred first; empty where GPUI's system font has
+/// every weight and style. On Linux GPUI asks for IBM Plex Sans, which it does not bundle, and its
+/// fallback fonts come in the regular face only, so without an installed family from this list
+/// bold and italic text would render regular.
+pub fn text_font_candidates() -> &'static [&'static str] {
+    if cfg!(any(target_os = "windows", target_os = "macos")) {
+        &[]
+    } else {
+        &[
+            "IBM Plex Sans",
+            "Noto Sans",
+            "Ubuntu",
+            "Cantarell",
+            "DejaVu Sans",
+            "Liberation Sans",
+            "Adwaita Sans",
+        ]
+    }
+}
+
 /// Whether GPUI shows native dialogs for prompts on this OS. Where it does
 /// not (Linux, BSD), GPUI's in-window fallback is mouse-only.
 pub fn has_native_prompts() -> bool {

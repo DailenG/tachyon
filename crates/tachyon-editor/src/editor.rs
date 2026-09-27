@@ -1,7 +1,7 @@
 use std::io::{self, Write};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui::{
@@ -244,7 +244,7 @@ impl Editor {
             goal_x: None,
             list,
             focus,
-            theme: Theme::for_dark(hint.unwrap_or(reported)),
+            theme: Theme::for_dark(hint.unwrap_or(reported)).with_text_font(window),
             appearance_unconfirmed: hint.is_some_and(|dark| dark != reported),
             active: None,
             active_layout: None,
@@ -418,8 +418,7 @@ impl Editor {
         if reported == self.theme.dark {
             return;
         }
-        let code_font = self.theme.code_font.clone();
-        self.theme = Theme { code_font, ..Theme::for_dark(reported) }.zoomed(self.theme.zoom);
+        self.theme = self.theme.restyled(reported);
         cx.notify();
     }
 
@@ -1178,7 +1177,7 @@ fn warm_fonts(window: &Window, theme: &Theme, code_font: Option<&'static str>) {
     static WARMED: std::sync::Once = std::sync::Once::new();
     WARMED.call_once(|| {
         let sample = "The quick brown fox, 0123456789 ([{<*_`~|>}]).";
-        let base = window.text_style().font();
+        let base = Font { family: theme.text_font.clone(), ..window.text_style().font() };
         let mut faces = vec![
             base.clone(),
             Font { weight: FontWeight::BOLD, ..base.clone() },
@@ -1203,18 +1202,9 @@ fn warm_fonts(window: &Window, theme: &Theme, code_font: Option<&'static str>) {
     });
 }
 
-/// The first installed monospace candidate, looked up once per process:
-/// listing the system fonts walks the whole font collection, and a resident
-/// instance opens many windows.
+/// The first installed monospace candidate.
 fn installed_code_font(window: &Window) -> Option<&'static str> {
-    static FONT: OnceLock<Option<&'static str>> = OnceLock::new();
-    *FONT.get_or_init(|| {
-        let installed = window.text_system().all_font_names();
-        tachyon_platform::monospace_font_candidates()
-            .iter()
-            .find(|family| installed.iter().any(|name| name == *family))
-            .copied()
-    })
+    crate::theme::installed_font(window, tachyon_platform::monospace_font_candidates())
 }
 
 /// Opens files dropped onto an editor window. Set by the application, which owns windows; without
