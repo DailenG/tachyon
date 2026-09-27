@@ -30,7 +30,7 @@ flowchart LR
 | `tachyon-platform` | exists | no | OS integration GPUI lacks: single-instance IPC, autostart, DWM transitions, the Linux system appearance at start-up (later: hotkey, backdrop) |
 | `xtask` | exists | no | `ci`, `bench-startup` |
 | `tachyon-text` | exists | **never** | Rope buffer, edit log, grouped undo, offset mapping, UTF-8↔UTF-16, line endings |
-| `tachyon-md` | exists | **never** | `pulldown-cmark` wrapper → owned block IR with source maps |
+| `tachyon-md` | exists | **never** | `pulldown-cmark` wrapper → owned block IR with source maps; bare-URL autolinks and code highlighting as IR passes |
 | `tachyon-doc` | exists | **never** | Document state, block map, incremental reparse, parse jobs |
 | `tachyon-editor` | exists | yes | Editor view, block rendering, theme, input/IME, selection, clipboard |
 

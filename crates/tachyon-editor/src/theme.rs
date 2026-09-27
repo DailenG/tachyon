@@ -57,6 +57,8 @@ pub struct Theme {
     pub find_match: Hsla,
     pub find_current: Hsla,
     pub cursor: Hsla,
+    /// Code token colors: keyword, string, comment, number, function, type.
+    pub syntax: [Hsla; 6],
     pub math: Hsla,
     pub text_size: Pixels,
     pub code_size: Pixels,
@@ -112,6 +114,14 @@ impl Theme {
             find_match: rgba(0xf2cc6080).into(),
             find_current: rgba(0xf0a020c0).into(),
             cursor: rgb(0x1f2328).into(),
+            syntax: [
+                rgb(0xcf222e).into(),
+                rgb(0x0a3069).into(),
+                rgb(0x6e7781).into(),
+                rgb(0x0550ae).into(),
+                rgb(0x8250df).into(),
+                rgb(0x953800).into(),
+            ],
             math: rgb(0x8250df).into(),
             ..Self::dark()
         }
@@ -133,6 +143,14 @@ impl Theme {
             find_match: rgba(0xe5c07b40).into(),
             find_current: rgba(0xe5c07baa).into(),
             cursor: rgb(0xe6e8eb).into(),
+            syntax: [
+                rgb(0xc678dd).into(),
+                rgb(0x98c379).into(),
+                rgb(0x7f848e).into(),
+                rgb(0xd19a66).into(),
+                rgb(0x61afef).into(),
+                rgb(0xe5c07b).into(),
+            ],
             math: rgb(0xd2a8ff).into(),
             text_size: px(15.),
             code_size: px(13.5),
@@ -188,6 +206,20 @@ impl Theme {
         }
         if style.contains(Style::HTML) || style.contains(Style::FOOTNOTE_REF) {
             h.color = Some(self.muted);
+        }
+        let tokens = [
+            Style::KEYWORD,
+            Style::STRING,
+            Style::COMMENT,
+            Style::NUMBER,
+            Style::FUNCTION,
+            Style::TYPE,
+        ];
+        if let Some(i) = tokens.iter().position(|&token| style.contains(token)) {
+            h.color = Some(self.syntax[i]);
+            if style.contains(Style::COMMENT) {
+                h.font_style = Some(FontStyle::Italic);
+            }
         }
         h
     }

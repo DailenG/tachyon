@@ -317,3 +317,19 @@ fn urls_in_code_math_and_html_stay_text() {
         assert_eq!(bare, 0, "{src:?}");
     }
 }
+
+#[test]
+fn fenced_code_is_highlighted_by_language() {
+    let b = &blocks("```rust\nfn main() {} // go\n```\n")[0];
+    assert_eq!(styled(&b.ir, Style::KEYWORD), vec!["fn"]);
+    assert_eq!(styled(&b.ir, Style::FUNCTION), vec!["main"]);
+    assert_eq!(styled(&b.ir, Style::COMMENT), vec!["// go"]);
+
+    // Inside a list item too; unknown or missing languages stay plain.
+    let b = &blocks("- step\n\n  ```py\n  return 1\n  ```\n")[0];
+    assert_eq!(styled(&b.ir, Style::KEYWORD), vec!["return"]);
+    assert_eq!(styled(&b.ir, Style::NUMBER), vec!["1"]);
+    for src in ["```\nfn main() {}\n```\n", "```nope\nfn main() {}\n```\n", "    fn main() {}\n"] {
+        assert!(blocks(src)[0].ir.runs.iter().all(|r| !r.style.is_code_token()), "{src:?}");
+    }
+}

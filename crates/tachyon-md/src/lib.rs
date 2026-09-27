@@ -10,6 +10,7 @@
 
 mod autolink;
 mod defs;
+mod highlight;
 mod ir;
 mod presegment;
 
@@ -686,6 +687,8 @@ struct Builder<'a> {
     /// is opened only when more text follows (drops the trailing newline).
     deferred_newline: bool,
     in_verbatim_block: bool,
+    /// The open fenced code block's start in `ir.text` and its language, for highlighting.
+    code: Option<(usize, String)>,
     table_cell: usize,
 }
 
@@ -711,6 +714,7 @@ impl<'a> Builder<'a> {
             line_kind: LineKind::Text,
             deferred_newline: false,
             in_verbatim_block: false,
+            code: None,
             table_cell: 0,
         }
     }
@@ -906,10 +910,17 @@ impl<'a> Builder<'a> {
                 self.begin_leaf();
                 self.open_line(LineKind::Heading(level as u8));
             }
-            Tag::CodeBlock(_) => {
+            Tag::CodeBlock(kind) => {
                 self.begin_leaf();
                 self.open_line(LineKind::Code);
                 self.in_verbatim_block = true;
+                let lang = match kind {
+                    CodeBlockKind::Fenced(info) => {
+                        info.split_whitespace().next().map(str::to_owned)
+                    }
+                    CodeBlockKind::Indented => None,
+                };
+                self.code = lang.map(|lang| (self.ir.text.len(), lang));
             }
             Tag::HtmlBlock => {
                 self.begin_leaf();
@@ -976,6 +987,11 @@ impl<'a> Builder<'a> {
             | TagEnd::TableRow
             | TagEnd::FootnoteDefinition => self.line_open = false,
             TagEnd::CodeBlock | TagEnd::HtmlBlock => {
+                if let Some((start, lang)) = self.code.take() {
+                    for (range, style) in highlight::highlight(&lang, &self.ir.text[start..]) {
+                        self.add_run(start + range.start..start + range.end, style);
+                    }
+                }
                 self.in_verbatim_block = false;
                 self.deferred_newline = false;
                 self.line_open = false;

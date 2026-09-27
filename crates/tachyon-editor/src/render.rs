@@ -252,6 +252,27 @@ impl Editor {
         )
     }
 
+    /// Highlighted code tokens of the block containing `range`, as absolute source ranges, while
+    /// its parse is current (the source of fenced code is its visible text, so the IR's token runs
+    /// map back exactly).
+    fn code_tokens(&self, range: &Range<usize>) -> Vec<(Range<usize>, tachyon_md::Style)> {
+        let Some(index) = self.doc.block_at(range.start) else { return Vec::new() };
+        let block = self.doc.block_range(index);
+        if self.doc.dirty_ranges().iter().any(|d| d.start < block.end && block.start < d.end) {
+            return Vec::new();
+        }
+        let ir = &self.doc.blocks()[index].parsed().ir;
+        ir.runs
+            .iter()
+            .filter(|run| run.style.is_code_token())
+            .map(|run| {
+                let start = block.start + ir.visible_to_source(run.range.start);
+                let end = block.start + ir.visible_to_source(run.range.end);
+                (start..end, run.style)
+            })
+            .collect()
+    }
+
     /// Background marks for `block` (absolute source range): find matches, then the selection.
     fn marks(&self, block: &Range<usize>) -> Vec<(Range<usize>, gpui::Hsla)> {
         let mut marks = Vec::new();
@@ -353,6 +374,13 @@ impl Editor {
         let len = text.len();
 
         let mut highlights = Vec::new();
+        if code {
+            for (token, style) in self.code_tokens(&range) {
+                if let Some(local) = intersect(&token, &range, base, len) {
+                    highlights = overlay(highlights, local, theme.highlight(style));
+                }
+            }
+        }
         for (mark, color) in self.marks(&range) {
             if let Some(local) = intersect(&mark, &range, base, len) {
                 let style = HighlightStyle { background_color: Some(color), ..Default::default() };
