@@ -262,7 +262,8 @@ pub fn parse(src: &str, defs: &DefTable) -> Vec<ParsedBlock> {
     for (at, label) in lookups.into_inner() {
         let owner = pending.partition_point(|p| p.content.start <= at).checked_sub(1);
         if let Some(owner) = owner.and_then(|i| pending.get_mut(i)) {
-            owner.refs.push(label);
+            let target = defs.get(&label).cloned();
+            owner.refs.push((label, target));
         }
     }
 
@@ -398,7 +399,8 @@ struct Pending {
     /// Leaf source ranges, absolute in the window.
     leaves: Vec<Range<usize>>,
     ir: BlockIr,
-    refs: Vec<String>,
+    /// Reference labels looked up, with the target the rendering used.
+    refs: Vec<(String, Option<LinkTarget>)>,
     footnotes: Vec<String>,
 }
 
@@ -570,13 +572,10 @@ fn tile(src: &str, pending: Vec<Pending>, defs: &DefTable) -> Vec<ParsedBlock> {
             }
             p.ir.leaves = leaves;
             let content_end = p.content.end.min(end);
-            p.refs.sort();
-            p.refs.dedup();
-            let refs = p
-                .refs
-                .into_iter()
-                .map(|label| LinkLookup { target: defs.get(&label).cloned(), label })
-                .collect();
+            p.refs.sort_by(|a, b| a.0.cmp(&b.0));
+            p.refs.dedup_by(|a, b| a.0 == b.0);
+            let refs =
+                p.refs.into_iter().map(|(label, target)| LinkLookup { label, target }).collect();
             ParsedBlock {
                 kind: p.kind,
                 len: end - start,
@@ -672,7 +671,8 @@ struct Builder<'a> {
     kind: BlockKind,
     defs: &'a DefTable,
     ir: BlockIr,
-    refs: Vec<String>,
+    /// Reference labels looked up, with the target the rendering used.
+    refs: Vec<(String, Option<LinkTarget>)>,
     footnotes: Vec<String>,
     styles: Vec<Style>,
     links: Vec<(usize, String)>,
@@ -873,8 +873,24 @@ impl<'a> Builder<'a> {
             | LinkType::ShortcutUnknown
                 if !id.is_empty() =>
             {
-                self.refs.push(id.to_owned());
-                self.defs.get(id).map_or_else(|| dest.to_owned(), |t| t.dest.clone())
+                // pulldown-cmark also resolves labels defined inside its input. Such a definition
+                // may be text that only looks like one because the window started mid-fence;
+                // recording the target used makes the block stale against the document's table,
+                // so it is reparsed with the right context.
+                let (used, dest) = match self.defs.get(id) {
+                    Some(target) => (Some(target.clone()), target.dest.clone()),
+                    None if matches!(
+                        link_type,
+                        LinkType::Reference | LinkType::Collapsed | LinkType::Shortcut
+                    ) =>
+                    {
+                        let local = LinkTarget { dest: dest.to_owned(), title: String::new() };
+                        (Some(local), dest.to_owned())
+                    }
+                    None => (None, dest.to_owned()),
+                };
+                self.refs.push((id.to_owned(), used));
+                dest
             }
             _ => dest.to_owned(),
         }

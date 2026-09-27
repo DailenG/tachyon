@@ -290,3 +290,32 @@ fn prepared_pastes_split_where_plain_ones_may() {
         panic!("{e}");
     }
 }
+
+/// A streamed window can start inside a fenced code block (the provisional chunk boundaries do not
+/// know that `<div>` makes the next fence HTML). pulldown-cmark then reads `[x]: /u` in the code
+/// as a definition and resolves `[x]` further down the window with it. Once the window's start is
+/// reparsed correctly the definition is gone, and the block using it must be reparsed too.
+#[test]
+fn a_definition_misread_in_a_window_does_not_stick() {
+    let parts = [
+        "```\n",
+        "[x]: /u\n1. one\n| a | b |\n```\n```\n- item\nmore *em* **strong** `code`\n- item\n- item\nmore *em* **strong** `code`\n```rust\n\n```rust\n",
+        "\ntext\n\n~~~\n# heading\n# heading\n\n",
+        "    indented\n```\n[x]\n# heading\n<div>\n```\n```rust\n- [x] task\n",
+    ];
+    let mut paste = String::new();
+    while paste.len() <= tachyon_doc::UNPARSED_SPLIT_THRESHOLD {
+        for part in &parts {
+            paste.push_str(part);
+            paste.push('\n');
+        }
+    }
+    let mut doc = Document::new("# before\n\n");
+    doc.edit(doc.len()..doc.len(), &paste).unwrap();
+    let focus = 264_830_862_049_125_326 % (doc.len() + 1);
+    while let Some(job) = doc.parse_job_near(focus, 7717) {
+        assert_eq!(doc.apply(job.run()), Applied::Spliced);
+    }
+    let fresh = Document::new(&doc.buffer().text());
+    assert_eq!(parsed(&doc), parsed(&fresh));
+}
