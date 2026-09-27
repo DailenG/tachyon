@@ -192,7 +192,14 @@ impl Editor {
                             &find.query,
                             !find.editing_replacement,
                         )))
-                        .child(div().text_color(theme.text.muted).child(find.status()))
+                        // Reserves the width of "no matches" so the bar (centred) does not shift
+                        // when the status appears on the first query character.
+                        .child(
+                            div()
+                                .min_w(theme.scaled(px(96.)))
+                                .text_color(theme.text.muted)
+                                .child(find.status()),
+                        )
                         .children(find.replacement.as_ref().map(|replacement| {
                             div()
                                 .flex()
