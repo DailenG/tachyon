@@ -8,6 +8,8 @@ All notable user-visible changes are recorded here. The format follows
 
 ### Added
 
+- Open recent (`Ctrl+R`): pick one of the last 30 files you opened or saved; type to filter by
+  name or folder.
 - Files changed by another program reload when you return to the window, unless you have unsaved
   changes; saving over such a change asks first.
 - Copy as HTML (`Ctrl+Shift+C`): the selection, or the whole document, rendered as HTML. On
