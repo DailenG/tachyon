@@ -39,6 +39,7 @@ actions!(
         PageDown,
         ShiftNewline,
         Find,
+        GoToHeading,
         Replace,
         ReplaceAll,
         FindNext,
@@ -100,6 +101,7 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-up", DocumentStart, c),
         KeyBinding::new("ctrl-end", DocumentEnd, c),
         KeyBinding::new("secondary-f", Find, c),
+        KeyBinding::new("secondary-shift-o", GoToHeading, c),
         KeyBinding::new("ctrl-h", Replace, c),
         KeyBinding::new("cmd-alt-f", Replace, c),
         KeyBinding::new("secondary-enter", ReplaceAll, c),
@@ -193,6 +195,8 @@ pub struct Editor {
     pending_paste: Option<PendingPaste>,
     /// The find bar, when open.
     pub(crate) find: Option<crate::find::FindState>,
+    /// The heading list, when open.
+    pub(crate) outline: Option<crate::outline::Outline>,
     last_edit: Option<Instant>,
     /// The cursor moved without typing since the last edit.
     moved_since_edit: bool,
@@ -253,6 +257,7 @@ impl Editor {
             parse_task: None,
             pending_paste: None,
             find: None,
+            outline: None,
             last_edit: None,
             moved_since_edit: false,
             selecting: false,
@@ -801,7 +806,7 @@ impl Editor {
     // ---- actions --------------------------------------------------------
 
     pub(crate) fn backspace(&mut self, _: &Backspace, _: &mut Window, cx: &mut Context<Self>) {
-        if self.finding() {
+        if self.bar_open() {
             return self.find_backspace(cx);
         }
         self.delete_towards(cx, movement::prev_grapheme);
@@ -832,10 +837,14 @@ impl Editor {
         self.move_by(false, cx, movement::next_grapheme);
     }
     pub(crate) fn up(&mut self, _: &Up, _: &mut Window, cx: &mut Context<Self>) {
-        self.vertical(-1, false, cx);
+        if !self.outline_step(-1, cx) {
+            self.vertical(-1, false, cx);
+        }
     }
     pub(crate) fn down(&mut self, _: &Down, _: &mut Window, cx: &mut Context<Self>) {
-        self.vertical(1, false, cx);
+        if !self.outline_step(1, cx) {
+            self.vertical(1, false, cx);
+        }
     }
     pub(crate) fn word_left(&mut self, _: &WordLeft, _: &mut Window, cx: &mut Context<Self>) {
         self.move_by(false, cx, movement::prev_word);
@@ -944,7 +953,7 @@ impl Editor {
         self.move_to(self.doc.len(), true, cx);
     }
     pub(crate) fn newline(&mut self, _: &Newline, window: &mut Window, cx: &mut Context<Self>) {
-        if self.finding() {
+        if self.bar_open() {
             return self.find_enter(window, cx);
         }
         if self.list_newline(cx) {
@@ -959,7 +968,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.finding() {
+        if self.bar_open() {
             return self.find_previous(&FindPrevious, window, cx);
         }
         self.replace(self.selection.clone(), "\n", cx);
@@ -989,7 +998,7 @@ impl Editor {
     }
     pub(crate) fn paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
         self.flush_pending_paste(cx);
-        if !self.finding()
+        if !self.bar_open()
             && let Some(read) = cx.try_global::<ClipboardReader>().map(|reader| reader.0)
         {
             return self.paste_read_off_thread(read, cx);
@@ -998,7 +1007,7 @@ impl Editor {
         let text = cx.read_from_clipboard().and_then(|item| item.text());
         self.charge_work("clipboard", started);
         let Some(text) = text else { return };
-        if self.finding() {
+        if self.bar_open() {
             return self.find_input(&text, false, cx);
         }
         self.moved_since_edit = true;
@@ -1427,7 +1436,7 @@ impl EntityInputHandler for Editor {
         cx: &mut Context<Self>,
     ) {
         self.flush_pending_paste(cx);
-        if self.finding() {
+        if self.bar_open() {
             return self.find_input(text, false, cx);
         }
         let range = range_utf16
@@ -1446,7 +1455,7 @@ impl EntityInputHandler for Editor {
         cx: &mut Context<Self>,
     ) {
         self.flush_pending_paste(cx);
-        if self.finding() {
+        if self.bar_open() {
             return self.find_input(text, true, cx);
         }
         let range = range_utf16

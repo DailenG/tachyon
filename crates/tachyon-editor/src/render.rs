@@ -60,6 +60,7 @@ impl Render for Editor {
             })
             .on_action(cx.listener(Self::shift_newline))
             .on_action(cx.listener(Self::find))
+            .on_action(cx.listener(Self::go_to_heading))
             .on_action(cx.listener(Self::replace_bar))
             .on_action(cx.listener(Self::replace_all))
             .on_action(cx.listener(Self::find_next))
@@ -142,6 +143,7 @@ impl Render for Editor {
             )
             .children(self.frame_stats_overlay())
             .children(self.find_bar())
+            .children(self.outline_bar(cx))
     }
 }
 
@@ -187,6 +189,64 @@ impl Editor {
                                         .child(field(replacement, find.editing_replacement)),
                                 )
                         })),
+                )
+                .into_any_element(),
+        )
+    }
+
+    /// The heading list: the filter with a caret, then the matching headings, the chosen one
+    /// highlighted. Clicking a row jumps to it.
+    fn outline_bar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let outline = self.outline.as_ref()?;
+        let theme = &self.theme;
+        let rows = outline.window().map(|row| {
+            let heading = &outline.headings[outline.matches[row]];
+            div()
+                .id(row)
+                .px_2()
+                .rounded_sm()
+                .pl(self.theme.scaled(px(8. + 14. * f32::from(heading.level.saturating_sub(1)))))
+                .when(row == outline.selected, |d| d.bg(theme.selection))
+                .child(heading.title.clone())
+                .on_click(cx.listener(move |editor, _, _, cx| editor.outline_jump(Some(row), cx)))
+        });
+        let note = if outline.headings.is_empty() {
+            Some("no headings")
+        } else if outline.matches.is_empty() {
+            Some("no matches")
+        } else {
+            None
+        };
+        Some(
+            div()
+                .absolute()
+                .top_2()
+                .left_0()
+                .right_0()
+                .flex()
+                .justify_center()
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .px_3()
+                        .py_2()
+                        .w(self.theme.scaled(px(420.)))
+                        .rounded_md()
+                        .bg(theme.raw_background)
+                        .border_1()
+                        .border_color(theme.rule)
+                        .text_color(theme.foreground)
+                        .child(
+                            div()
+                                .flex()
+                                .gap_3()
+                                .child(div().text_color(theme.muted).child("Go to heading"))
+                                .child(field(&outline.query, true)),
+                        )
+                        .children(rows)
+                        .children(note.map(|note| div().text_color(theme.muted).child(note))),
                 )
                 .into_any_element(),
         )

@@ -175,7 +175,9 @@ Typing Markdown by hand, and reading the code in LLM output, without leaving the
       renumbering ordered items (a nested list starts at 1, so it can interrupt its parent's
       text); not inside code or HTML blocks
 - [ ] Syntax highlighting in fenced code blocks, computed off the UI thread
-- [ ] Jump to a heading (`Ctrl+Shift+O`): the document's headings in a filterable list
+- [x] Jump to a heading (`Ctrl+Shift+O`): the document's headings in a filterable list
+      (case-insensitive substring, indented by level, opening on the heading above the caret);
+      Up / Down choose, Enter or a click jumps, Escape closes
 - [ ] Scratch buffers survive a restart: unsaved windows are restored with their text
 - [ ] Copy as rich text (`Ctrl+Shift+C`): the selection as HTML on the clipboard
 

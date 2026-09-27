@@ -839,3 +839,32 @@ fn tab_leaves_lines_the_selection_only_touches_or_that_are_code(cx: &mut TestApp
     cx.run_until_parked();
     assert_eq!(text(&editor, cx), "- a\n  - b\n\n```\n- code\n```\n", "the fenced line stays");
 }
+
+#[gpui::test]
+fn go_to_heading_filters_chooses_and_jumps(cx: &mut TestAppContext) {
+    let doc = "# Intro\n\ntext\n\n## Setup\n\nmore\n\n## Usage\n\n### Setup again\n\nend\n";
+    let (editor, cx) = open(doc, cx);
+    let titles = |cx: &mut VisualTestContext| {
+        editor.read_with(cx, |e, _| {
+            let outline = e.outline.as_ref().expect("the list is open");
+            outline.matches.iter().map(|&i| outline.headings[i].title.clone()).collect::<Vec<_>>()
+        })
+    };
+
+    cx.simulate_keystrokes("secondary-shift-o");
+    assert_eq!(titles(cx), ["Intro", "Setup", "Usage", "Setup again"]);
+    cx.simulate_input("setup");
+    assert_eq!(titles(cx), ["Setup", "Setup again"], "case-insensitive filter");
+    assert_eq!(text(&editor, cx), doc, "typing goes to the filter");
+
+    cx.simulate_keystrokes("down enter");
+    cx.run_until_parked();
+    let target = doc.find("Setup again").expect("fixture");
+    assert_eq!(selection(&editor, cx), target..target);
+    assert!(editor.read_with(cx, |e, _| e.outline.is_none()), "jumping closes the list");
+
+    // Escape closes without moving; Up wraps to the last heading.
+    cx.simulate_keystrokes("secondary-shift-o up escape");
+    assert_eq!(selection(&editor, cx), target..target);
+    assert!(editor.read_with(cx, |e, _| e.outline.is_none()));
+}
