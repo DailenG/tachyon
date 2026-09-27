@@ -89,6 +89,12 @@ All notable user-visible changes are recorded here. The format follows
   onto a window open too. `Page Up` / `Page Down` move by a screen (`Shift` selects).
 - File paths given on the command line are made absolute before loading.
 
+### Changed
+
+- New light and dark palettes from the design direction: navy-tinted surfaces and deep-navy text,
+  one brand-blue accent, and syntax colors that all meet 4.5:1 contrast (muted text and code
+  comments were below it on the editing card and code backgrounds).
+
 ### Fixed
 
 - A large paste could keep a stray link: while its parse streamed in, a window that started
