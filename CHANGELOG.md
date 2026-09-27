@@ -110,6 +110,9 @@ All notable user-visible changes are recorded here. The format follows
 
 ### Fixed
 
+- Typing right after pasting a large text no longer stalls a frame: the typed text is queued and
+  inserted right after the paste lands, instead of the whole paste being inserted on the
+  keystroke's frame (25-72 ms for 5 MB).
 - The last step of a large paste's background parse no longer costs a frame: the document-wide
   link and footnote table is rebuilt on the parse thread (it took up to 17 ms on the UI thread for
   a 5 MB paste on Windows).

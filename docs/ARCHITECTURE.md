@@ -117,12 +117,15 @@ flowchart LR
   it to the end, which is why large jobs go to the background.
 - **Paste.** On Windows the clipboard is read on the background executor too
   (`tachyon_platform::clipboard_text_reader`, installed as the editor's `ClipboardReader`; GPUI's
-  read on the UI thread took 11-12 ms for 5 MB); input that arrives before the read finishes reads
-  it on the UI thread first, so the paste still lands before it. Elsewhere GPUI reads it.
-  A paste over 64 KiB is prepared on the background executor (`PreparedInsert`: line
-  endings normalized, rope built, fence-aware pre-segmenting) and spliced into the buffer on the
-  UI thread, O(log n); keystrokes and clicks that arrive first apply the paste synchronously so
-  edits keep their order. The insert appears immediately as IR-free placeholder blocks of at least
+  read on the UI thread took 11-12 ms for 5 MB). The clipboard is read once per paste, by
+  whichever of the background task and the UI thread claims it first; two threads of the process
+  inside the clipboard at once crashed (the UI thread's `CloseClipboard` freed text the other was
+  still copying). Elsewhere GPUI reads it. A paste over 64 KiB is prepared on the background
+  executor (`PreparedInsert`: line endings normalized, rope built, fence-aware pre-segmenting) and
+  spliced into the buffer on the UI thread, O(log n). Plain text typed before it lands is queued
+  and inserted right after it; other keystrokes and clicks that arrive first apply the paste
+  synchronously (waiting for the read if the background task claimed it) so edits keep their
+  order. The insert appears immediately as IR-free placeholder blocks of at least
   8 KiB (1 KiB within 32 KiB of either end, where the caret and so the first frame are), shown as
   raw source (only visible ones are shaped). A background job then parses the window; the job wraps
   its blocks in `Arc`s so applying the result on the UI thread is a merge and a splice. The faces

@@ -195,8 +195,9 @@ pub struct Editor {
     /// document offset of its first byte.
     pub(crate) active_layout: Option<(TextLayout, usize)>,
     parse_task: Option<Task<()>>,
-    /// A large paste being prepared off the UI thread; applied when ready,
-    /// or right away (from `text`) before any other input.
+    /// A large paste being prepared off the UI thread; applied when ready, or right away
+    /// before input that cannot simply queue after it (see `flush_pending_paste`). Plain typed
+    /// text queues on it instead, to land right after it (see `replace_text_in_range`).
     pending_paste: Option<PendingPaste>,
     /// The find bar, when open.
     pub(crate) find: Option<crate::find::FindState>,
@@ -512,6 +513,7 @@ impl Editor {
     // ---- cursor ---------------------------------------------------------
 
     pub(crate) fn move_to(&mut self, offset: usize, select: bool, cx: &mut Context<Self>) {
+        self.flush_pending_paste(cx);
         let offset = offset.min(self.doc.len());
         if select {
             let tail = self.tail();
@@ -534,6 +536,7 @@ impl Editor {
         cx: &mut Context<Self>,
         f: fn(&ropey::Rope, usize) -> usize,
     ) {
+        self.flush_pending_paste(cx);
         self.goal_x = None;
         let head = self.head();
         let target = if !select && !self.selection.is_empty() {
@@ -547,6 +550,7 @@ impl Editor {
     }
 
     fn vertical(&mut self, lines: isize, select: bool, cx: &mut Context<Self>) {
+        self.flush_pending_paste(cx);
         let head = self.head();
         if let Some((layout, base)) = self.active_layout.clone()
             && head >= base
@@ -570,6 +574,7 @@ impl Editor {
 
     /// Scrolls by one viewport height and moves the caret by as many source lines as fit in it.
     fn page(&mut self, direction: isize, select: bool, cx: &mut Context<Self>) {
+        self.flush_pending_paste(cx);
         let height = self.list.viewport_bounds().size.height;
         let line_height = self
             .active_layout
@@ -831,6 +836,7 @@ impl Editor {
     }
 
     fn delete_towards(&mut self, cx: &mut Context<Self>, f: fn(&ropey::Rope, usize) -> usize) {
+        self.flush_pending_paste(cx);
         let range = if self.selection.is_empty() {
             let head = self.head();
             let other = f(self.doc.buffer().rope(), head);
@@ -945,6 +951,9 @@ impl Editor {
         self.move_to(0, false, cx);
     }
     pub(crate) fn document_end(&mut self, _: &DocumentEnd, _: &mut Window, cx: &mut Context<Self>) {
+        // Flushed here (not just inside `move_to`): `self.doc.len()` below must see the pending
+        // paste's text, not the document from before it landed.
+        self.flush_pending_paste(cx);
         self.goal_x = None;
         self.move_to(self.doc.len(), false, cx);
     }
@@ -1026,10 +1035,15 @@ impl Editor {
         self.move_by(true, cx, movement::end);
     }
     pub(crate) fn select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
+        // Flushed here for the same reason as `document_end`: `self.doc.len()` below.
+        self.flush_pending_paste(cx);
         self.move_to(0, false, cx);
         self.move_to(self.doc.len(), true, cx);
     }
     pub(crate) fn newline(&mut self, _: &Newline, window: &mut Window, cx: &mut Context<Self>) {
+        // Enter can continue or end a list, which is not simple to queue like plain typed text
+        // (see `replace_text_in_range`): flush a pending paste first, like the edits below.
+        self.flush_pending_paste(cx);
         if self.bar_open() {
             return self.find_enter(window, cx);
         }
@@ -1045,12 +1059,17 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.flush_pending_paste(cx);
         if self.bar_open() {
             return self.find_previous(&FindPrevious, window, cx);
         }
         self.replace(self.selection.clone(), "\n", cx);
     }
     pub(crate) fn tab(&mut self, _: &Tab, _: &mut Window, cx: &mut Context<Self>) {
+        // Tab has no key_char an editor keystroke could ever queue as text (`lib::init`'s
+        // intercept already flushes for it), but it also indents list items and switches
+        // find-bar fields below, neither of which is simple to queue: flush explicitly too.
+        self.flush_pending_paste(cx);
         if self.find_switch_field(cx) || self.list_indent(false, cx) {
             return;
         }
@@ -1058,11 +1077,13 @@ impl Editor {
     }
     /// Shift+Tab: outdents list items (and switches find-bar fields).
     pub(crate) fn outdent(&mut self, _: &Outdent, _: &mut Window, cx: &mut Context<Self>) {
+        self.flush_pending_paste(cx);
         if !self.find_switch_field(cx) {
             self.list_indent(true, cx);
         }
     }
     pub(crate) fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
+        self.flush_pending_paste(cx);
         if !self.selection.is_empty() {
             cx.write_to_clipboard(ClipboardItem::new_string(self.selected_text()));
         }
@@ -1085,6 +1106,7 @@ impl Editor {
         }
     }
     pub(crate) fn cut(&mut self, _: &Cut, _: &mut Window, cx: &mut Context<Self>) {
+        self.flush_pending_paste(cx);
         if !self.selection.is_empty() {
             cx.write_to_clipboard(ClipboardItem::new_string(self.selected_text()));
             self.replace(self.selection.clone(), "", cx);
@@ -1112,7 +1134,8 @@ impl Editor {
         let text: Arc<str> = text.into();
         let shared = Arc::clone(&text);
         let task = cx.spawn(async move |this, cx| prepare_paste(this, shared, cx).await);
-        self.pending_paste = Some(PendingPaste { text: PasteText::Read(text), _task: task });
+        self.pending_paste =
+            Some(PendingPaste { text: PasteText::Read(text), queued: String::new(), _task: task });
     }
 
     /// Pastes with the clipboard read on a background thread, then continues like `paste`.
@@ -1142,8 +1165,11 @@ impl Editor {
                 prepare_paste(this, text, cx).await;
             }
         });
-        self.pending_paste =
-            Some(PendingPaste { text: PasteText::Reading { receiver, read, claim }, _task: task });
+        self.pending_paste = Some(PendingPaste {
+            text: PasteText::Reading { receiver, read, claim },
+            queued: String::new(),
+            _task: task,
+        });
     }
 
     /// The clipboard text read for the pending paste. Pastes it right away if it is small (and
@@ -1152,12 +1178,14 @@ impl Editor {
         let paste = self.pending_paste.as_mut()?;
         let PasteText::Reading { receiver, .. } = &paste.text else { return None };
         let Some(text) = receiver.try_recv().ok().flatten() else {
-            self.pending_paste = None;
+            let queued = self.pending_paste.take().map_or_else(String::new, |paste| paste.queued);
+            self.apply_queued(queued, cx);
             return None;
         };
         if text.len() <= tachyon_doc::UNPARSED_SPLIT_THRESHOLD {
-            self.pending_paste = None;
+            let queued = self.pending_paste.take().map_or_else(String::new, |paste| paste.queued);
             self.replace(self.selection.clone(), &text, cx);
+            self.apply_queued(queued, cx);
             return None;
         }
         let text: Arc<str> = text.into();
@@ -1165,8 +1193,22 @@ impl Editor {
         Some(text)
     }
 
-    /// Applies a paste still being read or prepared, on this thread. Called before any other
-    /// input so edits keep their order (a key typed after Ctrl+V must land after the paste).
+    /// Applies text queued on a pending paste (`replace_text_in_range`) at the caret the paste
+    /// left, as its own edit and so its own undo step; a no-op when nothing was queued.
+    fn apply_queued(&mut self, queued: String, cx: &mut Context<Self>) {
+        if !queued.is_empty() {
+            self.replace(self.selection.clone(), &queued, cx);
+        }
+    }
+
+    /// Whether a paste is still being read or prepared (see `flush_pending_paste`).
+    pub(crate) fn paste_pending(&self) -> bool {
+        self.pending_paste.is_some()
+    }
+
+    /// Applies a paste still being read or prepared, on this thread, followed by any text
+    /// queued on it. Called before any other input that cannot simply queue after the paste
+    /// (see `replace_text_in_range`), so edits keep their order.
     ///
     /// Claims the read itself (`CLAIM_IDLE` -> `CLAIM_UI`) if `paste_read_off_thread`'s
     /// background task has not started yet, and then reads the clipboard exactly as `paste`
@@ -1181,8 +1223,8 @@ impl Editor {
     /// read the clipboard a second time, concurrently with the background task's own read.
     pub(crate) fn flush_pending_paste(&mut self, cx: &mut Context<Self>) {
         let Some(paste) = self.pending_paste.take() else { return };
-        let text = match paste.text {
-            PasteText::Read(text) => text,
+        let text: Option<Arc<str>> = match paste.text {
+            PasteText::Read(text) => Some(text),
             PasteText::Reading { receiver, read, claim } => {
                 let started = Instant::now();
                 let won = claim
@@ -1190,13 +1232,16 @@ impl Editor {
                     .is_ok();
                 let text = if won { read() } else { receiver.recv().ok().flatten() };
                 self.charge_work("clipboard", started);
-                let Some(text) = text else { return };
-                text.into()
+                text.map(Into::into)
             }
         };
-        self.replace(self.selection.clone(), &text, cx);
+        if let Some(text) = text {
+            self.replace(self.selection.clone(), &text, cx);
+        }
+        self.apply_queued(paste.queued, cx);
     }
     pub(crate) fn undo(&mut self, _: &Undo, _: &mut Window, cx: &mut Context<Self>) {
+        self.flush_pending_paste(cx);
         if let Some(edits) = self.doc.undo() {
             self.caret_after(&edits);
             self.moved_since_edit = true;
@@ -1204,6 +1249,7 @@ impl Editor {
         }
     }
     pub(crate) fn redo(&mut self, _: &Redo, _: &mut Window, cx: &mut Context<Self>) {
+        self.flush_pending_paste(cx);
         if let Some(edits) = self.doc.redo() {
             self.caret_after(&edits);
             self.moved_since_edit = true;
@@ -1461,6 +1507,10 @@ impl gpui::Global for OpenPaths {}
 /// A large paste whose text is being prepared off the UI thread.
 struct PendingPaste {
     text: PasteText,
+    /// Plain text typed while this paste was pending (`replace_text_in_range`), queued to apply
+    /// right after it lands, as its own undo step; painted only once it does (see
+    /// `Editor::apply_queued`).
+    queued: String,
     /// Applies the prepared text when ready; dropped (cancelled) when the
     /// paste is applied from `text` instead.
     _task: Task<()>,
@@ -1495,10 +1545,11 @@ enum PasteText {
 async fn prepare_paste(this: gpui::WeakEntity<Editor>, text: Arc<str>, cx: &mut gpui::AsyncApp) {
     let insert = cx.background_executor().spawn(async move { PreparedInsert::new(&text) }).await;
     let _ = this.update(cx, |editor, cx| {
-        if editor.pending_paste.take().is_some() {
+        if let Some(pending) = editor.pending_paste.take() {
             let now = Instant::now();
             editor.replace_at(now, editor.selection.clone(), Insert::Prepared(insert), cx);
             editor.charge_work("paste", now);
+            editor.apply_queued(pending.queued, cx);
         }
     });
 }
@@ -1648,10 +1699,24 @@ impl EntityInputHandler for Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.flush_pending_paste(cx);
         if self.bar_open() {
+            self.flush_pending_paste(cx);
             return self.find_input(text, false, cx);
         }
+        // A plain committed character (or string) at the current selection: not an IME
+        // composition (`marked` is `None`) or an explicit-range replace, so it is the common
+        // case of typing right after Ctrl+V. Queue it on the pending paste instead of waiting
+        // for its clipboard read and applying the whole paste synchronously on this keystroke's
+        // frame; it is painted once the paste lands, right after it, as its own undo step (see
+        // `apply_queued`).
+        if range_utf16.is_none()
+            && self.marked.is_none()
+            && let Some(pending) = self.pending_paste.as_mut()
+        {
+            pending.queued.push_str(text);
+            return;
+        }
+        self.flush_pending_paste(cx);
         let range = range_utf16
             .map(|r| self.range_from_utf16(&r))
             .or_else(|| self.marked.clone())

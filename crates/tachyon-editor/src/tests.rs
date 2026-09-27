@@ -1,4 +1,4 @@
-use gpui::{Entity, EntityInputHandler, TestAppContext, VisualTestContext};
+use gpui::{Entity, EntityInputHandler, TestAppContext, VisualContext, VisualTestContext};
 use tachyon_md::BlockKind;
 
 use crate::Editor;
@@ -170,7 +170,10 @@ fn keys_typed_right_after_a_large_paste_land_after_it(cx: &mut TestAppContext) {
     // The paste is prepared off the UI thread; type before it is applied.
     editor.update_in(cx, |e, window, cx| e.paste(&crate::editor::Paste, window, cx));
     assert_eq!(text(&editor, cx), "start\n", "still being prepared");
-    cx.simulate_input("x");
+    // Not a simulated keystroke: that runs until parked, hiding whether the key itself did any
+    // work. The key must be queued, not flush the paste or apply itself synchronously.
+    editor.update_in(cx, |e, window, cx| e.replace_text_in_range(None, "x", window, cx));
+    assert_eq!(text(&editor, cx), "start\n", "the key is queued, not applied yet");
     cx.run_until_parked();
     assert_eq!(text(&editor, cx), format!("start\n{paste}x"));
 
@@ -179,6 +182,42 @@ fn keys_typed_right_after_a_large_paste_land_after_it(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("secondary-z");
     cx.run_until_parked();
     assert_eq!(text(&editor, cx), "start\n");
+}
+
+#[gpui::test]
+fn a_non_queueable_action_flushes_the_paste_and_queued_text_first(cx: &mut TestAppContext) {
+    let (editor, cx) = open("start\n", cx);
+    let paste = "Pasted paragraph.\n\n".repeat(tachyon_doc::UNPARSED_SPLIT_THRESHOLD / 10);
+    cx.write_to_clipboard(gpui::ClipboardItem::new_string(paste.clone()));
+    cx.simulate_keystrokes("ctrl-end");
+    editor.update_in(cx, |e, window, cx| e.paste(&crate::editor::Paste, window, cx));
+    editor.update_in(cx, |e, window, cx| e.replace_text_in_range(None, "x", window, cx));
+    assert_eq!(text(&editor, cx), "start\n", "queued, not yet applied");
+    // Backspace does not queue: it flushes the paste, then the queued "x" right after it, and
+    // only then deletes - removing the "x" it just landed, keeping paste, queue, action in order.
+    editor.update_in(cx, |e, window, cx| e.backspace(&crate::editor::Backspace, window, cx));
+    assert_eq!(text(&editor, cx), format!("start\n{paste}"));
+    cx.run_until_parked();
+    assert_eq!(text(&editor, cx), format!("start\n{paste}"), "nothing was left pending");
+}
+
+#[gpui::test]
+fn a_keystroke_through_the_real_input_path_is_queued_not_flushed(cx: &mut TestAppContext) {
+    let (editor, cx) = open("start\n", cx);
+    let paste = "Pasted paragraph.\n\n".repeat(tachyon_doc::UNPARSED_SPLIT_THRESHOLD / 10);
+    cx.write_to_clipboard(gpui::ClipboardItem::new_string(paste.clone()));
+    cx.simulate_keystrokes("ctrl-end");
+    editor.update_in(cx, |e, window, cx| e.paste(&crate::editor::Paste, window, cx));
+    assert_eq!(text(&editor, cx), "start\n", "still being prepared");
+    // The real path this time: `lib::init`'s keystroke interceptor, then the keymap (no binding
+    // claims a bare "z"), then the input handler - not a direct `replace_text_in_range` call,
+    // and not `simulate_input`/`simulate_keystrokes`, which both run until parked and so would
+    // hide whether the keystroke itself did any synchronous work.
+    let window = cx.window_handle();
+    cx.dispatch_keystroke(window, gpui::Keystroke::parse("z").unwrap());
+    assert_eq!(text(&editor, cx), "start\n", "the keystroke is queued, not flushed on its frame");
+    cx.run_until_parked();
+    assert_eq!(text(&editor, cx), format!("start\n{paste}z"));
 }
 
 #[gpui::test]
@@ -815,6 +854,18 @@ fn an_empty_clipboard_read_off_thread_pastes_nothing(cx: &mut TestAppContext) {
     cx.simulate_input("x");
     cx.run_until_parked();
     assert_eq!(text(&editor, cx), "start\nx");
+}
+
+#[gpui::test]
+fn queued_text_lands_even_when_the_background_read_is_empty(cx: &mut TestAppContext) {
+    let (editor, cx) = open_with_reader("start\n", None, cx);
+    cx.simulate_keystrokes("ctrl-end");
+    editor.update_in(cx, |e, window, cx| e.paste(&crate::editor::Paste, window, cx));
+    // Queued while the background read (of an empty clipboard) is still pending.
+    editor.update_in(cx, |e, window, cx| e.replace_text_in_range(None, "x", window, cx));
+    assert_eq!(text(&editor, cx), "start\n", "queued, not yet applied");
+    cx.run_until_parked();
+    assert_eq!(text(&editor, cx), "start\nx", "the queued key lands although the paste was empty");
 }
 
 #[gpui::test]
