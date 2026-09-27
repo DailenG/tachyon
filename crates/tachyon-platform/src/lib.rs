@@ -114,6 +114,23 @@ pub fn state_dir() -> Option<std::path::PathBuf> {
     }
 }
 
+/// Per-user directory for Tachyon's settings: `%APPDATA%\Tachyon` on Windows,
+/// `~/Library/Application Support/Tachyon` on macOS, `$XDG_CONFIG_HOME/tachyon` (default
+/// `~/.config/tachyon`) elsewhere. `None` if the environment names no home.
+pub fn config_dir() -> Option<std::path::PathBuf> {
+    use std::path::PathBuf;
+    let env = |name| std::env::var_os(name).filter(|v| !v.is_empty()).map(PathBuf::from);
+    if cfg!(target_os = "windows") {
+        env("APPDATA").map(|dir| dir.join("Tachyon"))
+    } else if cfg!(target_os = "macos") {
+        env("HOME").map(|home| home.join("Library/Application Support/Tachyon"))
+    } else {
+        env("XDG_CONFIG_HOME")
+            .or_else(|| env("HOME").map(|home| home.join(".config")))
+            .map(|dir| dir.join("tachyon"))
+    }
+}
+
 /// Whether Tachyon starts in the background at login.
 pub fn autostart_enabled() -> io::Result<bool> {
     imp::autostart_enabled()

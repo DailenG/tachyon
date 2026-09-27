@@ -1128,3 +1128,37 @@ fn open_recent_lists_opened_files_newest_first_and_opens_the_pick(cx: &mut TestA
     assert_eq!(OPENED.with_borrow(Clone::clone), [b]);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[gpui::test]
+fn settings_choose_theme_and_zoom_and_saving_them_applies_at_once(cx: &mut TestAppContext) {
+    let dir = backup_dir("settings");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let file = dir.join("settings.toml");
+    std::fs::write(&file, crate::DEFAULT_SETTINGS).expect("write");
+    cx.update(|cx| {
+        cx.set_global(crate::Settings {
+            theme: crate::ThemeChoice::Dark,
+            zoom: 1.25,
+            hot_exit: true,
+        });
+        cx.set_global(crate::SettingsFile(file.clone()));
+    });
+    // The test window reports a light system appearance.
+    let (editor, cx) = open_file(&file, cx);
+    let theme =
+        |cx: &mut VisualTestContext| editor.read_with(cx, |e, _| (e.theme.dark, e.theme.zoom));
+    assert_eq!(theme(cx), (true, 1.25), "the settings win over the system appearance");
+
+    cx.simulate_keystrokes("secondary-a");
+    cx.simulate_input("theme = \"light\"\n");
+    cx.simulate_keystrokes("secondary-s");
+    cx.run_until_parked();
+    assert_eq!(
+        theme(cx),
+        (false, 1.25),
+        "saved settings apply to open windows; zoom is for new ones"
+    );
+    let settings = cx.update(|_, cx| cx.global::<crate::Settings>().clone());
+    assert_eq!(settings.theme, crate::ThemeChoice::Light);
+    let _ = std::fs::remove_dir_all(&dir);
+}

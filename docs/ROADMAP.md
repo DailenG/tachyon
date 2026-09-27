@@ -209,9 +209,11 @@ frame.
       off the UI thread
 - [x] Open recent (`Ctrl+R`): recently opened and saved files (up to 30, newest first, kept in
       the state directory) in a filterable list; the pickers share one implementation
-- [ ] A settings file: theme (system, dark, light), default zoom, hot exit on or off; read on a
-      thread at start-up like the Linux appearance query (a short bounded wait), so the first
-      frame already uses it
+- [x] A settings file (`settings.toml`, `Ctrl+,` opens it, created with comments): theme
+      (system, dark, light), zoom of new windows, hot exit on or off; read on a thread at
+      start-up (waited for at most 15 ms), so the first frame already uses it; saving it from
+      Tachyon applies the theme to open windows. Warm launch on Linux p95 30.7-31.5 ms (was
+      29-32)
 - [ ] Images: local and remote images shown in rendered blocks, loaded off the UI thread
 
 **Exit:** each item covered by a `gpui::test` or a live check; startup budgets unchanged.

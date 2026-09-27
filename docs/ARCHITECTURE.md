@@ -161,11 +161,13 @@ works).
 The budget is launch to first frame, p95 < 50 ms ([ADR 0004](adr/0004-startup-budget-and-gate.md)).
 
 1. Parse arguments (`lexopt`), claim the instance or forward and exit.
-2. Start the GPUI application and open the window immediately. The theme is compiled in; there is
-   no config I/O before the first frame.
+2. Start the GPUI application and open the window immediately. The themes are compiled in; the
+   settings file (`settings.toml` in `tachyon_platform::config_dir()`, a few `key = value` lines)
+   is read on a thread started before GPUI, and the first window waits at most 15 ms for it.
 3. Files are read on the background executor and appear when ready; the clipboard is read
    synchronously (small).
-4. Everything else (config, recent files, grammars, spellcheck) runs after the first frame.
+4. Everything else (recent files, backups, spellcheck later) is read when first needed, off the UI
+   thread where it can be.
 
 `--startup-report` prints milestones measured from `main` (`platform_ready`, `window_open`,
 `first_frame`); `cargo xtask bench-startup` also measures from `spawn`, which includes process

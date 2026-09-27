@@ -14,6 +14,7 @@ mod movement;
 mod picker;
 mod prompt;
 mod render;
+mod settings;
 mod theme;
 
 pub use crate::backup::{Backups, HotExit, Restored};
@@ -23,6 +24,7 @@ pub use crate::editor::{
 };
 pub use crate::picker::RecentFiles;
 pub use crate::prompt::keyboard_prompt;
+pub use crate::settings::{DEFAULT_SETTINGS, Settings, SettingsFile, ThemeChoice};
 pub use crate::theme::{AppearanceHint, Theme};
 
 /// Registers the editor's key bindings, and applies a large paste still

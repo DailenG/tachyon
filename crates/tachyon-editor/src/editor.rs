@@ -262,6 +262,7 @@ impl Editor {
         let list = ListState::new(doc.blocks().len(), ListAlignment::Top, px(1000.));
         let reported = is_dark(window.appearance());
         let hint = cx.try_global::<AppearanceHint>().map(|hint| hint.dark);
+        let settings = cx.try_global::<crate::Settings>().cloned().unwrap_or_default();
         let mut editor = Editor {
             doc,
             selection: 0..0,
@@ -270,8 +271,11 @@ impl Editor {
             goal_x: None,
             list,
             focus,
-            theme: Theme::for_dark(hint.unwrap_or(reported)).with_text_font(window),
-            appearance_unconfirmed: hint.is_some_and(|dark| dark != reported),
+            theme: Theme::for_dark(settings.dark(hint.unwrap_or(reported)))
+                .with_text_font(window)
+                .zoomed(settings.zoom),
+            appearance_unconfirmed: settings.theme == crate::ThemeChoice::System
+                && hint.is_some_and(|dark| dark != reported),
             active: None,
             active_layout: None,
             parse_task: None,
@@ -447,6 +451,10 @@ impl Editor {
     /// off the startup path, and loads the fonts the editor draws with.
     /// Switches between the dark and light theme when the system appearance changes.
     pub(crate) fn follow_appearance(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let theme = cx.try_global::<crate::Settings>().map(|s| s.theme);
+        if theme.is_some_and(|theme| theme != crate::ThemeChoice::System) {
+            return;
+        }
         let reported = is_dark(window.appearance());
         if self.appearance_unconfirmed {
             if reported != self.theme.dark {
@@ -463,6 +471,17 @@ impl Editor {
         }
         self.theme = self.theme.restyled(reported);
         cx.notify();
+    }
+
+    /// Applies changed settings: the theme now (zoom applies to new windows).
+    pub(crate) fn apply_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let settings = cx.try_global::<crate::Settings>().cloned().unwrap_or_default();
+        let dark = settings.dark(is_dark(window.appearance()));
+        self.appearance_unconfirmed = false;
+        if dark != self.theme.dark {
+            self.theme = self.theme.restyled(dark);
+            cx.notify();
+        }
     }
 
     fn resolve_code_font(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1262,6 +1281,7 @@ impl Editor {
             let _ = this.update_in(cx, |editor, window, cx| match written {
                 Ok(None) => editor.confirm_overwrite(path, window, cx, after),
                 Ok(Some(stamp)) => {
+                    editor.settings_saved(&path, cx);
                     editor.disk_stamp = stamp;
                     editor.disk_changed = false;
                     editor.file = Some(path);
