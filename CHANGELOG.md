@@ -18,6 +18,8 @@ All notable user-visible changes are recorded here. The format follows
   Markdown; the rest stays rendered.
 - The view follows the caret's line, so typing in a long code block keeps the scroll position; it
   also stays at the caret after a long paste and jumps with `Ctrl+End` in long documents.
+- `TACHYON_FRAME_LOG=<path>`: per-frame timing log (busy and render time, work by kind, key to
+  paint latency) for measurements.
 - Frame-time overlay, toggled with `Ctrl+Alt+F`: UI-thread time per frame, including edits,
   pastes and applied parse results that run back to back with it.
 - Incremental Markdown parsing: keystrokes reparse only the affected blocks; large pastes are
@@ -32,8 +34,9 @@ All notable user-visible changes are recorded here. The format follows
   (named pipe on Windows, Unix socket on Linux/macOS). `-n` / `--new-instance` opts out.
 - `--resident`: keep running after the last window closes so later launches open in about 30 ms
   (without files it starts windowless, for login autostart; `Ctrl+Q` quits for real). On Windows
-  a resident instance keeps a hidden window ready, so a launch shows it within about 6 ms of the
-  resident instance receiving it (about 30 ms from starting the launching process).
+  a resident instance keeps a hidden window ready, shown without the open animation, so a launch
+  draws it within about 5 ms of the resident instance receiving it (about 23 ms from starting the
+  launching process).
   `cargo xtask bench-startup --warm` measures such launches (`--gap-ms` spaces them).
 - `--startup-report` and `cargo xtask bench-startup` for measuring launch-to-first-frame latency
   against the 50 ms budget.

@@ -250,7 +250,12 @@ fn prepare_ready_window(cx: &mut App) {
                 Ok(handle) => {
                     // A hidden window only gets its final size when shown,
                     // and resizing the render targets then takes ≈ 20 ms.
-                    let _ = handle.update(cx, |_, window, _| window.resize(WINDOW_SIZE));
+                    // Without DWM's open animation the window appears as soon as it is
+                    // shown, and its first frame is drawn sooner (docs/adr/0004).
+                    let _ = handle.update(cx, |_, window, _| {
+                        window.resize(WINDOW_SIZE);
+                        tachyon_platform::disable_window_transitions(window);
+                    });
                     cx.set_global(ReadyWindow(Some(handle)));
                 }
                 Err(e) => eprintln!("tachyon: could not prepare a window ({e:#})"),

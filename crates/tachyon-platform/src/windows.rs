@@ -204,3 +204,23 @@ fn exchange(name: &str, request: &[u8]) -> io::Result<()> {
     };
     protocol::send_request(&pipe, request)
 }
+
+pub fn disable_window_transitions(window: &impl raw_window_handle::HasWindowHandle) -> bool {
+    use windows_sys::Win32::Graphics::Dwm::{
+        DWMWA_TRANSITIONS_FORCEDISABLED, DwmSetWindowAttribute,
+    };
+    let Ok(handle) = window.window_handle() else { return false };
+    let raw_window_handle::RawWindowHandle::Win32(win32) = handle.as_raw() else { return false };
+    let disable: i32 = 1;
+    // SAFETY: `win32.hwnd` is the live window handle GPUI just returned, and the attribute value
+    // points at a 4-byte BOOL that outlives the call, as DWMWA_TRANSITIONS_FORCEDISABLED requires.
+    let result = unsafe {
+        DwmSetWindowAttribute(
+            win32.hwnd.get() as _,
+            DWMWA_TRANSITIONS_FORCEDISABLED as u32,
+            (&raw const disable).cast(),
+            size_of::<i32>() as u32,
+        )
+    };
+    result == 0
+}

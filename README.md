@@ -16,7 +16,7 @@ start as fast as a scratchpad and edit like Typora: one pane, inline WYSIWYG, no
 
 > **Status:** early. Block-swap editing and saving work (the block under the caret is raw
 > Markdown, the rest is rendered), on top of an incremental parser. The startup budget is met by
-> resident mode (`--resident`, opt-in for now); Phase 3's exit criteria are still to be shown on
+> resident mode (`--resident`, opt-in for now), and Phase 3's paste and typing criteria are met on
 > the reference Windows machine. See [ROADMAP](docs/ROADMAP.md).
 
 ## Performance budgets

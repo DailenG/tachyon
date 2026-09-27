@@ -182,4 +182,10 @@ launch's first frame (and at resident start), sized in advance, and filled with 
 document and shown when the next launch arrives. Creating a window there costs 40-60 ms and
 showing a newly created one resizes its render targets; a ready window appears with its content
 ≈ 27 ms after the launch arrives (ADR 0004). `tachyon_platform::keeps_hidden_windows_hidden()`
-gates it: Wayland maps windows opened hidden, so Linux has none.
+gates it: Wayland maps windows opened hidden, so Linux has none. Ready windows have DWM's open
+and close animations turned off (`disable_window_transitions`), so they appear, and draw, as soon
+as they are shown.
+
+`TACHYON_FRAME_LOG=<path>` makes the editor append one line per frame to `<path>`: its busy time,
+render time, editor work by kind (edit, clipboard, paste, parse), and each key's time from arrival
+to the end of that frame's paint. Windows measurement runs use it to attribute slow frames.

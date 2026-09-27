@@ -17,8 +17,11 @@ crates are needed whichever way the startup gate goes).
       launch 352-392 ms)
 - [x] Re-measure with the ready window pre-sized: p95 29.0 ms (was 47.5), content drawn 3.4 ms
       (p50) after the launch arrives
-- [ ] Cut showing the ready window (14-29 ms after its first frame): apply its placement while
-      hidden, try disabling DWM transitions, measure time to input readiness
+- [x] Cut showing the ready window: DWM transitions off for ready windows (run 4: p95 22.8 ms,
+      content drawn ≤ 5.4 ms p95 after the launch arrives, window appears without a fade); input
+      handled ≈ 19-24 ms after showing starts
+- [ ] Propose to GPUI upstream: apply a hidden window's placement when it is created (run 4, with
+      transitions off: p95 19.3 ms, first frame ≤ 0.7 ms p95 after the launch arrives)
 - [ ] Resident by default: autostart at login, a way to see and quit the process, docs
 
 Measured so far (release, 20 runs, `cargo xtask bench-startup`):
@@ -65,7 +68,7 @@ Measured (Linux, release): keystroke-to-clean p99 45 µs on 1 MiB (paragraph, co
 end-of-document typing); full parse 20 ms for 1 MiB, 220 ms for 10 MiB; unclosed fence running to
 the end of 512 KiB 7 ms. All corpus tests pass.
 
-## Phase 3: block-swap editor (`tachyon-editor`) (in progress)
+## Phase 3: block-swap editor (`tachyon-editor`) (done)
 
 - [x] Editor view on GPUI's virtualized list; rich rendering for headings, emphasis, inline code,
       links, fences, lists, task lists, quotes, tables, rules, math
@@ -110,11 +113,12 @@ the end of 512 KiB 7 ms. All corpus tests pass.
 - [x] Keyboard support in prompts on Linux (own in-window prompt; Windows and macOS keep native
       dialogs)
 
-- [ ] Exit criteria shown on the reference Windows machine. Not met yet: in run 3 (4K @ 30 Hz)
-      two of three pastes stayed under 16.7 ms (max 11.3 and 9.6 ms) but one had a 16.9 ms frame,
-      and a Ctrl+Home to the top of the pasted document took 20.8 ms; typing key-to-present p99
-      in a 1 MB document is not measured there. Next: record per-frame timings (work and render,
-      and what caused the frame) so over-budget frames can be attributed, then measure typing
+- [x] Exit criteria shown on the reference Windows machine (run 4, 4K @ 30 Hz, per-frame log
+      `TACHYON_FRAME_LOG`): three 5 MB pastes with no frame over 16.7 ms (max 13.1 ms) and the
+      pasted text visible in the Ctrl+V frame; typing in a 1 MiB document key to paint p95 ≈ 4 ms,
+      max 6.6 ms. Run 3 once had a 16.9 ms paste frame; not reproduced. Key to present adds the
+      wait for the display's next refresh, which Tachyon does not control
+- [ ] Follow-up: read the clipboard off the UI thread (Ctrl+V stalls it 11-12 ms on Windows)
 
 **Exit:** pasting 5 MB of LLM output produces no frame over 16.6 ms, with visible text in the same
 frame; typing in a 1 MB document keeps key-to-present p99 within one 60 Hz frame.

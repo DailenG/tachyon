@@ -128,3 +128,7 @@ pub fn send(client: Client, request: &[u8]) -> io::Result<()> {
     stream.set_read_timeout(Some(IO_TIMEOUT))?;
     protocol::send_request(&stream, request)
 }
+
+pub fn disable_window_transitions(_window: &impl raw_window_handle::HasWindowHandle) -> bool {
+    false
+}

@@ -21,6 +21,9 @@ impl Render for Editor {
         if let Some(stats) = &mut self.frame_stats {
             stats.begin();
         }
+        if let Some(log) = &mut self.frame_log {
+            log.begin();
+        }
         let editor = cx.entity();
         let focus = self.focus.clone();
         div()
@@ -101,6 +104,11 @@ impl Render for Editor {
                             editor.rendered = editor.rendering.take().unwrap_or(0..0);
                             if let Some(stats) = &mut editor.frame_stats {
                                 stats.end();
+                            }
+                            let (drawn, blocks) =
+                                (editor.rendered.len(), editor.doc.blocks().len());
+                            if let Some(log) = &mut editor.frame_log {
+                                log.end(drawn, blocks);
                             }
                         });
                     },
