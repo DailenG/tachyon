@@ -9,7 +9,7 @@ use gpui::{
     size,
 };
 use tachyon_doc::Document;
-use tachyon_editor::Editor;
+use tachyon_editor::{Editor, Theme};
 use tachyon_platform::{Listener, TrayEvent};
 
 use crate::cli::{self, Cli};
@@ -288,6 +288,10 @@ fn open_window(source: Source, cx: &mut App) -> Option<WindowHandle<Editor>> {
     let options = window_options(source.title(), true, cx);
     let result = cx.open_window(options, move |window, cx| {
         tachyon_platform::set_window_icon(window);
+        // Set before the window's first frame paints, so DWM never shows the OS dark-mode
+        // setting's colour for an instant: Tachyon keeps the native title bar, and it should
+        // follow the theme the editor is about to render with, not the system's.
+        tachyon_platform::set_title_bar_dark(window, Theme::for_window(window, cx).dark);
         cx.new(|cx| {
             let mut editor = Editor::with_document(initial_document(&source, cx), window, cx);
             fill(&mut editor, source, cx);
@@ -390,10 +394,14 @@ fn prepare_ready_window(cx: &mut App) {
                     // and resizing the render targets then takes ≈ 20 ms.
                     // Without DWM's open animation the window appears as soon as it is
                     // shown, and its first frame is drawn sooner (docs/adr/0004).
-                    let _ = handle.update(cx, |_, window, _| {
+                    let _ = handle.update(cx, |_, window, cx| {
                         window.resize(WINDOW_SIZE);
                         tachyon_platform::disable_window_transitions(window);
                         tachyon_platform::set_window_icon(window);
+                        // Same reasoning as in `open_window`: set before this window is ever
+                        // shown, so its title bar never flips visibly to match Tachyon's theme.
+                        let dark = Theme::for_window(window, cx).dark;
+                        tachyon_platform::set_title_bar_dark(window, dark);
                     });
                     cx.set_global(ReadyWindow(Some(handle)));
                 }

@@ -104,6 +104,9 @@ All notable user-visible changes are recorded here. The format follows
   find bar or a picker takes typing, the document caret is hidden, so only one caret shows.
 - The find bar no longer covers the match it points at: revealing a match keeps it below the bar,
   and at the top of the document the text moves down under an open bar.
+- Windows: the native title bar follows Tachyon's theme (the `theme` setting, or the system
+  appearance with `theme = "system"`) instead of the system dark-mode setting; it was dark above a
+  light document.
 
 ### Fixed
 

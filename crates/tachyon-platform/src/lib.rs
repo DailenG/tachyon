@@ -25,6 +25,15 @@ pub fn disable_window_transitions(window: &impl raw_window_handle::HasWindowHand
     imp::disable_window_transitions(window)
 }
 
+/// Sets whether `window`'s native title bar renders in dark or light colours, to match Tachyon's
+/// resolved theme (`Theme::for_window` in `tachyon-editor`) instead of the OS dark-mode setting
+/// DWM would otherwise follow: Tachyon keeps the native title bar rather than drawing its own, so
+/// without this a window whose theme differs from the system's would show a mismatched bar
+/// (Windows: `DWMWA_USE_IMMERSIVE_DARK_MODE`). Returns whether it was applied; a no-op elsewhere.
+pub fn set_title_bar_dark(window: &impl raw_window_handle::HasWindowHandle, dark: bool) -> bool {
+    imp::set_title_bar_dark(window, dark)
+}
+
 /// Whether the primary instance stays running after its last window closes unless told otherwise
 /// (docs/adr/0004). On by default where resident launches have been measured and a terminal is
 /// not tied to the process: Windows release builds are GUI-subsystem executables. On Linux and

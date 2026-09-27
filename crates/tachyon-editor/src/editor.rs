@@ -480,6 +480,9 @@ impl Editor {
             return;
         }
         self.theme = self.theme.restyled(reported);
+        // The native title bar is DWM's, not GPUI's: it keeps the mode set when the window
+        // opened until told otherwise.
+        tachyon_platform::set_title_bar_dark(window, reported);
         cx.notify();
     }
 
