@@ -16,7 +16,10 @@ Before planning or implementing significant UI or brand work, read
 [docs/design/DESIGN_DIRECTION.md](docs/design/DESIGN_DIRECTION.md) and inspect the actual reference
 files listed in [docs/design/concepts/README.md](docs/design/concepts/README.md). Concept images
 inform the visual language; they do not specify features, layout, or production assets. Preserve
-the current product UX and measured performance budgets when proposing changes.
+the current product UX and measured performance budgets when proposing changes. Speed comes first:
+a design element that costs startup or interaction time is a second-class decision, and the
+direction's deprioritized list (bundled fonts, gradients or effects in the editor, animation, brand
+imagery in the app, pre-first-frame asset work) is excluded unless benchmarks and the owner approve.
 
 ## Layout
 
