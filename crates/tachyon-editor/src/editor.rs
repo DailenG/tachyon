@@ -34,6 +34,11 @@ actions!(
         DocumentEnd,
         PageUp,
         PageDown,
+        ShiftNewline,
+        Find,
+        FindNext,
+        FindPrevious,
+        Cancel,
         SelectPageUp,
         SelectPageDown,
         SelectLeft,
@@ -88,6 +93,12 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("ctrl-home", DocumentStart, c),
         KeyBinding::new("cmd-up", DocumentStart, c),
         KeyBinding::new("ctrl-end", DocumentEnd, c),
+        KeyBinding::new("secondary-f", Find, c),
+        KeyBinding::new("f3", FindNext, c),
+        KeyBinding::new("shift-f3", FindPrevious, c),
+        KeyBinding::new("secondary-g", FindNext, c),
+        KeyBinding::new("secondary-shift-g", FindPrevious, c),
+        KeyBinding::new("escape", Cancel, c),
         KeyBinding::new("pageup", PageUp, c),
         KeyBinding::new("pagedown", PageDown, c),
         KeyBinding::new("shift-pageup", SelectPageUp, c),
@@ -105,7 +116,7 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("shift-end", SelectEnd, c),
         KeyBinding::new("secondary-a", SelectAll, c),
         KeyBinding::new("enter", Newline, c),
-        KeyBinding::new("shift-enter", Newline, c),
+        KeyBinding::new("shift-enter", ShiftNewline, c),
         KeyBinding::new("tab", Tab, c),
         KeyBinding::new("secondary-c", Copy, c),
         KeyBinding::new("secondary-x", Cut, c),
@@ -162,6 +173,8 @@ pub struct Editor {
     /// A large paste being prepared off the UI thread; applied when ready,
     /// or right away (from `text`) before any other input.
     pending_paste: Option<PendingPaste>,
+    /// The find bar, when open.
+    pub(crate) find: Option<crate::find::FindState>,
     last_edit: Option<Instant>,
     /// The cursor moved without typing since the last edit.
     moved_since_edit: bool,
@@ -211,6 +224,7 @@ impl Editor {
             active_layout: None,
             parse_task: None,
             pending_paste: None,
+            find: None,
             last_edit: None,
             moved_since_edit: false,
             selecting: false,
@@ -563,6 +577,7 @@ impl Editor {
 
     fn after_edit(&mut self, cx: &mut Context<Self>) {
         self.goal_x = None;
+        self.refresh_find();
         self.reparse(self.head(), cx);
         self.update_active();
         self.reveal_cursor();
@@ -686,7 +701,7 @@ impl Editor {
         }
     }
 
-    fn selected_text(&self) -> String {
+    pub(crate) fn selected_text(&self) -> String {
         self.doc.buffer().rope().byte_slice(self.selection.clone()).to_string()
     }
 
@@ -722,6 +737,9 @@ impl Editor {
     // ---- actions --------------------------------------------------------
 
     pub(crate) fn backspace(&mut self, _: &Backspace, _: &mut Window, cx: &mut Context<Self>) {
+        if self.finding() {
+            return self.find_backspace(cx);
+        }
         self.delete_towards(cx, movement::prev_grapheme);
     }
     pub(crate) fn delete(&mut self, _: &Delete, _: &mut Window, cx: &mut Context<Self>) {
@@ -840,7 +858,22 @@ impl Editor {
         self.move_to(0, false, cx);
         self.move_to(self.doc.len(), true, cx);
     }
-    pub(crate) fn newline(&mut self, _: &Newline, _: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn newline(&mut self, _: &Newline, window: &mut Window, cx: &mut Context<Self>) {
+        if self.finding() {
+            return self.find_next(&FindNext, window, cx);
+        }
+        self.replace(self.selection.clone(), "\n", cx);
+    }
+    /// Shift+Enter: the previous match while finding, else a line break like Enter.
+    pub(crate) fn shift_newline(
+        &mut self,
+        _: &ShiftNewline,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.finding() {
+            return self.find_previous(&FindPrevious, window, cx);
+        }
         self.replace(self.selection.clone(), "\n", cx);
     }
     pub(crate) fn tab(&mut self, _: &Tab, _: &mut Window, cx: &mut Context<Self>) {
@@ -863,6 +896,9 @@ impl Editor {
         let text = cx.read_from_clipboard().and_then(|item| item.text());
         self.charge_work("clipboard", started);
         let Some(text) = text else { return };
+        if self.finding() {
+            return self.find_input(&text, false, cx);
+        }
         self.moved_since_edit = true;
         if text.len() <= tachyon_doc::UNPARSED_SPLIT_THRESHOLD {
             self.replace(self.selection.clone(), &text, cx);
@@ -1220,6 +1256,7 @@ impl EntityInputHandler for Editor {
     }
 
     fn unmark_text(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {
+        self.find_end_composition();
         self.marked = None;
     }
 
@@ -1231,6 +1268,9 @@ impl EntityInputHandler for Editor {
         cx: &mut Context<Self>,
     ) {
         self.flush_pending_paste(cx);
+        if self.finding() {
+            return self.find_input(text, false, cx);
+        }
         let range = range_utf16
             .map(|r| self.range_from_utf16(&r))
             .or_else(|| self.marked.clone())
@@ -1247,6 +1287,9 @@ impl EntityInputHandler for Editor {
         cx: &mut Context<Self>,
     ) {
         self.flush_pending_paste(cx);
+        if self.finding() {
+            return self.find_input(text, true, cx);
+        }
         let range = range_utf16
             .map(|r| self.range_from_utf16(&r))
             .or_else(|| self.marked.clone())

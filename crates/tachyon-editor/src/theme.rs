@@ -17,6 +17,9 @@ pub struct Theme {
     pub quote_bar: Hsla,
     pub rule: Hsla,
     pub selection: Hsla,
+    /// Find matches, and the selected one.
+    pub find_match: Hsla,
+    pub find_current: Hsla,
     pub cursor: Hsla,
     pub math: Hsla,
     pub text_size: Pixels,
@@ -41,6 +44,8 @@ impl Theme {
             quote_bar: rgb(0x4b4f58).into(),
             rule: rgb(0x3d4047).into(),
             selection: rgba(0x3d6fb566).into(),
+            find_match: rgba(0xe5c07b40).into(),
+            find_current: rgba(0xe5c07baa).into(),
             cursor: rgb(0xe6e8eb).into(),
             math: rgb(0xd2a8ff).into(),
             text_size: px(15.),

@@ -131,8 +131,10 @@ What a scratchpad needs day to day, without giving up the budgets above.
 
 - [x] New window (`Ctrl+N`), Open (`Ctrl+O`, native dialog; several files open in their own
       windows), files dropped onto a window open too; Page Up / Page Down (with Shift to select)
-- [ ] Find in the document (`Ctrl+F`): matches highlighted in rendered and raw blocks, Enter /
-      Shift+Enter (F3 / Shift+F3) to step through them, Escape to close
+- [x] Find in the document (`Ctrl+F`): matches highlighted in rendered and raw blocks, Enter /
+      Shift+Enter (F3 / Shift+F3) to step through them, Escape to close; smart case; the selection
+      seeds the query. `find_all` on 5 MiB: ≈ 1 ms; live, typing a query in a 5 MB document:
+      max frame 3.7 ms
 - [ ] Replace (`Ctrl+H`): one match or all, as one undo step
 - [ ] Light theme, following the system appearance
 - [ ] Zoom (`Ctrl+=`, `Ctrl+-`, `Ctrl+0`)

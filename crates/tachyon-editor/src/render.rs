@@ -55,6 +55,11 @@ impl Render for Editor {
                     open(paths.paths().to_vec(), cx);
                 }
             })
+            .on_action(cx.listener(Self::shift_newline))
+            .on_action(cx.listener(Self::find))
+            .on_action(cx.listener(Self::find_next))
+            .on_action(cx.listener(Self::find_previous))
+            .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::page_up))
             .on_action(cx.listener(Self::page_down))
             .on_action(cx.listener(Self::select_page_up))
@@ -127,10 +132,57 @@ impl Render for Editor {
                 .size_full(),
             )
             .children(self.frame_stats_overlay())
+            .children(self.find_bar())
     }
 }
 
 impl Editor {
+    /// The find bar: the query with a caret and the match count.
+    fn find_bar(&self) -> Option<AnyElement> {
+        let find = self.find.as_ref()?;
+        let theme = &self.theme;
+        Some(
+            div()
+                .absolute()
+                .top_2()
+                .left_0()
+                .right_0()
+                .flex()
+                .justify_center()
+                .child(
+                    div()
+                        .flex()
+                        .gap_3()
+                        .px_3()
+                        .py_1()
+                        .rounded_md()
+                        .bg(theme.raw_background)
+                        .border_1()
+                        .border_color(theme.rule)
+                        .text_color(theme.foreground)
+                        .child(div().text_color(theme.muted).child("Find"))
+                        .child(div().min_w(px(200.)).child(format!("{}\u{258f}", find.query)))
+                        .child(div().text_color(theme.muted).child(find.status())),
+                )
+                .into_any_element(),
+        )
+    }
+
+    /// Background marks for `block` (absolute source range): find matches, then the selection.
+    fn marks(&self, block: &Range<usize>) -> Vec<(Range<usize>, gpui::Hsla)> {
+        let mut marks = Vec::new();
+        if let Some(find) = &self.find {
+            for (m, current) in find.matches_in(block) {
+                let color = if current { self.theme.find_current } else { self.theme.find_match };
+                marks.push((m, color));
+            }
+        }
+        if !self.selection.is_empty() {
+            marks.push((self.selection.clone(), self.theme.selection));
+        }
+        marks
+    }
+
     fn frame_stats_overlay(&self) -> Option<AnyElement> {
         let stats = self.frame_stats.as_ref()?;
         let ms = |d: std::time::Duration| d.as_secs_f64() * 1000.;
@@ -217,16 +269,17 @@ impl Editor {
         let len = text.len();
 
         let mut highlights = Vec::new();
-        if let Some(local) = intersect(&self.selection, &range, base, len) {
-            highlights.push((
-                local,
-                HighlightStyle { background_color: Some(theme.selection), ..Default::default() },
-            ));
+        for (mark, color) in self.marks(&range) {
+            if let Some(local) = intersect(&mark, &range, base, len) {
+                let style = HighlightStyle { background_color: Some(color), ..Default::default() };
+                highlights = overlay(highlights, local, style);
+            }
         }
         if let Some(marked) = &self.marked
             && let Some(local) = intersect(marked, &range, base, len)
         {
-            highlights.push((
+            highlights = overlay(
+                highlights,
                 local,
                 HighlightStyle {
                     underline: Some(UnderlineStyle {
@@ -236,7 +289,7 @@ impl Editor {
                     }),
                     ..Default::default()
                 },
-            ));
+            );
         }
         let styled = StyledText::new(text).with_highlights(highlights);
         let layout = styled.layout().clone();
@@ -308,14 +361,17 @@ impl Editor {
     ) -> AnyElement {
         let ir = &parsed.ir;
         let block_len = parsed.len;
-        // Selection mapped to visible offsets of this block.
-        let selection = intersect(
-            &self.selection,
-            &(block_start..block_start + block_len),
-            block_start,
-            block_len,
-        )
-        .map(|local| ir.source_to_visible(local.start)..ir.source_to_visible(local.end));
+        // Marks (find matches, selection) mapped to visible offsets of this block.
+        let block = block_start..block_start + block_len;
+        let marks: Vec<(Range<usize>, gpui::Hsla)> = self
+            .marks(&block)
+            .into_iter()
+            .filter_map(|(mark, color)| {
+                let local = intersect(&mark, &block, block_start, block_len)?;
+                let visible = ir.source_to_visible(local.start)..ir.source_to_visible(local.end);
+                (!visible.is_empty()).then_some((visible, color))
+            })
+            .collect();
 
         if ir.lines.is_empty() {
             // Blank or empty block: still clickable, to put the caret in it.
@@ -346,7 +402,7 @@ impl Editor {
                 line.start..end,
                 &parsed,
                 block_start,
-                selection.clone(),
+                &marks,
                 cx,
             ));
         }
@@ -362,7 +418,7 @@ impl Editor {
         visible: Range<usize>,
         parsed: &Arc<ParsedBlock>,
         block_start: usize,
-        selection: Option<Range<usize>>,
+        marks: &[(Range<usize>, gpui::Hsla)],
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = &self.theme;
@@ -376,13 +432,7 @@ impl Editor {
                     let range = cell_start..cell_start + cell.len();
                     let mut cell_el =
                         div().flex_1().min_w_0().px_2().border_1().border_color(theme.rule).child(
-                            self.rendered_text(
-                                range.clone(),
-                                parsed,
-                                block_start,
-                                selection.clone(),
-                                cx,
-                            ),
+                            self.rendered_text(range.clone(), parsed, block_start, marks, cx),
                         );
                     if header {
                         cell_el = cell_el.font_weight(FontWeight::BOLD).bg(theme.code_background);
@@ -397,7 +447,7 @@ impl Editor {
                     visible,
                     parsed,
                     block_start,
-                    selection,
+                    marks,
                     cx,
                 ));
                 match kind {
@@ -483,7 +533,7 @@ impl Editor {
         visible: Range<usize>,
         parsed: &Arc<ParsedBlock>,
         block_start: usize,
-        selection: Option<Range<usize>>,
+        marks: &[(Range<usize>, gpui::Hsla)],
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let ir = &parsed.ir;
@@ -499,17 +549,14 @@ impl Editor {
                 })
             })
             .collect();
-        if let Some(selection) = selection {
-            let start = selection.start.max(visible.start);
-            let end = selection.end.min(visible.end);
+        for (mark, color) in marks {
+            let start = mark.start.max(visible.start);
+            let end = mark.end.min(visible.end);
             if start < end {
                 highlights = overlay(
                     highlights,
                     start - visible.start..end - visible.start,
-                    HighlightStyle {
-                        background_color: Some(self.theme.selection),
-                        ..Default::default()
-                    },
+                    HighlightStyle { background_color: Some(*color), ..Default::default() },
                 );
             }
         }

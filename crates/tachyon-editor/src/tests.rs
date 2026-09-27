@@ -472,3 +472,65 @@ fn page_down_and_up_move_by_about_a_screen(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert_eq!(line_of(cx), 0);
 }
+
+#[gpui::test]
+fn find_types_into_the_bar_and_steps_through_matches(cx: &mut TestAppContext) {
+    let doc = "one fish\n\ntwo fish\n\nred Fish\n\nblue fish\n";
+    let (editor, cx) = open(doc, cx);
+    let selected = |cx: &mut VisualTestContext| {
+        editor.read_with(cx, |e, _| {
+            (e.document().buffer().text()[e.selection.clone()].to_owned(), e.selection.start)
+        })
+    };
+    let status = |cx: &mut VisualTestContext| {
+        editor.read_with(cx, |e, _| e.find.as_ref().map(|f| f.status()))
+    };
+
+    cx.simulate_keystrokes("secondary-f");
+    cx.simulate_input("fish");
+    cx.run_until_parked();
+    assert_eq!(text(&editor, cx), doc, "typing goes to the query, not the document");
+    assert_eq!(selected(cx), ("fish".to_owned(), 4));
+    assert_eq!(status(cx).as_deref(), Some("1/4"), "lowercase query matches Fish too");
+
+    cx.simulate_keystrokes("enter");
+    assert_eq!(selected(cx).1, 14);
+    cx.simulate_keystrokes("f3 f3 f3");
+    assert_eq!(selected(cx).1, 4, "wraps to the first match");
+    cx.simulate_keystrokes("shift-enter");
+    assert_eq!(selected(cx).1, doc.rfind("fish").expect("fixture"), "wraps backwards");
+    assert_eq!(status(cx).as_deref(), Some("4/4"));
+
+    // Backspace edits the query; an uppercase letter makes it case-sensitive.
+    cx.simulate_keystrokes("backspace backspace backspace backspace");
+    cx.simulate_input("Fish");
+    cx.run_until_parked();
+    assert_eq!(status(cx).as_deref(), Some("1/1"));
+    assert_eq!(selected(cx), ("Fish".to_owned(), doc.find("Fish").expect("fixture")));
+    cx.simulate_input("x");
+    assert_eq!(status(cx).as_deref(), Some("no matches"));
+
+    // Escape closes the bar; typing edits the document again.
+    cx.simulate_keystrokes("escape");
+    assert_eq!(status(cx), None);
+    cx.simulate_keystrokes("secondary-z");
+    cx.simulate_input("!");
+    cx.run_until_parked();
+    assert_ne!(text(&editor, cx), doc);
+}
+
+#[gpui::test]
+fn find_starts_with_the_selected_text(cx: &mut TestAppContext) {
+    let text = "alpha beta alpha beta\n";
+    let (editor, cx) = open(text, cx);
+    editor.update(cx, |e, cx| {
+        e.move_to(6, false, cx);
+        e.move_to(10, true, cx);
+    });
+    cx.simulate_keystrokes("secondary-f");
+    let (query, status) = editor.read_with(cx, |e, _| {
+        let find = e.find.as_ref().expect("bar is open");
+        (find.query.clone(), find.status())
+    });
+    assert_eq!((query.as_str(), status.as_str()), ("beta", "1/2"));
+}
