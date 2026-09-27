@@ -8,6 +8,9 @@ All notable user-visible changes are recorded here. The format follows
 
 ### Added
 
+- Lists continue on `Enter` with the next bullet, number or an unchecked task box; `Enter` on an
+  empty item moves it up a level or ends the list. `Tab` / `Shift+Tab` nest and un-nest list
+  items (all the selected ones), renumbering ordered lists.
 - Block-swap Markdown editor: the block holding the caret shows and edits its raw Markdown, every
   other block is rendered (headings, emphasis, code, links, lists, task lists, quotes, tables,
   rules, math). Files and the clipboard (`--paste`) open in it; files are read and parsed off the

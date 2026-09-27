@@ -165,12 +165,15 @@ last 2 ms from drawing real bold and italic faces); the Windows paths the budget
 are unchanged apart from the icon and the tray, which a resident instance sets up ahead of
 launches.
 
-## Phase 5: writing comfort (planned)
+## Phase 5: writing comfort (in progress)
 
 Typing Markdown by hand, and reading the code in LLM output, without leaving the budgets.
 
-- [ ] Lists continue on Enter (bullets, numbers incremented, task boxes unchecked); Enter on an
-      empty item ends the list; Tab / Shift+Tab indent and outdent list items
+- [x] Lists continue on Enter (bullets, numbers incremented, task boxes unchecked, inside quotes
+      too); Enter on an empty item moves it up a level, or ends the list with a blank line at the
+      top level; Tab / Shift+Tab nest an item under the previous one or move it up to its parent,
+      renumbering ordered items (a nested list starts at 1, so it can interrupt its parent's
+      text); not inside code or HTML blocks
 - [ ] Syntax highlighting in fenced code blocks, computed off the UI thread
 - [ ] Jump to a heading (`Ctrl+Shift+O`): the document's headings in a filterable list
 - [ ] Scratch buffers survive a restart: unsaved windows are restored with their text
