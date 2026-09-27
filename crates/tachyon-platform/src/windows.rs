@@ -228,6 +228,29 @@ pub fn disable_window_transitions(window: &impl raw_window_handle::HasWindowHand
     result == 0
 }
 
+/// Sets whether `window`'s native title bar (and its system menu, buttons and border) render
+/// with light-on-dark colours (`DWMWA_USE_IMMERSIVE_DARK_MODE`). Tachyon keeps the OS title bar
+/// rather than drawing its own, but DWM otherwise paints it for the *system's* dark-mode setting;
+/// without this call a Tachyon window whose theme (Settings, not the OS) is light would show a
+/// dark bar above a light canvas, or the reverse. Returns whether it was applied.
+pub fn set_title_bar_dark(window: &impl raw_window_handle::HasWindowHandle, dark: bool) -> bool {
+    use windows_sys::Win32::Graphics::Dwm::{DWMWA_USE_IMMERSIVE_DARK_MODE, DwmSetWindowAttribute};
+    let Ok(handle) = window.window_handle() else { return false };
+    let raw_window_handle::RawWindowHandle::Win32(win32) = handle.as_raw() else { return false };
+    let value: i32 = i32::from(dark);
+    // SAFETY: `win32.hwnd` is the live window handle GPUI just returned, and the attribute value
+    // points at a 4-byte BOOL that outlives the call, as DWMWA_USE_IMMERSIVE_DARK_MODE requires.
+    let result = unsafe {
+        DwmSetWindowAttribute(
+            win32.hwnd.get() as _,
+            DWMWA_USE_IMMERSIVE_DARK_MODE as u32,
+            (&raw const value).cast(),
+            size_of::<i32>() as u32,
+        )
+    };
+    result == 0
+}
+
 pub fn desktop_entry_installed() -> io::Result<bool> {
     Ok(false)
 }

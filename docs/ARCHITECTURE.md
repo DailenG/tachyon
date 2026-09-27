@@ -30,7 +30,7 @@ flowchart LR
 | Crate | Status | Depends on GPUI | Responsibility |
 |---|---|---|---|
 | `tachyon` | exists | yes | Binary: CLI, single-instance claim, startup sequencing, windows |
-| `tachyon-platform` | exists | no | OS integration GPUI lacks: single-instance IPC, autostart, DWM transitions, the Linux system appearance at start-up (later: hotkey, backdrop) |
+| `tachyon-platform` | exists | no | OS integration GPUI lacks: single-instance IPC, autostart, DWM transitions and title-bar mode, the Linux system appearance at start-up (later: hotkey, backdrop) |
 | `xtask` | exists | no | `ci`, `bench-startup` |
 | `tachyon-text` | exists | **never** | Rope buffer, edit log, grouped undo, offset mapping, UTF-8↔UTF-16, line endings |
 | `tachyon-md` | exists | **never** | `pulldown-cmark` wrapper → owned block IR with source maps; bare-URL autolinks and code highlighting as IR passes |
@@ -215,7 +215,9 @@ showing a newly created one resizes its render targets; a ready window appears w
 ≈ 27 ms after the launch arrives (ADR 0004). `tachyon_platform::keeps_hidden_windows_hidden()`
 gates it: Wayland maps windows opened hidden, so Linux has none. Ready windows have DWM's open
 and close animations turned off (`disable_window_transitions`), so they appear, and draw, as soon
-as they are shown.
+as they are shown. Every window's native title bar is set to Tachyon's resolved theme
+(`set_title_bar_dark`, DWM's immersive dark mode) before it first paints, and again when the
+theme changes (settings saved, or the system appearance with `theme = "system"`).
 
 `TACHYON_FRAME_LOG=<path>` makes the editor append one line per frame to `<path>`: its busy time,
 render time, editor work by kind (edit, clipboard, paste, parse), and each key's time from arrival
