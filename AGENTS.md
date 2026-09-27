@@ -10,6 +10,17 @@ macOS. Headline requirement: launch to first frame in under 50 ms; never drop fr
 or large pastes. Design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Current phase and exit
 criteria: [docs/ROADMAP.md](docs/ROADMAP.md). Decisions: [docs/adr/](docs/adr/).
 
+## Visual design
+
+Before planning or implementing significant UI or brand work, read
+[docs/design/DESIGN_DIRECTION.md](docs/design/DESIGN_DIRECTION.md) and inspect the actual reference
+files listed in [docs/design/concepts/README.md](docs/design/concepts/README.md). Concept images
+inform the visual language; they do not specify features, layout, or production assets. Preserve
+the current product UX and measured performance budgets when proposing changes. Speed comes first:
+a design element that costs startup or interaction time is a second-class decision, and the
+direction's deprioritized list (bundled fonts, gradients or effects in the editor, animation, brand
+imagery in the app, pre-first-frame asset work) is excluded unless benchmarks and the owner approve.
+
 ## Layout
 
 - `crates/tachyon`: binary: CLI, single-instance claim, startup sequencing, windows.
@@ -55,4 +66,6 @@ cargo clippy --workspace --all-targets --target x86_64-pc-windows-msvc -- -D war
 - Do not run the bench or release builds casually: fat LTO takes minutes.
 - Update `CHANGELOG.md` (Unreleased) for user-visible changes and write an ADR for architectural
   ones. Keep docs in sync with code in the same change.
-- Never commit generated artifacts, screenshots, or scratch files. Never force-push `main`.
+- Never commit build-generated artifacts, incidental screenshots, or scratch files. Curated conceptual
+  reference images explicitly added under `docs/design/concepts/` are documentation, not runtime
+  assets. Never force-push `main`.
