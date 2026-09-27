@@ -656,3 +656,69 @@ fn secondary_click_on_a_bare_url_opens_it(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert_eq!(cx.opened_url().as_deref(), Some("https://example.com/docs"));
 }
+
+thread_local! {
+    /// Clipboard text for the off-thread reader tests, standing in for the system clipboard.
+    /// Per thread: tests run in parallel, and GPUI's test executor runs "background" work on the
+    /// test's thread.
+    static READER_TEXT: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+fn read_reader_text() -> Option<String> {
+    READER_TEXT.with_borrow(Clone::clone)
+}
+
+fn open_with_reader<'a>(
+    text: &str,
+    clipboard: Option<String>,
+    cx: &'a mut TestAppContext,
+) -> (Entity<Editor>, &'a mut VisualTestContext) {
+    READER_TEXT.set(clipboard);
+    cx.update(|cx| cx.set_global(crate::ClipboardReader(read_reader_text)));
+    open(text, cx)
+}
+
+#[gpui::test]
+fn a_paste_read_off_thread_lands_after_the_read(cx: &mut TestAppContext) {
+    let (editor, cx) = open_with_reader("start\n", Some("pasted".into()), cx);
+    cx.simulate_keystrokes("ctrl-end");
+    editor.update_in(cx, |e, window, cx| e.paste(&crate::editor::Paste, window, cx));
+    assert_eq!(text(&editor, cx), "start\n", "the clipboard is read in the background");
+    cx.run_until_parked();
+    assert_eq!(text(&editor, cx), "start\npasted");
+}
+
+#[gpui::test]
+fn keys_typed_while_the_clipboard_is_read_land_after_the_paste(cx: &mut TestAppContext) {
+    let big = "Pasted paragraph.\n\n".repeat(tachyon_doc::UNPARSED_SPLIT_THRESHOLD / 10);
+    for paste in ["small".to_owned(), big] {
+        let (editor, cx) = open_with_reader("start\n", Some(paste.clone()), cx);
+        cx.simulate_keystrokes("ctrl-end");
+        editor.update_in(cx, |e, window, cx| e.paste(&crate::editor::Paste, window, cx));
+        cx.simulate_input("x");
+        cx.run_until_parked();
+        assert_eq!(text(&editor, cx), format!("start\n{paste}x"));
+    }
+}
+
+#[gpui::test]
+fn a_large_paste_read_off_thread_is_prepared_in_the_background(cx: &mut TestAppContext) {
+    let paste = "Pasted paragraph.\n\n".repeat(tachyon_doc::UNPARSED_SPLIT_THRESHOLD / 10);
+    let (editor, cx) = open_with_reader("", Some(paste.clone()), cx);
+    editor.update_in(cx, |e, window, cx| e.paste(&crate::editor::Paste, window, cx));
+    cx.run_until_parked();
+    assert_eq!(text(&editor, cx), paste);
+    cx.simulate_keystrokes("secondary-z");
+    cx.run_until_parked();
+    assert_eq!(text(&editor, cx), "", "one undo step");
+}
+
+#[gpui::test]
+fn an_empty_clipboard_read_off_thread_pastes_nothing(cx: &mut TestAppContext) {
+    let (editor, cx) = open_with_reader("start\n", None, cx);
+    cx.simulate_keystrokes("ctrl-end secondary-v");
+    cx.run_until_parked();
+    cx.simulate_input("x");
+    cx.run_until_parked();
+    assert_eq!(text(&editor, cx), "start\nx");
+}

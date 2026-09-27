@@ -24,7 +24,8 @@ crates are needed whichever way the startup gate goes).
       transitions off: p95 19.3 ms, first frame ≤ 0.7 ms p95 after the launch arrives)
 - [x] Resident by default on Windows (`--no-resident` opts out; opt-in on Linux and macOS, where a
       shell would stay busy), `--background`, `--autostart on|off`, `--status`, `--quit`
-- [ ] A tray icon (or equivalent) that shows the resident process and quits it
+- [x] A tray icon (or equivalent) that shows the resident process and quits it: Windows tray
+      icon (Phase 4); `tachyon --status` / `--quit` everywhere
 
 Measured so far (release, 20 runs, `cargo xtask bench-startup`):
 
@@ -120,12 +121,13 @@ the end of 512 KiB 7 ms. All corpus tests pass.
       pasted text visible in the Ctrl+V frame; typing in a 1 MiB document key to paint p95 ≈ 4 ms,
       max 6.6 ms. Run 3 once had a 16.9 ms paste frame; not reproduced. Key to present adds the
       wait for the display's next refresh, which Tachyon does not control
-- [ ] Follow-up: read the clipboard off the UI thread (Ctrl+V stalls it 11-12 ms on Windows)
+- [x] Follow-up: read the clipboard off the UI thread (Ctrl+V stalls it 11-12 ms on Windows):
+      done in Phase 4
 
 **Exit:** pasting 5 MB of LLM output produces no frame over 16.6 ms, with visible text in the same
 frame; typing in a 1 MB document keeps key-to-present p99 within one 60 Hz frame.
 
-## Phase 4: everyday editing (in progress)
+## Phase 4: everyday editing (done)
 
 What a scratchpad needs day to day, without giving up the budgets above.
 
@@ -151,8 +153,28 @@ What a scratchpad needs day to day, without giving up the budgets above.
 - [x] Tray icon on Windows for the resident process: click for a new window, menu with "New
       window" and "Quit Tachyon"; re-added when Explorer restarts. Tachyon's windows get the same
       icon (title bar, taskbar, Alt+Tab)
-- [ ] Read the clipboard off the UI thread (the Phase 3 follow-up above)
+- [x] Read the clipboard off the UI thread on Windows (the Phase 3 follow-up above): a background
+      read of the 5 MB paste takes ≈ 15 ms off the UI thread (session 0, over SSH); Linux and macOS
+      still read through GPUI, whose clipboards are served by its event loop
 
 **Exit:** every item above covered by a `gpui::test` or a live check; finding in a 5 MB document
 keeps every frame under 16.6 ms; startup budgets unchanged (`cargo xtask bench-startup --warm`).
+Met: each item has a `gpui::test` and a live check (Linux; the tray, window icon and clipboard
+reader on Windows); finding in 5 MB: max frame 3.7 ms; warm launch on Linux p95 29-32 ms (the
+last 2 ms from drawing real bold and italic faces); the Windows paths the budgets were measured on
+are unchanged apart from the icon and the tray, which a resident instance sets up ahead of
+launches.
 
+## Phase 5: writing comfort (planned)
+
+Typing Markdown by hand, and reading the code in LLM output, without leaving the budgets.
+
+- [ ] Lists continue on Enter (bullets, numbers incremented, task boxes unchecked); Enter on an
+      empty item ends the list; Tab / Shift+Tab indent and outdent list items
+- [ ] Syntax highlighting in fenced code blocks, computed off the UI thread
+- [ ] Jump to a heading (`Ctrl+Shift+O`): the document's headings in a filterable list
+- [ ] Scratch buffers survive a restart: unsaved windows are restored with their text
+- [ ] Copy as rich text (`Ctrl+Shift+C`): the selection as HTML on the clipboard
+
+**Exit:** each item covered by a `gpui::test` or a live check; typing stays within one frame in a
+1 MB document with highlighted code; startup budgets unchanged.

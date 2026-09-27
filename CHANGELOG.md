@@ -64,6 +64,8 @@ All notable user-visible changes are recorded here. The format follows
 
 ### Fixed
 
+- Windows: `Ctrl+V` no longer stalls the window while the clipboard is read (≈ 12 ms for 5 MB);
+  the text is read on a background thread.
 - Linux: bold and italic text rendered in the regular face unless IBM Plex Sans was installed.
   GPUI asks for that family and its fallback fonts come in the regular face only; Tachyon now
   picks the first installed family from a list (Noto Sans, Ubuntu, Cantarell, DejaVu Sans, ...).

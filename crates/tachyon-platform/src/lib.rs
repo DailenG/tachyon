@@ -34,6 +34,13 @@ pub fn resident_by_default() -> bool {
     cfg!(target_os = "windows")
 }
 
+/// A function that reads the clipboard's text and may run on any thread (Windows), so a paste does
+/// not read it on the UI thread: GPUI's read there takes ≈ 12 ms for 5 MB. `None` where the
+/// clipboard has to be read through GPUI.
+pub fn clipboard_text_reader() -> Option<fn() -> Option<String>> {
+    imp::clipboard_text_reader()
+}
+
 /// Gives `window` Tachyon's icon (title bar, taskbar, Alt+Tab) on Windows, where GPUI looks for
 /// an icon resource Tachyon's executable does not have. A no-op elsewhere.
 pub fn set_window_icon(window: &impl raw_window_handle::HasWindowHandle) {

@@ -109,6 +109,9 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
         });
         cx.set_global(tachyon_editor::OpenPaths(std::rc::Rc::new(open_paths)));
         tachyon_editor::init(cx);
+        if let Some(read) = tachyon_platform::clipboard_text_reader() {
+            cx.set_global(tachyon_editor::ClipboardReader(read));
+        }
         if !tachyon_platform::has_native_prompts() {
             cx.set_prompt_builder(tachyon_editor::keyboard_prompt);
         }

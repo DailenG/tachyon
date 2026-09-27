@@ -228,6 +228,62 @@ pub fn disable_window_transitions(window: &impl raw_window_handle::HasWindowHand
     result == 0
 }
 
+pub fn clipboard_text_reader() -> Option<fn() -> Option<String>> {
+    Some(read_clipboard_text)
+}
+
+/// `CF_UNICODETEXT`: Windows provides it for any text on the clipboard, converting from the ANSI
+/// formats if needed.
+const CF_UNICODETEXT: u32 = 13;
+
+/// Reads the clipboard's text. The clipboard can be opened from any thread; while another window
+/// holds it open, this retries for up to about 50 ms.
+fn read_clipboard_text() -> Option<String> {
+    use windows_sys::Win32::System::DataExchange::{
+        CloseClipboard, GetClipboardData, OpenClipboard,
+    };
+    use windows_sys::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
+
+    struct Open;
+    impl Drop for Open {
+        fn drop(&mut self) {
+            // SAFETY: only constructed after OpenClipboard succeeded on this thread.
+            unsafe { CloseClipboard() };
+        }
+    }
+
+    let opened = (0..50).any(|attempt| {
+        if attempt > 0 {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        // SAFETY: a NULL owner opens the clipboard for this task without associating a window.
+        unsafe { OpenClipboard(ptr::null_mut()) != 0 }
+    });
+    if !opened {
+        return None;
+    }
+    let _open = Open;
+    // SAFETY: the clipboard is open; the handle stays owned by the clipboard.
+    let handle = unsafe { GetClipboardData(CF_UNICODETEXT) };
+    if handle.is_null() {
+        return None;
+    }
+    // SAFETY: `handle` is a global memory object holding the text.
+    let data = unsafe { GlobalLock(handle) } as *const u16;
+    if data.is_null() {
+        return None;
+    }
+    // SAFETY: as above.
+    let units = unsafe { GlobalSize(handle) } / size_of::<u16>();
+    // SAFETY: `data` is locked and points at `units` UTF-16 code units until GlobalUnlock.
+    let slice = unsafe { std::slice::from_raw_parts(data, units) };
+    let len = slice.iter().position(|&unit| unit == 0).unwrap_or(units);
+    let text = String::from_utf16_lossy(&slice[..len]);
+    // SAFETY: balances the GlobalLock above; `slice` is not used after this.
+    unsafe { GlobalUnlock(handle) };
+    Some(text)
+}
+
 pub fn query_system_appearance() -> Option<mpsc::Receiver<bool>> {
     None
 }
