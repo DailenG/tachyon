@@ -132,3 +132,85 @@ pub fn send(client: Client, request: &[u8]) -> io::Result<()> {
 pub fn disable_window_transitions(_window: &impl raw_window_handle::HasWindowHandle) -> bool {
     false
 }
+
+pub fn attach_parent_console() {}
+
+#[cfg(target_os = "macos")]
+pub fn autostart_enabled() -> io::Result<bool> {
+    Ok(false)
+}
+
+#[cfg(target_os = "macos")]
+pub fn set_autostart(_exe: &std::path::Path, _enabled: bool) -> io::Result<()> {
+    Err(io::Error::new(io::ErrorKind::Unsupported, "autostart is not supported on macOS yet"))
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn autostart_enabled() -> io::Result<bool> {
+    Ok(autostart_entry()?.is_file())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn set_autostart(exe: &std::path::Path, enabled: bool) -> io::Result<()> {
+    let entry = autostart_entry()?;
+    if enabled {
+        if let Some(dir) = entry.parent() {
+            fs::create_dir_all(dir)?;
+        }
+        fs::write(&entry, autostart_desktop_file(exe))
+    } else {
+        match fs::remove_file(&entry) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+            result => result,
+        }
+    }
+}
+
+/// `$XDG_CONFIG_HOME/autostart/tachyon.desktop` (default `~/.config`).
+#[cfg(not(target_os = "macos"))]
+fn autostart_entry() -> io::Result<PathBuf> {
+    let config = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_absolute())
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
+        .ok_or_else(|| {
+            io::Error::new(io::ErrorKind::NotFound, "neither XDG_CONFIG_HOME nor HOME is set")
+        })?;
+    Ok(config.join("autostart").join("tachyon.desktop"))
+}
+
+/// An XDG autostart entry running `exe --background`. The path is quoted as the Desktop Entry
+/// spec requires for `Exec` (backslash before `"`, `` ` ``, `$` and `\`, `%` doubled), then
+/// escaped as a desktop-file string (backslashes doubled).
+#[cfg(not(target_os = "macos"))]
+fn autostart_desktop_file(exe: &std::path::Path) -> String {
+    let mut quoted = String::from("\"");
+    for c in exe.to_string_lossy().chars() {
+        match c {
+            '"' | '`' | '$' | '\\' => {
+                quoted.push('\\');
+                quoted.push(c);
+            }
+            '%' => quoted.push_str("%%"),
+            _ => quoted.push(c),
+        }
+    }
+    quoted.push('"');
+    let exec = quoted.replace('\\', "\\\\");
+    format!(
+        "[Desktop Entry]\nType=Application\nName=Tachyon\nComment=Keep Tachyon ready in the background\nExec={exec} --background\nNoDisplay=true\nX-GNOME-Autostart-enabled=true\n"
+    )
+}
+
+#[cfg(all(test, not(target_os = "macos")))]
+mod autostart_tests {
+    use super::*;
+
+    #[test]
+    fn desktop_entry_quotes_the_executable_path() {
+        let plain = autostart_desktop_file(std::path::Path::new("/opt/tachyon/tachyon"));
+        assert!(plain.contains("\nExec=\"/opt/tachyon/tachyon\" --background\n"), "{plain}");
+        let odd = autostart_desktop_file(std::path::Path::new("/home/a b/100%/$x\"y"));
+        assert!(odd.contains("Exec=\"/home/a b/100%%/\\\\$x\\\\\"y\" --background"), "{odd}");
+    }
+}

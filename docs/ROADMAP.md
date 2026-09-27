@@ -22,7 +22,9 @@ crates are needed whichever way the startup gate goes).
       handled ≈ 19-24 ms after showing starts
 - [ ] Propose to GPUI upstream: apply a hidden window's placement when it is created (run 4, with
       transitions off: p95 19.3 ms, first frame ≤ 0.7 ms p95 after the launch arrives)
-- [ ] Resident by default: autostart at login, a way to see and quit the process, docs
+- [x] Resident by default on Windows (`--no-resident` opts out; opt-in on Linux and macOS, where a
+      shell would stay busy), `--background`, `--autostart on|off`, `--status`, `--quit`
+- [ ] A tray icon (or equivalent) that shows the resident process and quits it
 
 Measured so far (release, 20 runs, `cargo xtask bench-startup`):
 
@@ -37,7 +39,7 @@ Measured so far (release, 20 runs, `cargo xtask bench-startup`):
 All miss the 50 ms budget. On the reference Windows machine GPUI's platform initialization alone
 takes 180-330 ms.
 
-Warm launches into a resident instance (`--resident`, `cargo xtask bench-startup --warm`) meet it
+Warm launches into a resident instance (resident mode, `cargo xtask bench-startup --warm`) meet it
 on Linux: p50 27.6 ms, p95 29.5 ms (first launch into a windowless instance 180 ms), but not on
 the reference Windows machine: p95 150-188 ms, of which the resident instance's window open to
 first frame is 86-93 ms. A timing-instrumented GPUI build attributed it: per process, the D3D11

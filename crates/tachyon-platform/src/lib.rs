@@ -25,6 +25,32 @@ pub fn disable_window_transitions(window: &impl raw_window_handle::HasWindowHand
     imp::disable_window_transitions(window)
 }
 
+/// Whether the primary instance stays running after its last window closes unless told otherwise
+/// (docs/adr/0004). On by default where resident launches have been measured and a terminal is
+/// not tied to the process: Windows release builds are GUI-subsystem executables. On Linux and
+/// macOS a resident process started from a shell would keep that shell busy; there it is opt-in
+/// (`--resident`, or autostart with `--background`).
+pub fn resident_by_default() -> bool {
+    cfg!(target_os = "windows")
+}
+
+/// Lets command-line output (help, status) reach the console the program was started from.
+/// Windows GUI-subsystem executables get no console of their own; elsewhere a no-op.
+pub fn attach_parent_console() {
+    imp::attach_parent_console();
+}
+
+/// Whether Tachyon starts in the background at login.
+pub fn autostart_enabled() -> io::Result<bool> {
+    imp::autostart_enabled()
+}
+
+/// Makes `exe --background` start at login (per user), or stops it. Windows: the `Run` key of the
+/// current user; Linux and BSD: an XDG autostart entry. Not supported on macOS yet.
+pub fn set_autostart(exe: &std::path::Path, enabled: bool) -> io::Result<()> {
+    imp::set_autostart(exe, enabled)
+}
+
 /// Monospace font families to try for code, most preferred first. The first
 /// entry ships with the OS on Windows and macOS; Linux has no universal one,
 /// so callers should pick the first installed family.

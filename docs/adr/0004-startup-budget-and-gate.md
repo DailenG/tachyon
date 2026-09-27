@@ -58,9 +58,9 @@ section.
    and relaunches (through the single-instance channel, ADR 0003) open windows in it, skipping
    process, GPU and font start-up.
 
-Status of the mechanism: resident mode is implemented as an opt-in flag, `tachyon --resident`
-(without files it starts with no window, suitable for login autostart; Ctrl+Q quits for real). It
-meets the budget on Linux.
+Status of the mechanism: resident mode was first an opt-in flag, `tachyon --resident` (without
+files it started with no window, for login autostart; that is `--background` now). It meets the
+budget on Linux.
 
 Windows results (step 1): direct launch misses the budget by 6-10×, resident mode by 3-4×, so
 step 2 is ruled out and step 3 alone does not close the gate. Next: attribute the Windows time with
@@ -127,9 +127,11 @@ rest delays the next input, not the first frame. Direct launch: p95 392 ms.
 
 ## Consequences
 
-- Resident mode means a background process and a tray or hotkey surface to design and document;
-  it is still opt-in (`--resident`). Making it the default (autostart at login, a way to see and
-  quit the process) is the next startup work.
+- Resident mode is the default on Windows since 2026-09-27; `--no-resident` opts out. Linux and
+  macOS keep it opt-in (`--resident`): a resident process started from a shell would keep the
+  shell busy. `--autostart on` starts `tachyon --background` at login (Windows `Run` key, XDG
+  autostart on Linux). The process is shown and ended from the command line (`--status`,
+  `--quit`) and with Ctrl+Q; a tray icon is not built yet.
 - The budget assumes the ready window exists when a launch arrives; launches closer together
   than it takes to prepare one (≈ 20 ms plus 100 ms delay) open a window the ordinary way
   (≈ 120 ms).

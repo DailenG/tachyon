@@ -224,3 +224,69 @@ pub fn disable_window_transitions(window: &impl raw_window_handle::HasWindowHand
     };
     result == 0
 }
+
+pub fn attach_parent_console() {
+    use windows_sys::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
+    // SAFETY: no pointers; failing (no parent console, or one already attached) is harmless.
+    unsafe { AttachConsole(ATTACH_PARENT_PROCESS) };
+}
+
+const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+const RUN_VALUE: &str = "Tachyon";
+
+pub fn autostart_enabled() -> io::Result<bool> {
+    use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
+    use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_SZ, RegGetValueW};
+    let (key, value) = (wide(RUN_KEY), wide(RUN_VALUE));
+    // SAFETY: `key` and `value` are NUL-terminated UTF-16 strings that outlive the call; a null
+    // data pointer with a null size pointer only queries whether the value exists.
+    let status = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            key.as_ptr(),
+            value.as_ptr(),
+            RRF_RT_REG_SZ,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+        )
+    };
+    match status {
+        ERROR_SUCCESS => Ok(true),
+        ERROR_FILE_NOT_FOUND => Ok(false),
+        code => Err(io::Error::from_raw_os_error(code as i32)),
+    }
+}
+
+pub fn set_autostart(exe: &std::path::Path, enabled: bool) -> io::Result<()> {
+    use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
+    use windows_sys::Win32::System::Registry::{
+        HKEY_CURRENT_USER, REG_SZ, RegDeleteKeyValueW, RegSetKeyValueW,
+    };
+    let (key, value) = (wide(RUN_KEY), wide(RUN_VALUE));
+    let status = if enabled {
+        let command = wide(&format!("\"{}\" --background", exe.display()));
+        let bytes = u32::try_from(command.len() * 2)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "path too long"))?;
+        // SAFETY: all strings are NUL-terminated UTF-16 that outlive the call, and `bytes` is the
+        // size of `command` including its terminator, as REG_SZ requires.
+        unsafe {
+            RegSetKeyValueW(
+                HKEY_CURRENT_USER,
+                key.as_ptr(),
+                value.as_ptr(),
+                REG_SZ,
+                command.as_ptr().cast(),
+                bytes,
+            )
+        }
+    } else {
+        // SAFETY: `key` and `value` are NUL-terminated UTF-16 strings that outlive the call.
+        unsafe { RegDeleteKeyValueW(HKEY_CURRENT_USER, key.as_ptr(), value.as_ptr()) }
+    };
+    match status {
+        ERROR_SUCCESS => Ok(()),
+        ERROR_FILE_NOT_FOUND if !enabled => Ok(()),
+        code => Err(io::Error::from_raw_os_error(code as i32)),
+    }
+}
