@@ -45,6 +45,8 @@ All notable user-visible changes are recorded here. The format follows
 - `Ctrl+Q` / `Cmd+Q` quits, `Ctrl+W` / `Cmd+W` closes the window.
 - An app icon, and on Windows a tray icon while Tachyon runs resident: click it for a new window;
   its menu has "New window" and "Quit Tachyon".
+- `Ctrl+click` (`Cmd+click` on macOS) on a link opens it: web and mail links in the browser or
+  mail client, links to Markdown and text files in a Tachyon window. Other links are ignored.
 - Zoom: `Ctrl+=` / `Ctrl+-` step from 50 % to 300 %, `Ctrl+0` resets. Text, indents and
   spacing scale together; zoom is per window.
 - A light theme. The theme follows the system appearance, including changes while running; on

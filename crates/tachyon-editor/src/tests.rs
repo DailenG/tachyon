@@ -622,3 +622,23 @@ fn zoom_steps_scale_layout_and_stop_at_the_ends(cx: &mut TestAppContext) {
     assert_eq!(state(cx).0, 3.);
     assert_eq!(text(&editor, cx), THREE_PARAGRAPHS, "zoom keys do not type");
 }
+
+#[gpui::test]
+fn secondary_click_on_a_link_opens_it_without_moving_the_caret(cx: &mut TestAppContext) {
+    let doc = "[site](https://example.com) and more\n\nplain\n";
+    let (editor, cx) = open(doc, cx);
+    // Offset 0 is the hidden `[`: its raw position is where the rendered link text starts.
+    let link = rendered_glyph_point(&editor, 0, cx);
+    let plain = doc.find("plain").expect("fixture");
+    editor.update(cx, |e, cx| e.move_to(plain, false, cx));
+    cx.run_until_parked();
+
+    cx.simulate_click(link, gpui::Modifiers::secondary_key());
+    cx.run_until_parked();
+    assert_eq!(cx.opened_url().as_deref(), Some("https://example.com"));
+    assert_eq!(selection(&editor, cx), plain..plain, "the caret stays");
+
+    cx.simulate_click(link, gpui::Modifiers::none());
+    cx.run_until_parked();
+    assert_eq!(editor.read_with(cx, |e, _| e.active_block()), Some(0), "a plain click edits");
+}
