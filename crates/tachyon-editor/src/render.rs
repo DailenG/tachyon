@@ -628,7 +628,7 @@ fn with_mouse(
         let index = index.min(down_layout.len());
         let offset = down_target.offset(index);
         down_editor.update(cx, |editor, cx| {
-            editor.mouse_down(offset, event.modifiers.shift, event.click_count, window, cx)
+            editor.mouse_down(offset, event.modifiers, event.click_count, window, cx)
         });
         cx.stop_propagation();
     })

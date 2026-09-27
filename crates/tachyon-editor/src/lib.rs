@@ -6,6 +6,7 @@ mod editor;
 mod find;
 mod frame_log;
 mod frame_stats;
+mod links;
 mod movement;
 mod prompt;
 mod render;

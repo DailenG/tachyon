@@ -766,13 +766,17 @@ impl Editor {
     pub(crate) fn mouse_down(
         &mut self,
         offset: usize,
-        extend: bool,
+        modifiers: gpui::Modifiers,
         click_count: usize,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.flush_pending_paste(cx);
         window.focus(&self.focus, cx);
+        let extend = modifiers.shift;
+        if modifiers.secondary() && !extend && click_count == 1 && self.follow_link(offset, cx) {
+            return;
+        }
         self.goal_x = None;
         if click_count >= 2 && !extend {
             let rope = self.doc.buffer().rope();

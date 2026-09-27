@@ -283,3 +283,37 @@ fn leafy_top_level_blocks_have_one_leaf() {
         assert_eq!(b.ir.leaves, vec![0..src.len()], "{src:?}");
     }
 }
+
+#[test]
+fn bare_urls_in_text_become_links() {
+    let b = &blocks(
+        "Docs at https://x.dev/guide. **Bold https://y.dev** and [named](https://z.dev).\n",
+    )[0];
+    let dests: Vec<(&str, &str)> =
+        b.ir.links.iter().map(|l| (&b.ir.text[l.visible.clone()], l.dest.as_str())).collect();
+    assert_eq!(
+        dests,
+        [
+            ("https://x.dev/guide", "https://x.dev/guide"),
+            ("https://y.dev", "https://y.dev"),
+            ("named", "https://z.dev"),
+        ]
+    );
+    assert_eq!(styled(&b.ir, Style::STRONG | Style::LINK), vec!["https://y.dev"]);
+    assert!(b.ir.map.iter().any(|s| s.verbatim), "the source map is untouched");
+}
+
+#[test]
+fn urls_in_code_math_and_html_stay_text() {
+    for src in [
+        "Run `curl https://x.dev` now\n",
+        "```\nhttps://x.dev\n```\n",
+        "    https://x.dev\n",
+        "<div>https://x.dev</div>\n",
+        "![https://x.dev](https://x.dev/i.png)\n",
+    ] {
+        let b = &blocks(src)[0];
+        let bare = b.ir.links.iter().filter(|l| b.ir.text[l.visible.clone()] == l.dest).count();
+        assert_eq!(bare, 0, "{src:?}");
+    }
+}

@@ -143,7 +143,11 @@ What a scratchpad needs day to day, without giving up the budgets above.
       in the right theme
 - [x] Zoom (`Ctrl+=`, `Ctrl+-`, `Ctrl+0`): browser steps from 50 % to 300 %, per window; text,
       indents and rem-based spacing scale together
-- [ ] Open links with `Ctrl+click`
+- [x] Open links with `Ctrl+click` (`Cmd+click`) on their text, rendered or raw: `http`, `https`
+      and `mailto` in the system's handler; Markdown and text files (relative to the document,
+      absolute, or `file:`) in Tachyon; other schemes and other local files are ignored, since they
+      could be programs. Bare `http(s)://` URLs are links too, as on GitHub (`tachyon-md`'s
+      autolink pass: not in code, math or HTML; trailing punctuation and unbalanced `)` excluded)
 - [x] Tray icon on Windows for the resident process: click for a new window, menu with "New
       window" and "Quit Tachyon"; re-added when Explorer restarts. Tachyon's windows get the same
       icon (title bar, taskbar, Alt+Tab)
