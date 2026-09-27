@@ -2,6 +2,7 @@ use std::io::{self, Write};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::{Duration, Instant};
 
 use gpui::{
@@ -1115,11 +1116,24 @@ impl Editor {
     }
 
     /// Pastes with the clipboard read on a background thread, then continues like `paste`.
+    /// `claim` races this task against `flush_pending_paste`: whichever moves it off
+    /// `CLAIM_IDLE` first is the only one that calls `read` (see the `CLAIM_*` docs above
+    /// `PasteText`).
     fn paste_read_off_thread(&mut self, read: fn() -> Option<String>, cx: &mut Context<Self>) {
         self.moved_since_edit = true;
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let claim = Arc::new(AtomicU8::new(CLAIM_IDLE));
+        let claim_for_background = Arc::clone(&claim);
         let reading = cx.background_executor().spawn(async move {
-            let _ = sender.send(read());
+            let won = claim_for_background
+                .compare_exchange(CLAIM_IDLE, CLAIM_BACKGROUND, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok();
+            // If this lost the race, `flush_pending_paste` already claimed the read and is doing
+            // it on the UI thread right now: touching the clipboard here too is the two-thread
+            // race that used to crash on Windows, so this task does nothing further.
+            if won {
+                let _ = sender.send(read());
+            }
         });
         let task = cx.spawn(async move |this, cx| {
             reading.await;
@@ -1129,7 +1143,7 @@ impl Editor {
             }
         });
         self.pending_paste =
-            Some(PendingPaste { text: PasteText::Reading { receiver, read }, _task: task });
+            Some(PendingPaste { text: PasteText::Reading { receiver, read, claim }, _task: task });
     }
 
     /// The clipboard text read for the pending paste. Pastes it right away if it is small (and
@@ -1151,16 +1165,30 @@ impl Editor {
         Some(text)
     }
 
-    /// Applies a paste still being read or prepared, on this thread (reading the clipboard here
-    /// if the background read has not finished). Called before any other input so edits keep
-    /// their order.
+    /// Applies a paste still being read or prepared, on this thread. Called before any other
+    /// input so edits keep their order (a key typed after Ctrl+V must land after the paste).
+    ///
+    /// Claims the read itself (`CLAIM_IDLE` -> `CLAIM_UI`) if `paste_read_off_thread`'s
+    /// background task has not started yet, and then reads the clipboard exactly as `paste`
+    /// would have. If the background task already claimed it, this must not read a second time
+    /// (see the `CLAIM_*` docs above `PasteText`): it blocks on the background task's single
+    /// result instead. That block is bounded in practice, not by a timeout: the background task,
+    /// once it wins the claim, does nothing but call `read` (the same synchronous read this
+    /// thread would otherwise do itself), so the wait is at most `read`'s own cost (Windows:
+    /// `read_clipboard_text`'s ~50 ms `OpenClipboard` deadline plus ~12 ms to copy 5 MB), and
+    /// usually much less, since the background task had a head start of however long the keys
+    /// took to arrive after Ctrl+V. That is cheaper than what this used to do on a lost race:
+    /// read the clipboard a second time, concurrently with the background task's own read.
     pub(crate) fn flush_pending_paste(&mut self, cx: &mut Context<Self>) {
         let Some(paste) = self.pending_paste.take() else { return };
         let text = match paste.text {
             PasteText::Read(text) => text,
-            PasteText::Reading { receiver, read } => {
+            PasteText::Reading { receiver, read, claim } => {
                 let started = Instant::now();
-                let text = receiver.try_recv().unwrap_or_else(|_| read());
+                let won = claim
+                    .compare_exchange(CLAIM_IDLE, CLAIM_UI, Ordering::AcqRel, Ordering::Acquire)
+                    .is_ok();
+                let text = if won { read() } else { receiver.recv().ok().flatten() };
                 self.charge_work("clipboard", started);
                 let Some(text) = text else { return };
                 text.into()
@@ -1438,13 +1466,26 @@ struct PendingPaste {
     _task: Task<()>,
 }
 
+/// States for [`PasteText::Reading`]'s `claim`: exactly one of the background task spawned by
+/// `Editor::paste_read_off_thread` and `Editor::flush_pending_paste` may read the clipboard for a
+/// given paste. Both race to move `claim` off `CLAIM_IDLE` with a `compare_exchange`; whichever
+/// loses must not call `read` at all. That is what keeps two threads from ever being inside
+/// `read_clipboard_text`'s `OpenClipboard`/`GlobalLock`/`CloseClipboard` span for the same paste
+/// at once. Before this, a large paste plus a fast keystroke read the clipboard on both threads,
+/// and on Windows the background read then faulted inside the `GlobalLock`ed text a few seconds
+/// later (crash dumps in the Windows design check that followed #47).
+const CLAIM_IDLE: u8 = 0;
+const CLAIM_BACKGROUND: u8 = 1;
+const CLAIM_UI: u8 = 2;
+
 /// The text of a pending paste.
 enum PasteText {
-    /// Still being read from the clipboard on a background thread, which sends the text (`None`
-    /// if it held none); `read` reads it again on the UI thread if it is needed first.
+    /// Still being read from the clipboard: `claim` decides which thread performs the single
+    /// read (see the `CLAIM_*` docs above); `read` is called by whichever thread wins it.
     Reading {
         receiver: std::sync::mpsc::Receiver<Option<String>>,
         read: fn() -> Option<String>,
+        claim: Arc<AtomicU8>,
     },
     Read(Arc<str>),
 }
@@ -1471,7 +1512,8 @@ impl gpui::Global for HtmlClipboard {}
 
 /// Reads the clipboard's text off the UI thread. Set by the application where the platform
 /// allows that (`tachyon_platform::clipboard_text_reader`); without it the clipboard is read
-/// through GPUI on the UI thread, which takes ≈ 12 ms for 5 MB on Windows.
+/// through GPUI on the UI thread, which takes ≈ 12 ms for 5 MB on Windows. Never called from two
+/// threads at once for the same paste: see the `CLAIM_*` docs above `PasteText`.
 pub struct ClipboardReader(pub fn() -> Option<String>);
 
 impl gpui::Global for ClipboardReader {}
