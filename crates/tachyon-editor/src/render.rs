@@ -7,9 +7,9 @@ use std::sync::Arc;
 
 use gpui::{
     AnyElement, Context, ElementInputHandler, Entity, FontWeight, HighlightStyle, IntoElement,
-    MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit, Render, SharedString, StyledImage as _,
-    StyledText, TextLayout, UnderlineStyle, Window, canvas, div, fill, img, list, prelude::*, px,
-    relative, size,
+    MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit, Pixels, Render, SharedString, Size,
+    StyledImage as _, StyledText, TextLayout, UnderlineStyle, Window, canvas, div, fill, img, list,
+    prelude::*, px, relative, size,
 };
 use tachyon_md::{BlockKind, LineInfo, LineKind, Marker, ParsedBlock};
 
@@ -30,6 +30,7 @@ impl Render for Editor {
         let focus = self.focus.clone();
         // Spacing given in rems (padding, gaps) follows the zoom.
         window.set_rem_size(self.theme.scaled(BASE_REM_SIZE));
+        let viewport = window.viewport_size();
         div()
             .id("editor")
             .key_context(KEY_CONTEXT)
@@ -146,16 +147,19 @@ impl Render for Editor {
                 .size_full(),
             )
             .children(self.frame_stats_overlay())
-            .children(self.find_bar())
-            .children(self.picker_bar(cx))
+            .children(self.find_bar(viewport))
+            .children(self.picker_bar(viewport, cx))
     }
 }
 
 impl Editor {
-    /// The find bar: the query with a caret and the match count.
-    fn find_bar(&self) -> Option<AnyElement> {
+    /// The find bar: the query with a caret and the match count. At most the window's width
+    /// less the margins; with Replace open in a narrow window the fields wrap.
+    fn find_bar(&self, viewport: Size<Pixels>) -> Option<AnyElement> {
         let find = self.find.as_ref()?;
         let theme = &self.theme;
+        let max_width = viewport.width - OVERLAY_MARGIN * 2.;
+        let field_width = |width: f32| theme.scaled(px(width)).min(max_width - px(64.));
         Some(
             div()
                 .absolute()
@@ -167,18 +171,20 @@ impl Editor {
                 .child(
                     div()
                         .flex()
-                        .gap_3()
+                        .flex_wrap()
+                        .gap_x_3()
                         .px_3()
                         .py_1()
-                        .rounded_md()
+                        .max_w(max_width)
+                        .rounded(theme.radius_medium)
                         .bg(theme.surface.raised)
                         .border_1()
-                        .border_color(theme.border.subtle)
+                        .border_color(theme.border.control)
                         .text_color(theme.text.primary)
                         .child(div().text_color(theme.text.muted).child("Find"))
                         .child(
                             div()
-                                .min_w(px(200.))
+                                .min_w(field_width(200.))
                                 .child(field(&find.query, !find.editing_replacement)),
                         )
                         .child(div().text_color(theme.text.muted).child(find.status()))
@@ -189,7 +195,7 @@ impl Editor {
                                 .child(div().text_color(theme.text.muted).child("Replace"))
                                 .child(
                                     div()
-                                        .min_w(px(160.))
+                                        .min_w(field_width(160.))
                                         .child(field(replacement, find.editing_replacement)),
                                 )
                         })),
@@ -200,23 +206,31 @@ impl Editor {
 
     /// The open picker: its title and filter with a caret, then the matching rows, the chosen one
     /// highlighted. Clicking a row picks it.
-    fn picker_bar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn picker_bar(&self, viewport: Size<Pixels>, cx: &mut Context<Self>) -> Option<AnyElement> {
         let picker = self.picker.as_ref()?;
         let theme = &self.theme;
-        let rows = picker.window().map(|row| {
+        // Rows that fit under the header in the window: line height plus the 4 px row gap, with
+        // the margins, padding and header taken off.
+        let row_height = theme.text_size * 1.6 + theme.scaled(px(4.));
+        let room = viewport.height - OVERLAY_MARGIN * 2. - theme.scaled(px(16.)) - row_height;
+        let fit = (room / row_height).floor().max(1.) as usize;
+        let rows = picker.window(fit.min(crate::picker::VISIBLE_ROWS)).map(|row| {
             let item = &picker.items[picker.matches[row]];
+            let selected = row == picker.selected;
+            let detail_color = if selected { theme.text.on_accent } else { theme.text.muted };
             div()
                 .id(row)
                 .flex()
                 .gap_2()
                 .px_2()
-                .rounded_sm()
+                .rounded(theme.radius_small)
                 .pl(self.theme.scaled(px(8. + 14. * f32::from(item.indent))))
-                .when(row == picker.selected, |d| d.bg(theme.editing.selection))
-                .child(item.label.clone())
+                .overflow_hidden()
+                .when(selected, |d| d.bg(theme.accent).text_color(theme.text.on_accent))
+                .child(div().flex_none().child(item.label.clone()))
                 .children(item.detail.clone().map(|detail| {
                     div()
-                        .text_color(theme.text.muted)
+                        .text_color(detail_color)
                         .overflow_hidden()
                         .whitespace_nowrap()
                         .child(detail)
@@ -245,11 +259,11 @@ impl Editor {
                         .gap_1()
                         .px_3()
                         .py_2()
-                        .w(self.theme.scaled(px(520.)))
-                        .rounded_md()
+                        .w(self.theme.scaled(px(520.)).min(viewport.width - OVERLAY_MARGIN * 2.))
+                        .rounded(theme.radius_medium)
                         .bg(theme.surface.raised)
                         .border_1()
-                        .border_color(theme.border.subtle)
+                        .border_color(theme.border.control)
                         .text_color(theme.text.primary)
                         .child(
                             div()
@@ -286,21 +300,35 @@ impl Editor {
             .collect()
     }
 
-    /// Background marks for `block` (absolute source range): find matches, then the selection.
-    fn marks(&self, block: &Range<usize>) -> Vec<(Range<usize>, gpui::Hsla)> {
+    /// Marks for `block` (absolute source range): find matches, then the selection. Matches are
+    /// underlined, 1 px, and the current one 2 px with a stronger fill, so they differ by shape
+    /// as well as color. The current match is also the selection; it keeps its find fill.
+    pub(crate) fn marks(&self, block: &Range<usize>) -> Vec<Mark> {
+        let editing = &self.theme.editing;
         let mut marks = Vec::new();
+        let mut selection_is_match = false;
         if let Some(find) = &self.find {
+            selection_is_match =
+                find.current.and_then(|i| find.matches.get(i)) == Some(&self.selection);
             for (m, current) in find.matches_in(block) {
-                let color = if current {
-                    self.theme.editing.find_current
-                } else {
-                    self.theme.editing.find_match
+                let (fill, thickness) =
+                    if current { (editing.find_current, 2.) } else { (editing.find_match, 1.) };
+                let style = HighlightStyle {
+                    background_color: Some(fill),
+                    underline: Some(UnderlineStyle {
+                        thickness: px(thickness),
+                        color: Some(editing.find_underline),
+                        wavy: false,
+                    }),
+                    ..Default::default()
                 };
-                marks.push((m, color));
+                marks.push((m, style));
             }
         }
-        if !self.selection.is_empty() {
-            marks.push((self.selection.clone(), self.theme.editing.selection));
+        if !self.selection.is_empty() && !selection_is_match {
+            let style =
+                HighlightStyle { background_color: Some(editing.selection), ..Default::default() };
+            marks.push((self.selection.clone(), style));
         }
         marks
     }
@@ -365,7 +393,7 @@ impl Editor {
             .w_full()
             .flex()
             .justify_center()
-            .child(div().w_full().max_w(self.theme.content_width).px_8().child(content))
+            .child(div().w_full().max_w(self.theme.content_width).px_4().child(content))
             .into_any_element()
     }
 
@@ -398,9 +426,8 @@ impl Editor {
                 }
             }
         }
-        for (mark, color) in self.marks(&range) {
+        for (mark, style) in self.marks(&range) {
             if let Some(local) = intersect(&mark, &range, base, len) {
-                let style = HighlightStyle { background_color: Some(color), ..Default::default() };
                 highlights = overlay(highlights, local, style);
             }
         }
@@ -432,8 +459,10 @@ impl Editor {
         let mut element = div()
             .relative()
             .my_1()
-            .px(theme.scaled(RAW_INSET))
-            .rounded_md()
+            .px(theme.scaled(RAW_INSET) - px(1.))
+            .rounded(theme.radius_small)
+            .border_1()
+            .border_color(theme.border.control)
             .bg(theme.surface.raised)
             .cursor_text()
             .child(styled)
@@ -492,13 +521,13 @@ impl Editor {
         let block_len = parsed.len;
         // Marks (find matches, selection) mapped to visible offsets of this block.
         let block = block_start..block_start + block_len;
-        let marks: Vec<(Range<usize>, gpui::Hsla)> = self
+        let marks: Vec<Mark> = self
             .marks(&block)
             .into_iter()
-            .filter_map(|(mark, color)| {
+            .filter_map(|(mark, style)| {
                 let local = intersect(&mark, &block, block_start, block_len)?;
                 let visible = ir.source_to_visible(local.start)..ir.source_to_visible(local.end);
-                (!visible.is_empty()).then_some((visible, color))
+                (!visible.is_empty()).then_some((visible, style))
             })
             .collect();
 
@@ -616,7 +645,7 @@ impl Editor {
         visible: Range<usize>,
         parsed: &Arc<ParsedBlock>,
         block_start: usize,
-        marks: &[(Range<usize>, gpui::Hsla)],
+        marks: &[Mark],
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = &self.theme;
@@ -713,9 +742,9 @@ impl Editor {
                 .child(
                     div()
                         .size(theme.scaled(px(13.)))
-                        .rounded_sm()
+                        .rounded(theme.radius_small)
                         .border_1()
-                        .border_color(theme.text.muted)
+                        .border_color(theme.border.control)
                         .flex()
                         .items_center()
                         .justify_center()
@@ -736,7 +765,7 @@ impl Editor {
         visible: Range<usize>,
         parsed: &Arc<ParsedBlock>,
         block_start: usize,
-        marks: &[(Range<usize>, gpui::Hsla)],
+        marks: &[Mark],
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let ir = &parsed.ir;
@@ -752,15 +781,12 @@ impl Editor {
                 })
             })
             .collect();
-        for (mark, color) in marks {
+        for (mark, style) in marks {
             let start = mark.start.max(visible.start);
             let end = mark.end.min(visible.end);
             if start < end {
-                highlights = overlay(
-                    highlights,
-                    start - visible.start..end - visible.start,
-                    HighlightStyle { background_color: Some(*color), ..Default::default() },
-                );
+                highlights =
+                    overlay(highlights, start - visible.start..end - visible.start, *style);
             }
         }
         // An empty line still needs a line box to be visible and clickable.
@@ -783,10 +809,16 @@ fn field(text: &str, active: bool) -> String {
 
 /// Horizontal padding of the active block's card: raw text sits this much to
 /// the right of the same text rendered.
-pub(crate) const RAW_INSET: gpui::Pixels = px(8.);
+pub(crate) const RAW_INSET: Pixels = px(8.);
+
+/// A highlight over an absolute source range (find match, selection).
+pub(crate) type Mark = (Range<usize>, HighlightStyle);
+
+/// Space kept between an overlay (find bar, picker, prompt) and each window edge.
+pub(crate) const OVERLAY_MARGIN: Pixels = px(8.);
 
 /// GPUI's default rem size, the 100 % zoom reference.
-const BASE_REM_SIZE: gpui::Pixels = px(16.);
+const BASE_REM_SIZE: Pixels = px(16.);
 
 /// Attaches click and drag-select handlers mapping pointer positions in
 /// `layout` to document offsets through `target`.

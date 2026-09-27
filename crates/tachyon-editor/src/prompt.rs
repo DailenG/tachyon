@@ -82,18 +82,19 @@ impl Focusable for KeyboardPrompt {
 }
 
 impl Render for KeyboardPrompt {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = &self.theme;
+        let max_width = window.viewport_size().width - crate::render::OVERLAY_MARGIN * 2.;
         let buttons = self.actions.iter().enumerate().map(|(ix, label)| {
             let selected = ix == self.selected;
             div()
                 .id(ix)
                 .px_3()
                 .py_1()
-                .rounded_md()
+                .rounded(theme.radius_small)
                 .border_1()
                 .cursor_pointer()
-                .border_color(if selected { theme.accent } else { theme.border.subtle })
+                .border_color(if selected { theme.accent } else { theme.border.control })
                 .when(selected, |d| d.bg(theme.accent).text_color(theme.text.on_accent))
                 .child(label.clone())
                 .on_click(cx.listener(move |_, _, _, cx| {
@@ -104,11 +105,11 @@ impl Render for KeyboardPrompt {
         let panel = div()
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::key_down))
-            .w(px(380.))
-            .p_4()
-            .rounded_lg()
+            .w(px(380.).min(max_width))
+            .p_3()
+            .rounded(theme.radius_medium)
             .border_1()
-            .border_color(theme.border.subtle)
+            .border_color(theme.border.control)
             .bg(theme.surface.raised)
             .text_color(theme.text.primary)
             .font_family(theme.text_font.clone())
@@ -117,13 +118,14 @@ impl Render for KeyboardPrompt {
             .gap_2()
             .child(div().font_weight(FontWeight::BOLD).child(self.message.clone()))
             .children(self.detail.clone().map(|d| div().text_color(theme.text.muted).child(d)))
-            .child(div().flex().justify_end().gap_2().mt_2().children(buttons));
+            .child(div().flex().flex_wrap().justify_end().gap_2().mt_2().children(buttons));
+        // No backdrop: translucency is kept to the editing highlights, and an opaque one would
+        // hide the document the question is about. The panel's border sets it apart.
         div()
             .size_full()
             .absolute()
             .top_0()
             .left_0()
-            .bg(gpui::hsla(0., 0., 0., 0.45))
             .flex()
             .items_center()
             .justify_center()

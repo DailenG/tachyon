@@ -4,8 +4,8 @@
 use std::sync::OnceLock;
 
 use gpui::{
-    App, FontStyle, FontWeight, Global, HighlightStyle, Hsla, Pixels, SharedString,
-    StrikethroughStyle, UnderlineStyle, Window, WindowAppearance, px, rgb, rgba,
+    App, FontStyle, FontWeight, Global, HighlightStyle, Hsla, Pixels, Rems, SharedString,
+    StrikethroughStyle, UnderlineStyle, Window, WindowAppearance, px, rems, rgb, rgba,
 };
 use tachyon_md::Style;
 
@@ -109,6 +109,10 @@ pub struct Theme {
     pub accent: Hsla,
     pub editing: Editing,
     pub syntax: Syntax,
+    /// Corner radii: rows, inline controls and the raw editing card (`small`); bars, pickers and
+    /// the prompt (`medium`). In rems, so they follow zoom.
+    pub radius_small: Rems,
+    pub radius_medium: Rems,
     pub text_size: Pixels,
     pub code_size: Pixels,
     /// Heading sizes for levels 1–6.
@@ -126,11 +130,13 @@ impl Theme {
         if dark { Self::dark() } else { Self::light() }
     }
 
-    /// The theme for the system appearance (the [`AppearanceHint`] if set, else `window`'s), with
-    /// its text font resolved.
+    /// The theme the settings choose, for the system appearance (the [`AppearanceHint`] if set,
+    /// else `window`'s), with its text font resolved.
     pub fn for_window(window: &Window, cx: &App) -> Self {
         let hint = cx.try_global::<AppearanceHint>().map(|hint| hint.dark);
-        Self::for_dark(hint.unwrap_or_else(|| is_dark(window.appearance()))).with_text_font(window)
+        let system = hint.unwrap_or_else(|| is_dark(window.appearance()));
+        let dark = cx.try_global::<crate::Settings>().map_or(system, |s| s.dark(system));
+        Self::for_dark(dark).with_text_font(window)
     }
 
     /// This theme with the text font installed on the system.
@@ -225,6 +231,8 @@ impl Theme {
                 type_: rgb(0xd3aaff).into(),
                 math: rgb(0xc6a2ed).into(),
             },
+            radius_small: rems(0.25),
+            radius_medium: rems(0.5),
             text_size: px(15.),
             code_size: px(13.5),
             heading_sizes: [px(28.), px(23.), px(19.), px(17.), px(15.), px(14.)],
