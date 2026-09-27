@@ -17,7 +17,8 @@ mod theme;
 
 pub use crate::backup::{Backups, HotExit, Restored};
 pub use crate::editor::{
-    ClipboardReader, CloseWindow, Editor, KEY_CONTEXT, OpenPaths, Save, SaveAs, key_bindings,
+    ClipboardReader, CloseWindow, Editor, HtmlClipboard, KEY_CONTEXT, OpenPaths, Save, SaveAs,
+    key_bindings,
 };
 pub use crate::prompt::keyboard_prompt;
 pub use crate::theme::{AppearanceHint, Theme};

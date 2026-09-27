@@ -8,6 +8,9 @@ All notable user-visible changes are recorded here. The format follows
 
 ### Added
 
+- Copy as HTML (`Ctrl+Shift+C`): the selection, or the whole document, rendered as HTML. On
+  Windows it is pasted as formatted text in Word, Outlook, Teams and browsers (plain-text targets
+  get the Markdown); on Linux and macOS the HTML source is copied as text.
 - Hot exit: Quit no longer asks about unsaved changes. Unsaved documents (scratch text and edited
   files) are backed up as you type and reopen, still unsaved, at the next start. Closing a single
   window still asks.

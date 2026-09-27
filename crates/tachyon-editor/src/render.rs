@@ -85,6 +85,7 @@ impl Render for Editor {
             .on_action(cx.listener(Self::newline))
             .on_action(cx.listener(Self::tab))
             .on_action(cx.listener(Self::outdent))
+            .on_action(cx.listener(Self::copy_as_html))
             .on_action(cx.listener(Self::copy))
             .on_action(cx.listener(Self::cut))
             .on_action(cx.listener(Self::paste))

@@ -13,7 +13,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
-pulldown-cmark.workspace = true
+pulldown-cmark = { workspace = true, features = ["html"] }
 unicase.workspace = true
 
 [dev-dependencies]

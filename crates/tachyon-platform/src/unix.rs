@@ -135,6 +135,14 @@ pub fn disable_window_transitions(_window: &impl raw_window_handle::HasWindowHan
 
 pub fn attach_parent_console() {}
 
+pub fn write_clipboard_html(
+    _window: &impl raw_window_handle::HasWindowHandle,
+    _html: &str,
+    _text: &str,
+) -> bool {
+    false
+}
+
 /// X11 and Wayland clipboards are served by GPUI's event loop.
 pub fn clipboard_text_reader() -> Option<fn() -> Option<String>> {
     None
