@@ -8,6 +8,8 @@ All notable user-visible changes are recorded here. The format follows
 
 ### Added
 
+- Syntax highlighting in fenced code blocks (Rust, Python, JavaScript/TypeScript, C-family,
+  Go, Java, C#, shells, PowerShell, SQL, JSON, TOML, YAML), in both themes, also while editing.
 - Go to heading (`Ctrl+Shift+O`): type to filter the document's headings, `Enter` or a click
   jumps.
 - Lists continue on `Enter` with the next bullet, number or an unchecked task box; `Enter` on an

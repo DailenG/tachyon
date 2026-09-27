@@ -20,6 +20,13 @@ impl Style {
     pub const MATH: Style = Style(1 << 6);
     pub const HTML: Style = Style(1 << 7);
     pub const FOOTNOTE_REF: Style = Style(1 << 8);
+    /// Code tokens in fenced code blocks (see `highlight`).
+    pub const KEYWORD: Style = Style(1 << 9);
+    pub const STRING: Style = Style(1 << 10);
+    pub const COMMENT: Style = Style(1 << 11);
+    pub const NUMBER: Style = Style(1 << 12);
+    pub const FUNCTION: Style = Style(1 << 13);
+    pub const TYPE: Style = Style(1 << 14);
 
     pub fn contains(self, other: Style) -> bool {
         self.0 & other.0 == other.0
@@ -27,6 +34,17 @@ impl Style {
 
     pub fn is_plain(self) -> bool {
         self.0 == 0
+    }
+
+    /// Whether this marks a token in highlighted code.
+    pub fn is_code_token(self) -> bool {
+        let tokens = Style::KEYWORD
+            | Style::STRING
+            | Style::COMMENT
+            | Style::NUMBER
+            | Style::FUNCTION
+            | Style::TYPE;
+        self.0 & tokens.0 != 0
     }
 }
 

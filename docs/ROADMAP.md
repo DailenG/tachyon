@@ -174,7 +174,12 @@ Typing Markdown by hand, and reading the code in LLM output, without leaving the
       top level; Tab / Shift+Tab nest an item under the previous one or move it up to its parent,
       renumbering ordered items (a nested list starts at 1, so it can interrupt its parent's
       text); not inside code or HTML blocks
-- [ ] Syntax highlighting in fenced code blocks, computed off the UI thread
+- [x] Syntax highlighting in fenced code blocks: a small lexer in `tachyon-md` (keywords,
+      strings, comments, numbers, function and type names for Rust, Python, JS/TS, C-family,
+      Go, Java, C#, shells, PowerShell, SQL, JSON, TOML/YAML), run as part of parsing the block,
+      so it goes wherever the parse goes (off the UI thread for large ranges); colors for both
+      themes; the raw block being edited is highlighted too. Keystroke in a code block, 1 MiB
+      document: p99 62 µs (budget 500 µs); full parse of 1 MiB: 23.0 ms
 - [x] Jump to a heading (`Ctrl+Shift+O`): the document's headings in a filterable list
       (case-insensitive substring, indented by level, opening on the heading above the caret);
       Up / Down choose, Enter or a click jumps, Escape closes
