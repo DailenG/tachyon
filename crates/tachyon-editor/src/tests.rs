@@ -846,8 +846,8 @@ fn go_to_heading_filters_chooses_and_jumps(cx: &mut TestAppContext) {
     let (editor, cx) = open(doc, cx);
     let titles = |cx: &mut VisualTestContext| {
         editor.read_with(cx, |e, _| {
-            let outline = e.outline.as_ref().expect("the list is open");
-            outline.matches.iter().map(|&i| outline.headings[i].title.clone()).collect::<Vec<_>>()
+            let picker = e.picker.as_ref().expect("the list is open");
+            picker.matches.iter().map(|&i| picker.items[i].label.clone()).collect::<Vec<_>>()
         })
     };
 
@@ -861,12 +861,12 @@ fn go_to_heading_filters_chooses_and_jumps(cx: &mut TestAppContext) {
     cx.run_until_parked();
     let target = doc.find("Setup again").expect("fixture");
     assert_eq!(selection(&editor, cx), target..target);
-    assert!(editor.read_with(cx, |e, _| e.outline.is_none()), "jumping closes the list");
+    assert!(editor.read_with(cx, |e, _| e.picker.is_none()), "jumping closes the list");
 
     // Escape closes without moving; Up wraps to the last heading.
     cx.simulate_keystrokes("secondary-shift-o up escape");
     assert_eq!(selection(&editor, cx), target..target);
-    assert!(editor.read_with(cx, |e, _| e.outline.is_none()));
+    assert!(editor.read_with(cx, |e, _| e.picker.is_none()));
 }
 
 /// A fresh backup directory for a test, removed first if an earlier run left it.
@@ -1089,5 +1089,42 @@ fn a_restored_file_without_a_recorded_version_asks_before_saving(cx: &mut TestAp
     cx.simulate_prompt_answer("Cancel");
     cx.run_until_parked();
     assert_eq!(std::fs::read_to_string(&file).expect("read"), "changed while Tachyon was closed\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+thread_local! {
+    /// Paths the fake `OpenPaths` was asked to open.
+    static OPENED: std::cell::RefCell<Vec<std::path::PathBuf>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+#[gpui::test]
+fn open_recent_lists_opened_files_newest_first_and_opens_the_pick(cx: &mut TestAppContext) {
+    let dir = backup_dir("recent");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let (a, b, c) = (dir.join("alpha.md"), dir.join("beta.md"), dir.join("gamma.md"));
+    for file in [&a, &b, &c] {
+        std::fs::write(file, "text\n").expect("write");
+    }
+    cx.update(|cx| {
+        cx.set_global(crate::RecentFiles::new(dir.join("recent.txt")));
+        cx.set_global(crate::OpenPaths(std::rc::Rc::new(|paths, _| OPENED.set(paths))));
+    });
+    let (editor, cx) = open("", cx);
+    for file in [&a, &b, &a, &c] {
+        editor.update(cx, |e, cx| e.set_file(file.clone(), cx));
+        cx.run_until_parked();
+    }
+
+    cx.simulate_keystrokes("secondary-r");
+    let labels = editor.read_with(cx, |e, _| {
+        let picker = e.picker.as_ref().expect("open");
+        picker.matches.iter().map(|&i| picker.items[i].label.clone()).collect::<Vec<_>>()
+    });
+    assert_eq!(labels, ["alpha.md", "beta.md"], "newest first, without duplicates or this file");
+
+    cx.simulate_input("bet");
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert_eq!(OPENED.with_borrow(Clone::clone), [b]);
     let _ = std::fs::remove_dir_all(&dir);
 }

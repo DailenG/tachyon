@@ -120,6 +120,10 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
         });
         cx.set_global(tachyon_editor::OpenPaths(std::rc::Rc::new(open_paths)));
         tachyon_editor::init(cx);
+        if let Some(dir) = tachyon_platform::state_dir() {
+            let recent = dir.join(format!("recent-{}.txt", crate::instance_id()));
+            cx.set_global(tachyon_editor::RecentFiles::new(recent));
+        }
         cx.set_global(tachyon_editor::HtmlClipboard(|window, html, text| {
             tachyon_platform::write_clipboard_html(window, html, text)
         }));

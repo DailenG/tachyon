@@ -207,7 +207,8 @@ frame.
       before overwriting (also for documents restored by hot exit, whose backup records the
       file's version). Checked when the window is activated: modification time and size, read
       off the UI thread
-- [ ] Open recent (`Ctrl+R`): recently opened files in a filterable list, like Go to heading
+- [x] Open recent (`Ctrl+R`): recently opened and saved files (up to 30, newest first, kept in
+      the state directory) in a filterable list; the pickers share one implementation
 - [ ] A settings file: theme (system, dark, light), default zoom, hot exit on or off; read on a
       thread at start-up like the Linux appearance query (a short bounded wait), so the first
       frame already uses it

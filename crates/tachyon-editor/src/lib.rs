@@ -11,7 +11,7 @@ mod frame_stats;
 mod links;
 mod lists;
 mod movement;
-mod outline;
+mod picker;
 mod prompt;
 mod render;
 mod theme;
@@ -21,6 +21,7 @@ pub use crate::editor::{
     ClipboardReader, CloseWindow, Editor, HtmlClipboard, KEY_CONTEXT, OpenPaths, Save, SaveAs,
     key_bindings,
 };
+pub use crate::picker::RecentFiles;
 pub use crate::prompt::keyboard_prompt;
 pub use crate::theme::{AppearanceHint, Theme};
 

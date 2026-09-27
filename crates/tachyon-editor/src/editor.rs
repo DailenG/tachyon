@@ -40,6 +40,7 @@ actions!(
         ShiftNewline,
         Find,
         GoToHeading,
+        OpenRecent,
         Replace,
         ReplaceAll,
         FindNext,
@@ -103,6 +104,7 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("ctrl-end", DocumentEnd, c),
         KeyBinding::new("secondary-f", Find, c),
         KeyBinding::new("secondary-shift-o", GoToHeading, c),
+        KeyBinding::new("secondary-r", OpenRecent, c),
         KeyBinding::new("ctrl-h", Replace, c),
         KeyBinding::new("cmd-alt-f", Replace, c),
         KeyBinding::new("secondary-enter", ReplaceAll, c),
@@ -197,8 +199,8 @@ pub struct Editor {
     pending_paste: Option<PendingPaste>,
     /// The find bar, when open.
     pub(crate) find: Option<crate::find::FindState>,
-    /// The heading list, when open.
-    pub(crate) outline: Option<crate::outline::Outline>,
+    /// The open picker (Go to heading, Open recent).
+    pub(crate) picker: Option<crate::picker::Picker>,
     last_edit: Option<Instant>,
     /// The cursor moved without typing since the last edit.
     moved_since_edit: bool,
@@ -275,7 +277,7 @@ impl Editor {
             parse_task: None,
             pending_paste: None,
             find: None,
-            outline: None,
+            picker: None,
             last_edit: None,
             moved_since_edit: false,
             selecting: false,
@@ -323,6 +325,7 @@ impl Editor {
     /// Associates the editor with a file: saves go there and the current
     /// text counts as saved.
     pub fn set_file(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        crate::picker::RecentFiles::note(&path, cx);
         self.disk_stamp = crate::disk::DiskStamp::of(&path);
         self.disk_changed = false;
         self.file = Some(path);
@@ -871,12 +874,12 @@ impl Editor {
         self.move_by(false, cx, movement::next_grapheme);
     }
     pub(crate) fn up(&mut self, _: &Up, _: &mut Window, cx: &mut Context<Self>) {
-        if !self.outline_step(-1, cx) {
+        if !self.picker_step(-1, cx) {
             self.vertical(-1, false, cx);
         }
     }
     pub(crate) fn down(&mut self, _: &Down, _: &mut Window, cx: &mut Context<Self>) {
-        if !self.outline_step(1, cx) {
+        if !self.picker_step(1, cx) {
             self.vertical(1, false, cx);
         }
     }
