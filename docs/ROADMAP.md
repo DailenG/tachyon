@@ -197,3 +197,19 @@ Met: every item has `gpui::test`s and a live check (Linux; the HTML clipboard on
 in a Rust block of a 1 MB document (Linux, release): key to paint p95 1.3 ms, max frame 1.5 ms,
 none over 16.7 ms; startup paths untouched apart from reading the (usually empty) backup
 directory at a primary's start.
+
+## Phase 6: files and settings (planned)
+
+Living with files that change under the editor, and a few preferences, without slowing the first
+frame.
+
+- [ ] A file changed on disk reloads if its window has no unsaved changes; otherwise Save asks
+      before overwriting (also for documents restored by hot exit)
+- [ ] Open recent (`Ctrl+R`): recently opened files in a filterable list, like Go to heading
+- [ ] A settings file: theme (system, dark, light), default zoom, hot exit on or off; read on a
+      thread at start-up like the Linux appearance query (a short bounded wait), so the first
+      frame already uses it
+- [ ] Images: local and remote images shown in rendered blocks, loaded off the UI thread
+
+**Exit:** each item covered by a `gpui::test` or a live check; startup budgets unchanged.
+
