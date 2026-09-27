@@ -18,7 +18,10 @@ start as fast as a scratchpad and edit like Typora: one pane, inline WYSIWYG, no
 > Markdown, the rest is rendered), on top of an incremental parser. The startup budget is met by
 > resident mode (default on Windows), and Phase 3's paste and typing criteria are met on
 > the reference Windows machine. Phase 4 added find and replace, a light theme, zoom, links you
-> can follow with `Ctrl+click` and a Windows tray icon. See [ROADMAP](docs/ROADMAP.md).
+> can follow with `Ctrl+click` and a Windows tray icon; Phase 5 list editing, code highlighting,
+> Go to heading, hot exit and Copy as HTML; Phase 6 reloading of changed files, Open recent,
+> settings and local images. Release archives come from `cargo xtask dist`. See
+> [ROADMAP](docs/ROADMAP.md).
 
 ## Performance budgets
 
