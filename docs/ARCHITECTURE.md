@@ -63,7 +63,10 @@ Link reference definitions and footnotes are document-wide: a `DefTable` built f
 resolves them (reference links through the broken-link callback, footnotes through a prefix of
 definitions). Each block records the entry it found for every label it looked up, and is reparsed
 only when the table now answers differently; a job that changes definitions parses its window
-against the table as it will be, so pasted text does not come back block by block. The rules that
+against the table as it will be, so pasted text does not come back block by block. The job that
+will leave nothing dirty (the last chunk of a streamed paste) also rebuilds the whole table and
+finds the blocks it makes stale, on its own thread; the owning thread installs the result if
+nothing was edited since the job's snapshot, and otherwise rebuilds the table itself. The rules that
 make every block parse identically alone and in context are in
 [ADR 0005](adr/0005-incremental-reparse-by-block-windows.md).
 

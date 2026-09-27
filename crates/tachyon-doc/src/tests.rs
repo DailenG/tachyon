@@ -187,6 +187,32 @@ fn a_paste_that_defines_its_references_needs_one_job() {
 }
 
 #[test]
+fn streamed_chunks_resolve_a_reference_defined_in_a_later_chunk() {
+    // The last chunk of a streamed paste settles the document's definitions
+    // off the parse job's thread (see `ParseJob::settle_definitions`); this
+    // exercises that path with more than one chunk, not just the
+    // single-job case above.
+    let section = |n: usize| format!("See [ref-{n}] here.\n\n[ref-{n}]: /target/{n}\n\n");
+    let paste: String = (0..50).map(section).collect();
+    let mut doc =
+        Document::new("# Notes\n\nUses [ref-49] before the paste.\n\nFiller.\n\nMore.\n\n");
+    let end = doc.len();
+    doc.edit(end..end, &paste).unwrap();
+
+    // A small window forces the paste back in many chunks, like the
+    // viewport-first streaming `Document::parse_job_near` does for a large
+    // paste.
+    let mut jobs = 0;
+    while let Some(job) = doc.parse_job_near(doc.len(), 256) {
+        assert_eq!(doc.apply(job.run()), Applied::Spliced);
+        jobs += 1;
+    }
+    assert!(jobs > 1, "expected the paste to stream back in more than one chunk");
+    assert_matches_full_parse(&doc);
+    assert_eq!(doc.blocks()[1].parsed().ir.links[0].dest, "/target/49");
+}
+
+#[test]
 fn find_all_is_smart_case_and_keeps_byte_offsets() {
     let doc = Document::new("Émile met emile. EMILE!\n");
     let starts = |q: &str| doc.find_all(q).into_iter().map(|r| r.start).collect::<Vec<_>>();
