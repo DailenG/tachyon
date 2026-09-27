@@ -198,7 +198,7 @@ in a Rust block of a 1 MB document (Linux, release): key to paint p95 1.3 ms, ma
 none over 16.7 ms; startup paths untouched apart from reading the (usually empty) backup
 directory at a primary's start.
 
-## Phase 6: files and settings (in progress)
+## Phase 6: files and settings (done)
 
 Living with files that change under the editor, and a few preferences, without slowing the first
 frame.
@@ -214,7 +214,26 @@ frame.
       start-up (waited for at most 15 ms), so the first frame already uses it; saving it from
       Tachyon applies the theme to open windows. Warm launch on Linux p95 30.7-31.5 ms (was
       29-32)
-- [ ] Images: local and remote images shown in rendered blocks, loaded off the UI thread
+- [x] Images: local images (relative to the document, absolute, `file:`) shown in rendered
+      blocks, scaled down to the column and at most 480 px high, loaded and decoded off the UI
+      thread by GPUI; a line that is only an image shows just the image, and clicking it edits
+      its Markdown. Remote images stay alt text: loading them needs an HTTP client dependency
 
 **Exit:** each item covered by a `gpui::test` or a live check; startup budgets unchanged.
+Met: every item has `gpui::test`s and a live check on Linux; warm launch p95 30.7-31.5 ms.
+
+## Phase 7: distribution (planned)
+
+Getting Tachyon onto machines without a Rust toolchain. Items marked *(owner)* need decisions or
+accounts only the project owner has.
+
+- [ ] `cargo xtask dist`: a release archive per platform (binary, README, licenses)
+- [ ] Windows: icon and version information in the executable (so Explorer, Task Manager and the
+      pinned taskbar button show them), built from `assets/tachyon.svg`
+- [ ] Linux: a `.desktop` entry and icons, installable per user
+- [ ] *(owner)* Code signing for Windows and macOS, and where releases are published (GitHub
+      Releases, winget, a package repository)
+
+**Exit:** a fresh machine runs Tachyon from the archive with nothing else installed; startup
+budgets unchanged.
 

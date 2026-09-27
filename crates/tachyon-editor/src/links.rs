@@ -86,6 +86,34 @@ fn percent_decode(text: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/// Extensions of images shown in rendered blocks.
+const IMAGE_EXTENSIONS: [&str; 9] =
+    ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "tif", "tiff"];
+
+/// The local file an image destination names, resolved like a link to a document (relative to
+/// `document`, absolute, or `file:`). Remote images (`http:` …) are not loaded: GPUI would need an
+/// HTTP client.
+pub(crate) fn image_path(dest: &str, document: Option<&Path>) -> Option<PathBuf> {
+    let dest = dest.trim();
+    let path = match split_scheme(dest) {
+        Some((scheme, rest)) if scheme.eq_ignore_ascii_case("file") => {
+            let path = rest.strip_prefix("//").unwrap_or(rest);
+            let path = match path.as_bytes() {
+                [b'/', drive, b':', ..] if drive.is_ascii_alphabetic() => &path[1..],
+                _ => path,
+            };
+            PathBuf::from(percent_decode(strip_suffix(path)))
+        }
+        Some(_) => return None,
+        None => {
+            let path = PathBuf::from(percent_decode(strip_suffix(dest)));
+            if path.is_absolute() { path } else { document?.parent()?.join(path) }
+        }
+    };
+    let extension = path.extension()?.to_str()?;
+    IMAGE_EXTENSIONS.iter().any(|e| e.eq_ignore_ascii_case(extension)).then_some(path)
+}
+
 fn document_file(path: &Path) -> Option<LinkTarget> {
     let extension = path.extension()?.to_str()?;
     DOCUMENT_EXTENSIONS
@@ -161,6 +189,18 @@ mod tests {
         assert_eq!(resolve("/abs/readme.TXT", None), file("/abs/readme.TXT"));
         assert_eq!(resolve("file:///abs/x.md", None), file("/abs/x.md"));
         assert_eq!(resolve("ideas.md", None), None, "a scratch buffer has no base");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn images_resolve_to_local_files_only() {
+        let doc = Some(Path::new("/notes/today.md"));
+        assert_eq!(image_path("img/a%20b.png", doc), Some(PathBuf::from("/notes/img/a b.png")));
+        assert_eq!(image_path("file:///pics/x.JPG", None), Some(PathBuf::from("/pics/x.JPG")));
+        for dest in ["https://x.dev/a.png", "data:image/png;base64,AAAA", "notes.md", "a.png"] {
+            let document = if dest == "a.png" { None } else { doc };
+            assert_eq!(image_path(dest, document), None, "{dest:?}");
+        }
     }
 
     #[test]
