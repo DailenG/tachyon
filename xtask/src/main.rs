@@ -224,12 +224,20 @@ fn icons() -> Result<ExitCode, String> {
         )?;
         pngs.push(png);
     }
-    let ico = out.join("tachyon.ico");
+    // Written and checked in the scratch directory first, so a bad ICO never replaces the tracked
+    // one that builds embed.
+    let staged = work.join("tachyon.ico");
     let mut args: Vec<&std::ffi::OsStr> = pngs.iter().map(|p| p.as_os_str()).collect();
-    args.push(ico.as_os_str());
-    run("magick", &args)?;
+    args.push(staged.as_os_str());
+    let checked = run("magick", &args)
+        .and_then(|()| std::fs::read(&staged).map_err(|e| e.to_string()))
+        .and_then(|bytes| check_dib_icon(&bytes));
+    let ico = out.join("tachyon.ico");
+    let replaced = checked.and_then(|()| {
+        std::fs::copy(&staged, &ico).map(drop).map_err(|e| format!("{}: {e}", ico.display()))
+    });
     let _ = std::fs::remove_dir_all(&work);
-    check_dib_icon(&std::fs::read(&ico).map_err(|e| e.to_string())?)?;
+    replaced?;
     let svg = out.join("tachyon.svg");
     std::fs::copy(brand.join("app-icon.svg"), &svg)
         .map_err(|e| format!("{}: {e}", svg.display()))?;
@@ -237,13 +245,18 @@ fn icons() -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Every image in the `.ico` is a DIB (a `BITMAPINFOHEADER`, not a PNG).
+/// Every image in the `.ico` is a 32-bit DIB (a `BITMAPINFOHEADER` with 32 bits per pixel, not a
+/// PNG).
 fn check_dib_icon(ico: &[u8]) -> Result<(), String> {
-    let count = usize::from(u16::from_le_bytes([ico[4], ico[5]]));
-    for i in 0..count {
-        let entry = &ico[6 + 16 * i..22 + 16 * i];
-        let offset = u32::from_le_bytes([entry[12], entry[13], entry[14], entry[15]]) as usize;
-        if ico.get(offset..offset + 4) != Some(&[40, 0, 0, 0][..]) {
+    let u16_at = |at: usize| ico.get(at..at + 2).map(|b| u16::from_le_bytes([b[0], b[1]]));
+    let count = u16_at(4).ok_or("the icon file is truncated")?;
+    for i in 0..usize::from(count) {
+        let offset = ico
+            .get(18 + 16 * i..22 + 16 * i)
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize)
+            .ok_or("the icon directory is truncated")?;
+        let header = ico.get(offset..offset + 4) == Some(&[40, 0, 0, 0][..]);
+        if !header || u16_at(offset + 14) != Some(32) {
             return Err(format!("icon image {i} is not a 32-bit DIB"));
         }
     }
