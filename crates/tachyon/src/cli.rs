@@ -23,6 +23,9 @@ Options:
                        starts at login
       --quit           Ask the running instance to quit (unsaved documents are
                        kept and reopen at the next start)
+      --desktop-entry <on|off>
+                       Add Tachyon to the application launcher and \"Open with\"
+                       menus, or remove it (Linux)
       --autostart <on|off>
                        Start in the background at login, or stop doing so
       --startup-report Print startup timings after the first frame, then exit
@@ -37,6 +40,7 @@ pub enum Command {
     Version,
     Status,
     Autostart(bool),
+    DesktopEntry(bool),
 }
 
 #[derive(Debug, Default)]
@@ -76,6 +80,13 @@ pub fn parse(
             Long("background") => cli.background = true,
             Long("quit") => cli.quit = true,
             Long("status") => return Ok(Command::Status),
+            Long("desktop-entry") => {
+                return match parser.value()?.to_str() {
+                    Some("on") => Ok(Command::DesktopEntry(true)),
+                    Some("off") => Ok(Command::DesktopEntry(false)),
+                    _ => Err(lexopt::Error::from("--desktop-entry takes `on` or `off`")),
+                };
+            }
             Long("autostart") => {
                 return match parser.value()?.to_str() {
                     Some("on") => Ok(Command::Autostart(true)),
@@ -160,6 +171,13 @@ mod tests {
             Ok(Command::Run(cli)) => assert!(cli.quit && cli.opens_nothing()),
             _ => panic!("forwarded arguments must parse"),
         }
+    }
+
+    #[test]
+    fn desktop_entry_takes_on_or_off() {
+        assert!(matches!(parse(["--desktop-entry", "on"]), Ok(Command::DesktopEntry(true))));
+        assert!(matches!(parse(["--desktop-entry", "off"]), Ok(Command::DesktopEntry(false))));
+        assert!(parse(["--desktop-entry", "maybe"]).is_err());
     }
 
     #[test]

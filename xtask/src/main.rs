@@ -23,6 +23,10 @@ Tasks:
       the second process until the resident instance has drawn the new window.
       --gap-ms waits between those launches (default 500, like a person; the
       resident instance prepares its next window in between).
+  dist
+      Builds the release binary and packs it with the README, changelog and
+      licenses into target/dist/tachyon-<version>-<arch>-<os>.zip on Windows,
+      .tar.gz elsewhere.
 ";
 
 const REPORT_PREFIX: &str = "tachyon-startup";
@@ -33,6 +37,7 @@ fn main() -> ExitCode {
     let result = match args.next().as_deref() {
         Some("ci") => ci(args.collect()),
         Some("bench-startup") => bench_startup(args.collect()),
+        Some("dist") => dist(),
         _ => {
             eprint!("{USAGE}");
             return ExitCode::from(2);
@@ -122,6 +127,61 @@ fn parse_bench_options(args: Vec<String>) -> Result<BenchOptions, String> {
         }
     }
     Ok(options)
+}
+
+/// Files shipped next to the binary in a release archive.
+const DIST_FILES: [&str; 4] = ["README.md", "CHANGELOG.md", "LICENSE-MIT", "LICENSE-APACHE"];
+
+fn dist() -> Result<ExitCode, String> {
+    run_cargo(&["build", "--release", "--locked", "--package", "tachyon"])?;
+    let root = workspace_root();
+    let version = workspace_version(&root)?;
+    let name = format!("tachyon-{version}-{}-{}", std::env::consts::ARCH, std::env::consts::OS);
+    let dist = release_binary()
+        .parent()
+        .and_then(|release| release.parent())
+        .ok_or("no target directory")?
+        .join("dist");
+    let stage = dist.join(&name);
+    let _ = std::fs::remove_dir_all(&stage);
+    std::fs::create_dir_all(&stage).map_err(|e| format!("{}: {e}", stage.display()))?;
+    let binary = release_binary();
+    let copy = |from: &std::path::Path| -> Result<(), String> {
+        let to = stage.join(from.file_name().ok_or("file without a name")?);
+        std::fs::copy(from, &to).map(drop).map_err(|e| format!("{}: {e}", from.display()))
+    };
+    copy(&binary)?;
+    for file in DIST_FILES {
+        copy(&root.join(file))?;
+    }
+    // Windows 10 and later ship bsdtar, which writes zip archives (`-a` picks the format from the
+    // extension); elsewhere a gzipped tar is the norm.
+    let archive = if cfg!(windows) { format!("{name}.zip") } else { format!("{name}.tar.gz") };
+    let mut tar = Command::new("tar");
+    if cfg!(windows) {
+        tar.args(["-a", "-c", "-f", &archive, &name]);
+    } else {
+        tar.args(["-c", "-z", "-f", &archive, &name]);
+    }
+    let status = tar.current_dir(&dist).status().map_err(|e| format!("failed to run tar: {e}"))?;
+    if !status.success() {
+        return Err("tar failed".into());
+    }
+    let path = dist.join(&archive);
+    let size = std::fs::metadata(&path).map_err(|e| format!("{}: {e}", path.display()))?.len();
+    println!("{} ({:.1} MB)", path.display(), size as f64 / 1e6);
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `version` from the workspace manifest's `[workspace.package]` table.
+fn workspace_version(root: &std::path::Path) -> Result<String, String> {
+    let manifest = std::fs::read_to_string(root.join("Cargo.toml")).map_err(|e| e.to_string())?;
+    manifest
+        .split("[workspace.package]")
+        .nth(1)
+        .and_then(|table| table.lines().find_map(|line| line.trim().strip_prefix("version = ")))
+        .map(|version| version.trim_matches('"').to_owned())
+        .ok_or_else(|| "no version in [workspace.package]".into())
 }
 
 fn workspace_root() -> PathBuf {

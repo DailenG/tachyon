@@ -18,7 +18,10 @@ start as fast as a scratchpad and edit like Typora: one pane, inline WYSIWYG, no
 > Markdown, the rest is rendered), on top of an incremental parser. The startup budget is met by
 > resident mode (default on Windows), and Phase 3's paste and typing criteria are met on
 > the reference Windows machine. Phase 4 added find and replace, a light theme, zoom, links you
-> can follow with `Ctrl+click` and a Windows tray icon. See [ROADMAP](docs/ROADMAP.md).
+> can follow with `Ctrl+click` and a Windows tray icon; Phase 5 list editing, code highlighting,
+> Go to heading, hot exit and Copy as HTML; Phase 6 reloading of changed files, Open recent,
+> settings and local images. Release archives come from `cargo xtask dist`. See
+> [ROADMAP](docs/ROADMAP.md).
 
 ## Performance budgets
 
@@ -64,9 +67,10 @@ at once (`--no-resident` turns that off; on Linux and macOS it is opt-in with `-
 tachyon --autostart on   # start in the background at login
 tachyon --status         # is an instance running? does it start at login?
 tachyon --quit           # end it (unsaved documents come back next time)
+tachyon --desktop-entry on   # Linux: add it to the launcher and "Open with" menus
 ```
 
-`tachyon --help` lists all options. Settings live in `settings.toml` (`Ctrl+,` opens it): theme,
+`cargo xtask dist` builds a release archive in `target/dist/`. `tachyon --help` lists all options. Settings live in `settings.toml` (`Ctrl+,` opens it): theme,
 zoom of new windows, and whether Quit keeps unsaved documents.
 
 ## Development

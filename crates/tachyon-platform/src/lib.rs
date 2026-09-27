@@ -52,8 +52,9 @@ pub fn write_clipboard_html(
     imp::write_clipboard_html(window, html, text)
 }
 
-/// Gives `window` Tachyon's icon (title bar, taskbar, Alt+Tab) on Windows, where GPUI looks for
-/// an icon resource Tachyon's executable does not have. A no-op elsewhere.
+/// Gives `window` Tachyon's icon (title bar, taskbar, Alt+Tab) on Windows at the sizes its
+/// monitor's DPI asks for; GPUI only loads the executable's icon resource at the default size.
+/// A no-op elsewhere.
 pub fn set_window_icon(window: &impl raw_window_handle::HasWindowHandle) {
     imp::set_window_icon(window);
 }
@@ -129,6 +130,18 @@ pub fn config_dir() -> Option<std::path::PathBuf> {
             .or_else(|| env("HOME").map(|home| home.join(".config")))
             .map(|dir| dir.join("tachyon"))
     }
+}
+
+/// Whether the per-user desktop entry (launcher and "Open with" item) is installed.
+pub fn desktop_entry_installed() -> io::Result<bool> {
+    imp::desktop_entry_installed()
+}
+
+/// Installs or removes the per-user desktop entry for `exe` with Tachyon's icon (Linux and BSD:
+/// `$XDG_DATA_HOME/applications/tachyon.desktop` and the hicolor icon theme). Unsupported
+/// elsewhere.
+pub fn set_desktop_entry(exe: &std::path::Path, enabled: bool) -> io::Result<()> {
+    imp::set_desktop_entry(exe, enabled)
 }
 
 /// Whether Tachyon starts in the background at login.

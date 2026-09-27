@@ -228,6 +228,17 @@ pub fn disable_window_transitions(window: &impl raw_window_handle::HasWindowHand
     result == 0
 }
 
+pub fn desktop_entry_installed() -> io::Result<bool> {
+    Ok(false)
+}
+
+pub fn set_desktop_entry(_exe: &std::path::Path, _enabled: bool) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "desktop entries are a Linux and BSD feature; on Windows pin tachyon.exe to Start",
+    ))
+}
+
 pub fn clipboard_text_reader() -> Option<fn() -> Option<String>> {
     Some(read_clipboard_text)
 }
