@@ -329,6 +329,7 @@ impl Document {
         let last = if converge { (last + 1).min(n - 1) } else { last };
         let window = self.starts[first]..self.starts[last + 1];
         self.clear_dirty(&window);
+        let will_clear_dirty = self.dirty.is_empty();
 
         let id = self.next_job;
         self.next_job += 1;
@@ -343,6 +344,8 @@ impl Document {
             last,
             window,
             converge,
+            will_clear_dirty,
+            defs_dirty_before: self.defs_dirty,
         })
     }
 
@@ -386,6 +389,13 @@ impl Document {
         let Some(job) = self.outstanding.take_if(|job| job.id == result.id) else {
             return Applied::Ignored;
         };
+        // No edit at all happened since the job's snapshot: any document-
+        // wide definitions refresh it computed from that snapshot still
+        // matches the current document, so it can be installed instead of
+        // redone here. Any edit, even one that never touched this window,
+        // means some other block may have changed too, so the snapshot no
+        // longer covers the whole document and the refresh must be redone.
+        let unchanged_since_snapshot = job.version == self.buffer.version();
         // The result may cover more than the initial window (convergence).
         let (window, touched) = self.rebase(job.version, result.window);
         if touched {
@@ -435,9 +445,21 @@ impl Document {
         if self.defs_dirty {
             // Rebuilding the table and checking every block is O(blocks):
             // wait until nothing else is dirty, so a paste streamed back in
-            // chunks (each defining references) pays for it once.
+            // chunks (each defining references) pays for it once. The job
+            // that settles the last chunk already computed this off the UI
+            // thread (see `ParseJob::settle_definitions`); use it here when
+            // nothing changed since, else fall back to redoing it in place.
             if self.dirty.is_empty() {
-                self.refresh_defs();
+                match result.defs_refresh {
+                    Some(refresh) if unchanged_since_snapshot => {
+                        self.defs_dirty = false;
+                        self.defs = refresh.table;
+                        for range in refresh.affected {
+                            self.mark_dirty(range);
+                        }
+                    }
+                    _ => self.refresh_defs(),
+                }
             }
         } else {
             // The table stands, but the job rendered against its snapshot,
@@ -742,6 +764,14 @@ pub struct ParseJob {
     /// Extend the window until it re-synchronizes with the old blocks. Off
     /// when dirty text follows the window (a streamed chunk).
     converge: bool,
+    /// Whether settling this window, if nothing else changes first, would
+    /// leave the document clean: only then is it worth computing the
+    /// document-wide definitions refresh in `run`, so a paste streamed back
+    /// in many chunks still pays for it once, not once per chunk.
+    will_clear_dirty: bool,
+    /// Whether the document already owed a definitions rebuild before this
+    /// job started (an earlier edit removed a block that made one).
+    defs_dirty_before: bool,
 }
 
 impl ParseJob {
@@ -773,9 +803,14 @@ impl ParseJob {
                     end - p.len >= self.window.start && self.blocks[last].matches(p)
                 });
             if converged || last + 1 >= n {
-                let parsed = self.settle_definitions(&text, parsed, last);
+                let (parsed, defs_refresh) = self.settle_definitions(&text, parsed, last);
                 let blocks = parsed.into_iter().map(Arc::new).collect();
-                return ParseResult { id: self.id, window: self.window.start..end, blocks };
+                return ParseResult {
+                    id: self.id,
+                    window: self.window.start..end,
+                    blocks,
+                    defs_refresh,
+                };
             }
             // Grow geometrically: an unclosed fence near the top costs
             // O(n log n) parsed bytes, not O(n²).
@@ -791,15 +826,26 @@ impl ParseJob {
     /// would be parsed again, each as its own job on the UI thread (a paste
     /// that defines the references it uses: thousands). Instead parse the
     /// window once more here, against the table as it will be.
+    ///
+    /// When settling this window would also leave the document clean
+    /// (`will_clear_dirty`) and the table needs rebuilding (the window's
+    /// definitions changed, or an earlier edit already flagged one), this
+    /// also builds the document-wide refresh that `Document::apply` would
+    /// otherwise have to do on the UI thread: the whole new [`DefTable`]
+    /// plus every block whose rendering depends on it, spanning this
+    /// snapshot's blocks outside the window and the window's new ones.
+    /// `apply` uses the result only if nothing else changed in the meantime.
     fn settle_definitions(
         &self,
         text: &str,
         parsed: Vec<ParsedBlock>,
         last: usize,
-    ) -> Vec<ParsedBlock> {
+    ) -> (Vec<ParsedBlock>, Option<DefsRefresh>) {
         let old = self.blocks[self.first..=last].iter().map(|b| &*b.parsed);
-        if same_definitions(old, parsed.iter()) {
-            return parsed;
+        let defs_changed = !same_definitions(old, parsed.iter());
+        let need_refresh = self.will_clear_dirty && (defs_changed || self.defs_dirty_before);
+        if !defs_changed && !need_refresh {
+            return (parsed, None);
         }
         let table = DefTable::from_blocks(
             self.blocks[..self.first]
@@ -809,12 +855,47 @@ impl ParseJob {
                 .chain(self.blocks[last + 1..].iter().map(|b| &*b.parsed)),
         );
         let key = table.footnote_key();
-        if parsed.iter().any(|p| renders_stale(p, &table, key)) {
+        let parsed = if defs_changed && parsed.iter().any(|p| renders_stale(p, &table, key)) {
             md::parse(text, &table)
         } else {
             parsed
-        }
+        };
+        let defs_refresh = need_refresh.then(|| {
+            let mut affected = Vec::new();
+            let mut offset = 0;
+            for b in &self.blocks[..self.first] {
+                if renders_stale(&b.parsed, &table, key) {
+                    affected.push(offset..offset + b.len);
+                }
+                offset += b.len;
+            }
+            for p in &parsed {
+                if renders_stale(p, &table, key) {
+                    affected.push(offset..offset + p.len);
+                }
+                offset += p.len;
+            }
+            for b in &self.blocks[last + 1..] {
+                if renders_stale(&b.parsed, &table, key) {
+                    affected.push(offset..offset + b.len);
+                }
+                offset += b.len;
+            }
+            DefsRefresh { table: Arc::new(table), affected }
+        });
+        (parsed, defs_refresh)
     }
+}
+
+/// A document-wide definitions rebuild for a window that, once applied,
+/// would leave the document clean: the new table, computed by
+/// [`ParseJob::run`] off the UI thread, and every block (as a byte range)
+/// whose rendering depends on it. [`Document::apply`] installs it directly
+/// when nothing else changed since the job's snapshot, instead of rebuilding
+/// the table and re-checking every block itself.
+struct DefsRefresh {
+    table: Arc<DefTable>,
+    affected: Vec<Range<usize>>,
 }
 
 pub struct ParseResult {
@@ -823,6 +904,9 @@ pub struct ParseResult {
     /// Already behind `Arc`s: allocating them is done by whoever ran the job
     /// (usually a background thread), not by `apply` on the UI thread.
     blocks: Vec<Arc<ParsedBlock>>,
+    /// The document-wide definitions refresh, if settling this window would
+    /// leave the document clean and one was needed.
+    defs_refresh: Option<DefsRefresh>,
 }
 
 impl ParseResult {

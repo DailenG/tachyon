@@ -110,6 +110,9 @@ All notable user-visible changes are recorded here. The format follows
 
 ### Fixed
 
+- The last step of a large paste's background parse no longer costs a frame: the document-wide
+  link and footnote table is rebuilt on the parse thread (it took up to 17 ms on the UI thread for
+  a 5 MB paste on Windows).
 - Windows: pasting a large text and typing right away could crash Tachyon a few seconds later.
   The clipboard is now read once per paste, on one thread; a key typed before the background read
   finishes waits for that read instead of reading the clipboard again.
