@@ -33,6 +33,9 @@ actions!(
         DocumentStart,
         DocumentEnd,
         PageUp,
+        ZoomIn,
+        ZoomOut,
+        ZoomReset,
         PageDown,
         ShiftNewline,
         Find,
@@ -104,6 +107,11 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("secondary-g", FindNext, c),
         KeyBinding::new("secondary-shift-g", FindPrevious, c),
         KeyBinding::new("escape", Cancel, c),
+        KeyBinding::new("secondary-=", ZoomIn, c),
+        KeyBinding::new("secondary-+", ZoomIn, c),
+        KeyBinding::new("secondary-shift-=", ZoomIn, c),
+        KeyBinding::new("secondary--", ZoomOut, c),
+        KeyBinding::new("secondary-0", ZoomReset, c),
         KeyBinding::new("pageup", PageUp, c),
         KeyBinding::new("pagedown", PageDown, c),
         KeyBinding::new("shift-pageup", SelectPageUp, c),
@@ -203,6 +211,9 @@ pub struct Editor {
     /// Per-frame timing log, when `TACHYON_FRAME_LOG` names a file.
     pub(crate) frame_log: Option<crate::frame_log::FrameLog>,
 }
+
+/// Zoom levels `Ctrl+=` and `Ctrl+-` step through, as in browsers.
+const ZOOM_STEPS: [f32; 13] = [0.5, 0.67, 0.75, 0.8, 0.9, 1., 1.1, 1.25, 1.5, 1.75, 2., 2.5, 3.];
 
 impl Editor {
     pub fn new(text: &str, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -408,7 +419,7 @@ impl Editor {
             return;
         }
         let code_font = self.theme.code_font.clone();
-        self.theme = Theme { code_font, ..Theme::for_dark(reported) };
+        self.theme = Theme { code_font, ..Theme::for_dark(reported) }.zoomed(self.theme.zoom);
         cx.notify();
     }
 
@@ -845,6 +856,27 @@ impl Editor {
     pub(crate) fn document_end(&mut self, _: &DocumentEnd, _: &mut Window, cx: &mut Context<Self>) {
         self.goal_x = None;
         self.move_to(self.doc.len(), false, cx);
+    }
+    pub(crate) fn zoom_in(&mut self, _: &ZoomIn, _: &mut Window, cx: &mut Context<Self>) {
+        let next = ZOOM_STEPS.iter().find(|&&z| z > self.theme.zoom + 0.001);
+        self.set_zoom(next.copied().unwrap_or(self.theme.zoom), cx);
+    }
+    pub(crate) fn zoom_out(&mut self, _: &ZoomOut, _: &mut Window, cx: &mut Context<Self>) {
+        let next = ZOOM_STEPS.iter().rev().find(|&&z| z < self.theme.zoom - 0.001);
+        self.set_zoom(next.copied().unwrap_or(self.theme.zoom), cx);
+    }
+    pub(crate) fn zoom_reset(&mut self, _: &ZoomReset, _: &mut Window, cx: &mut Context<Self>) {
+        self.set_zoom(1., cx);
+    }
+    fn set_zoom(&mut self, zoom: f32, cx: &mut Context<Self>) {
+        if zoom == self.theme.zoom {
+            return;
+        }
+        self.theme = self.theme.clone().zoomed(zoom);
+        self.goal_x = None;
+        self.list.remeasure();
+        self.reveal_cursor();
+        cx.notify();
     }
     pub(crate) fn page_up(&mut self, _: &PageUp, _: &mut Window, cx: &mut Context<Self>) {
         self.page(-1, false, cx);

@@ -24,6 +24,8 @@ pub(crate) fn is_dark(appearance: WindowAppearance) -> bool {
 pub struct Theme {
     /// Whether this is the dark theme.
     pub dark: bool,
+    /// Zoom factor the sizes below are scaled by (1.0 = 100 %).
+    pub zoom: f32,
     pub background: Hsla,
     pub foreground: Hsla,
     pub muted: Hsla,
@@ -82,6 +84,7 @@ impl Theme {
     pub fn dark() -> Self {
         Theme {
             dark: true,
+            zoom: 1.,
             background: rgb(0x1e1f22).into(),
             foreground: rgb(0xd8dade).into(),
             muted: rgb(0x80848e).into(),
@@ -101,6 +104,24 @@ impl Theme {
             code_font: tachyon_platform::monospace_font_candidates()[0].into(),
             content_width: px(820.),
         }
+    }
+
+    /// This theme with its sizes scaled for `zoom` instead of its current zoom.
+    pub fn zoomed(mut self, zoom: f32) -> Self {
+        let factor = zoom / self.zoom;
+        self.text_size *= factor;
+        self.code_size *= factor;
+        for size in &mut self.heading_sizes {
+            *size *= factor;
+        }
+        self.content_width *= factor;
+        self.zoom = zoom;
+        self
+    }
+
+    /// A length given at 100 % zoom, at this theme's zoom.
+    pub fn scaled(&self, length: Pixels) -> Pixels {
+        length * self.zoom
     }
 
     /// Inline style for a run of rendered text.

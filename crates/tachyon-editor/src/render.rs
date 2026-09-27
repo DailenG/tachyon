@@ -26,6 +26,8 @@ impl Render for Editor {
         }
         let editor = cx.entity();
         let focus = self.focus.clone();
+        // Spacing given in rems (padding, gaps) follows the zoom.
+        window.set_rem_size(self.theme.scaled(BASE_REM_SIZE));
         div()
             .id("editor")
             .key_context(KEY_CONTEXT)
@@ -62,6 +64,9 @@ impl Render for Editor {
             .on_action(cx.listener(Self::find_next))
             .on_action(cx.listener(Self::find_previous))
             .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::zoom_in))
+            .on_action(cx.listener(Self::zoom_out))
+            .on_action(cx.listener(Self::zoom_reset))
             .on_action(cx.listener(Self::page_up))
             .on_action(cx.listener(Self::page_down))
             .on_action(cx.listener(Self::select_page_up))
@@ -320,7 +325,7 @@ impl Editor {
         let mut element = div()
             .relative()
             .my_1()
-            .px(RAW_INSET)
+            .px(theme.scaled(RAW_INSET))
             .rounded_md()
             .bg(theme.raw_background)
             .cursor_text()
@@ -395,8 +400,13 @@ impl Editor {
             let target = TextTarget::Raw { base: block_start };
             let styled = StyledText::new(" ");
             let layout = styled.layout().clone();
-            return with_mouse(div().h(px(8.)).child(styled), layout, target, cx)
-                .into_any_element();
+            return with_mouse(
+                div().h(self.theme.scaled(px(8.))).child(styled),
+                layout,
+                target,
+                cx,
+            )
+            .into_any_element();
         }
 
         let mut column = div().flex().flex_col().my_2();
@@ -500,24 +510,24 @@ impl Editor {
             row = row
                 .border_l_2()
                 .border_color(theme.quote_bar)
-                .pl(px(12. * f32::from(line.quote)))
+                .pl(theme.scaled(px(12. * f32::from(line.quote))))
                 .text_color(theme.muted);
         }
         let depth = line.indent.saturating_sub(u8::from(line.marker.is_some()));
         if depth > 0 {
-            row = row.pl(px(INDENT * f32::from(depth)));
+            row = row.pl(theme.scaled(px(INDENT * f32::from(depth))));
         }
         if let Some(marker) = line.marker {
             row = row.child(self.marker(marker));
         } else if line.indent > 0 {
-            row = row.pl(px(INDENT * f32::from(line.indent)));
+            row = row.pl(theme.scaled(px(INDENT * f32::from(line.indent))));
         }
         row.child(content).into_any_element()
     }
 
     fn marker(&self, marker: Marker) -> AnyElement {
         let theme = &self.theme;
-        let el = div().w(px(INDENT)).flex_none().text_color(theme.muted);
+        let el = div().w(theme.scaled(px(INDENT))).flex_none().text_color(theme.muted);
         match marker {
             Marker::Bullet => el.child("•").into_any_element(),
             Marker::Ordered(n) => el.child(SharedString::from(format!("{n}."))).into_any_element(),
@@ -526,15 +536,15 @@ impl Editor {
                 .items_center()
                 .child(
                     div()
-                        .size(px(13.))
+                        .size(theme.scaled(px(13.)))
                         .rounded_sm()
                         .border_1()
                         .border_color(theme.muted)
                         .flex()
                         .items_center()
                         .justify_center()
-                        .text_size(px(11.))
-                        .line_height(px(11.))
+                        .text_size(theme.scaled(px(11.)))
+                        .line_height(theme.scaled(px(11.)))
                         .when(checked, |d| {
                             d.bg(theme.accent).text_color(theme.background).child("✓")
                         }),
@@ -598,6 +608,9 @@ fn field(text: &str, active: bool) -> String {
 /// Horizontal padding of the active block's card: raw text sits this much to
 /// the right of the same text rendered.
 pub(crate) const RAW_INSET: gpui::Pixels = px(8.);
+
+/// GPUI's default rem size, the 100 % zoom reference.
+const BASE_REM_SIZE: gpui::Pixels = px(16.);
 
 /// Attaches click and drag-select handlers mapping pointer positions in
 /// `layout` to document offsets through `target`.

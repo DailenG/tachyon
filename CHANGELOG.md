@@ -43,6 +43,8 @@ All notable user-visible changes are recorded here. The format follows
 - `--startup-report` and `cargo xtask bench-startup` for measuring launch-to-first-frame latency
   against the 50 ms budget.
 - `Ctrl+Q` / `Cmd+Q` quits, `Ctrl+W` / `Cmd+W` closes the window.
+- Zoom: `Ctrl+=` / `Ctrl+-` step from 50 % to 300 %, `Ctrl+0` resets. Text, indents and
+  spacing scale together; zoom is per window.
 - A light theme. The theme follows the system appearance, including changes while running; on
   Linux the first frame is already in the right theme (Tachyon asks the desktop portal at
   start-up instead of waiting for GPUI to).

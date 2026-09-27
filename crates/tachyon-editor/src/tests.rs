@@ -586,3 +586,39 @@ fn without_a_hint_the_window_appearance_decides(cx: &mut TestAppContext) {
     let (editor, cx) = open("# Title\n", cx);
     assert!(!editor.read_with(cx, |e, _| e.theme.dark), "the test window reports light");
 }
+
+#[gpui::test]
+fn zoom_steps_scale_layout_and_stop_at_the_ends(cx: &mut TestAppContext) {
+    let (editor, cx) = open(THREE_PARAGRAPHS, cx);
+    let state = |cx: &mut VisualTestContext| {
+        editor.read_with(cx, |e, _| {
+            let line = e.active_layout.as_ref().expect("raw block is laid out").0.line_height();
+            (e.theme.zoom, f32::from(line))
+        })
+    };
+    let (zoom, line) = state(cx);
+    assert_eq!(zoom, 1.);
+
+    cx.simulate_keystrokes("secondary-= secondary-=");
+    let (zoom, zoomed_line) = state(cx);
+    assert_eq!(zoom, 1.25);
+    assert!(
+        (zoomed_line / line - 1.25).abs() < 0.02,
+        "lines are laid out larger: {line} -> {zoomed_line}"
+    );
+
+    cx.simulate_keystrokes("secondary-- secondary-- secondary--");
+    assert_eq!(state(cx).0, 0.9);
+    cx.simulate_keystrokes("secondary-0");
+    assert_eq!(state(cx), (1., line), "reset restores the layout");
+
+    for _ in 0..20 {
+        cx.simulate_keystrokes("secondary--");
+    }
+    assert_eq!(state(cx).0, 0.5);
+    for _ in 0..20 {
+        cx.simulate_keystrokes("secondary-=");
+    }
+    assert_eq!(state(cx).0, 3.);
+    assert_eq!(text(&editor, cx), THREE_PARAGRAPHS, "zoom keys do not type");
+}
