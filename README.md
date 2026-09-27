@@ -66,7 +66,7 @@ tachyon --status         # is an instance running? does it start at login?
 tachyon --quit           # end it (unsaved documents come back next time)
 ```
 
-`tachyon --help` lists all options. Settings live in `settings.toml` (`Ctrl+,` opens it): theme,
+`cargo xtask dist` builds a release archive in `target/dist/`. `tachyon --help` lists all options. Settings live in `settings.toml` (`Ctrl+,` opens it): theme,
 zoom of new windows, and whether Quit keeps unsaved documents.
 
 ## Development

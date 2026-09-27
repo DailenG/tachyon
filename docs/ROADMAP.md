@@ -222,12 +222,14 @@ frame.
 **Exit:** each item covered by a `gpui::test` or a live check; startup budgets unchanged.
 Met: every item has `gpui::test`s and a live check on Linux; warm launch p95 30.7-31.5 ms.
 
-## Phase 7: distribution (planned)
+## Phase 7: distribution (in progress)
 
 Getting Tachyon onto machines without a Rust toolchain. Items marked *(owner)* need decisions or
 accounts only the project owner has.
 
-- [ ] `cargo xtask dist`: a release archive per platform (binary, README, licenses)
+- [x] `cargo xtask dist`: a release archive per platform (binary, README, changelog, licenses):
+      `.zip` on Windows (4.2 MB; built and run from the extracted archive on the reference
+      machine), `.tar.gz` elsewhere (9.7 MB on Linux)
 - [ ] Windows: icon and version information in the executable (so Explorer, Task Manager and the
       pinned taskbar button show them), built from `assets/tachyon.svg`
 - [ ] Linux: a `.desktop` entry and icons, installable per user
