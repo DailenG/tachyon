@@ -77,6 +77,10 @@ impl Editor {
     }
 
     fn open_find(&mut self, replace: bool, cx: &mut Context<Self>) {
+        // Keyboard shortcuts for this always have a modifier, so `lib::init`'s intercept
+        // already flushes a pending paste first; flush here too so opening the bar some other
+        // way (not a keystroke) still sees the query and selection after the paste, not before.
+        self.flush_pending_paste(cx);
         // A selection on one line becomes the query; otherwise the previous query stays.
         let selected = self.selected_text();
         let query = if !selected.is_empty() && !selected.contains('\n') {
