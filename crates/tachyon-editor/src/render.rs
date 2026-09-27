@@ -187,7 +187,14 @@ impl Editor {
     ) -> AnyElement {
         let theme = &self.theme;
         let source = self.doc.buffer().rope().byte_slice(range.clone()).to_string();
-        let text = source.strip_suffix('\n').unwrap_or(&source).to_owned();
+        // A block's final newline ends its last line; drawing it would add an empty line. The
+        // document's last block keeps it: the empty line after it is where the caret sits at
+        // the end of a file, and without it the caret has no position and is not drawn.
+        let last_block = range.end == self.doc.len();
+        let text = match source.strip_suffix('\n') {
+            Some(stripped) if !last_block => stripped.to_owned(),
+            _ => source,
+        };
         let base = range.start;
         let len = text.len();
 

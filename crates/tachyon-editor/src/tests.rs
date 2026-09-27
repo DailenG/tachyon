@@ -226,6 +226,17 @@ fn streamed_parse_results_keep_the_view_on_the_same_text(cx: &mut TestAppContext
 }
 
 #[gpui::test]
+fn the_caret_after_a_final_newline_has_a_position(cx: &mut TestAppContext) {
+    for text in ["para\n", "para\n\n", "\n", "para"] {
+        let (editor, cx) = open(text, cx);
+        editor.update(cx, |e, cx| e.move_to(text.len(), false, cx));
+        cx.run_until_parked();
+        let position = editor.read_with(cx, |e, _| e.position_for_offset(text.len()));
+        assert!(position.is_some(), "no caret position at the end of {text:?}");
+    }
+}
+
+#[gpui::test]
 fn ctrl_end_reveals_the_end_of_a_long_document(cx: &mut TestAppContext) {
     // Opened, not pasted: nothing below the first screen has been measured.
     let text: String = (0..8000).map(|i| format!("Paragraph {i}.\n\n")).collect();
