@@ -120,7 +120,8 @@ the end of 512 KiB 7 ms. All corpus tests pass.
       pasted text visible in the Ctrl+V frame; typing in a 1 MiB document key to paint p95 ≈ 4 ms,
       max 6.6 ms. Run 3 once had a 16.9 ms paste frame; not reproduced. Key to present adds the
       wait for the display's next refresh, which Tachyon does not control
-- [ ] Follow-up: read the clipboard off the UI thread (Ctrl+V stalls it 11-12 ms on Windows)
+- [x] Follow-up: read the clipboard off the UI thread (Ctrl+V stalls it 11-12 ms on Windows):
+      done in Phase 4
 
 **Exit:** pasting 5 MB of LLM output produces no frame over 16.6 ms, with visible text in the same
 frame; typing in a 1 MB document keeps key-to-present p99 within one 60 Hz frame.
@@ -151,7 +152,9 @@ What a scratchpad needs day to day, without giving up the budgets above.
 - [x] Tray icon on Windows for the resident process: click for a new window, menu with "New
       window" and "Quit Tachyon"; re-added when Explorer restarts. Tachyon's windows get the same
       icon (title bar, taskbar, Alt+Tab)
-- [ ] Read the clipboard off the UI thread (the Phase 3 follow-up above)
+- [x] Read the clipboard off the UI thread on Windows (the Phase 3 follow-up above): a background
+      read of the 5 MB paste takes ≈ 15 ms off the UI thread (session 0, over SSH); Linux and macOS
+      still read through GPUI, whose clipboards are served by its event loop
 
 **Exit:** every item above covered by a `gpui::test` or a live check; finding in a 5 MB document
 keeps every frame under 16.6 ms; startup budgets unchanged (`cargo xtask bench-startup --warm`).

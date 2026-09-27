@@ -105,7 +105,11 @@ flowchart LR
   window has converged when its last block equals the old block at that place (length, source hash,
   kind) or it reaches the end of the text; otherwise it grows geometrically. An unclosed fence grows
   it to the end, which is why large jobs go to the background.
-- **Paste.** A paste over 64 KiB is prepared on the background executor (`PreparedInsert`: line
+- **Paste.** On Windows the clipboard is read on the background executor too
+  (`tachyon_platform::clipboard_text_reader`, installed as the editor's `ClipboardReader`; GPUI's
+  read on the UI thread took 11-12 ms for 5 MB); input that arrives before the read finishes reads
+  it on the UI thread first, so the paste still lands before it. Elsewhere GPUI reads it.
+  A paste over 64 KiB is prepared on the background executor (`PreparedInsert`: line
   endings normalized, rope built, fence-aware pre-segmenting) and spliced into the buffer on the
   UI thread, O(log n); keystrokes and clicks that arrive first apply the paste synchronously so
   edits keep their order. The insert appears immediately as IR-free placeholder blocks of at least
