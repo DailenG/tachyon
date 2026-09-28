@@ -89,7 +89,7 @@ impl Settings {
     }
 
     /// Whether the theme is dark, given what the system prefers.
-    pub(crate) fn dark(&self, system_dark: bool) -> bool {
+    pub fn dark(&self, system_dark: bool) -> bool {
         match self.theme {
             ThemeChoice::System => system_dark,
             ThemeChoice::Dark => true,

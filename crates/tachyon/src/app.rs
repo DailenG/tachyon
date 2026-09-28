@@ -482,19 +482,13 @@ impl Global for TrayIcon {}
 /// (`--background` with nothing to open) until the first launch arrives, and the tray's context
 /// menu (Windows) can show before that. Prefers the `AppearanceHint` set before GPUI's first
 /// window exists, else asks the platform directly (`App::window_appearance`, unlike
-/// `Window::appearance`, needs no window). `Settings::dark`'s match is duplicated here rather
-/// than called: it is `pub(crate)` to `tachyon-editor`, reachable only through a window's
-/// `Theme::for_window` elsewhere in this file.
+/// `Window::appearance`, needs no window), then applies the `theme` setting (`Settings::dark`).
 fn resolved_dark(cx: &App) -> bool {
     let hint = cx.try_global::<tachyon_editor::AppearanceHint>().map(|hint| hint.dark);
     let system = hint.unwrap_or_else(|| {
         matches!(cx.window_appearance(), WindowAppearance::Dark | WindowAppearance::VibrantDark)
     });
-    match cx.try_global::<tachyon_editor::Settings>().map(|settings| settings.theme) {
-        Some(tachyon_editor::ThemeChoice::Dark) => true,
-        Some(tachyon_editor::ThemeChoice::Light) => false,
-        Some(tachyon_editor::ThemeChoice::System) | None => system,
-    }
+    cx.try_global::<tachyon_editor::Settings>().map_or(system, |settings| settings.dark(system))
 }
 
 /// Shows the tray icon: clicking it opens a window, its menu opens a window or quits.
