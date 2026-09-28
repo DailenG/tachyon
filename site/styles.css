@@ -502,6 +502,36 @@ section:last-of-type {
   color: var(--cyan);
 }
 
+/* Comparison table */
+.table-scroll {
+  overflow-x: auto;
+  border-radius: var(--radius);
+}
+
+.compare-table {
+  min-width: 46rem;
+}
+
+.compare-table tbody th {
+  text-align: left;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.compare-table td {
+  font-variant-numeric: tabular-nums;
+}
+
+.compare-note {
+  margin: 0.9rem 0 0;
+  font-size: 0.82rem;
+  color: var(--text-dim);
+}
+
+.compare-note a {
+  color: var(--text-muted);
+}
+
 /* Race chart */
 .race {
   display: grid;

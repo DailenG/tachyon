@@ -37,6 +37,7 @@
     </a>
     <nav class="main-nav" aria-label="Primary">
       <a href="#why">Why fast</a>
+      <a href="#compare">Compare</a>
       <a href="#screens">Screens</a>
       <a href="#demo">Block swap</a>
       <a href="#files">Large files</a>
@@ -64,7 +65,7 @@
       <span class="eyebrow">Native &middot; GPU-rendered &middot; No Electron</span>
       <h1 class="hero-title"><span class="glow" aria-hidden="true">A Markdown editor that arrives before you notice it left.</span><span class="reveal">A Markdown editor that arrives before you notice it left.</span></h1>
       <p class="hero-flavor">A tachyon is a hypothetical particle that outruns light. This one just outruns your editor.</p>
-      <p class="tagline">Tachyon opens into a resident instance in 20&ndash;35&nbsp;ms, paints every keystroke inside a single frame, and edits gigabyte-scale files without a stall. Built in Rust on GPUI, rendering straight to the GPU: DirectX on Windows, Vulkan on Linux, Metal on macOS.</p>
+      <p class="tagline">Tachyon opens into a resident instance in 20&ndash;35&nbsp;ms, paints every keystroke inside a single frame, and edits gigabyte-scale files without a stall. Between uses it waits in the tray on 16&nbsp;MB of memory, less than a single browser tab. Built in Rust on GPUI, rendering straight to the GPU: DirectX on Windows, Vulkan on Linux, Metal on macOS.</p>
       <div class="hero-actions">
         <a class="btn btn-primary" href="https://github.com/DailenG/tachyon/releases/latest">Download Tachyon 1.0</a>
         <a class="btn btn-secondary" href="https://github.com/DailenG/tachyon">View on GitHub</a>
@@ -139,6 +140,33 @@
         <p class="race-caption">Both bars are Tachyon, on the same reference Windows PC &mdash; one launching into a resident instance (the default), one launching cold. Bar length is proportional to milliseconds, capped at 450&nbsp;ms; each bar fills over its own real measured duration.</p>
         <button type="button" class="btn btn-secondary btn-small" id="race-replay" hidden>Replay</button>
       </div>
+    </div>
+  </section>
+
+  <section id="compare">
+    <div class="wrap">
+      <div class="section-head">
+        <span class="kicker">Side by side</span>
+        <h2>Against the editors you already have</h2>
+        <p>Tachyon 1.0 and six editors on the same Windows 11 laptop, run one at a time with the same scripts. The best result in each column is highlighted, whichever editor it belongs to. Where an editor couldn't do something, the table says so instead of showing a number.</p>
+      </div>
+      <div class="table-scroll">
+        <table class="budget-table compare-table">
+          <thead>
+            <tr><th scope="col">Editor</th><th scope="col">Cold launch</th><th scope="col">Warm launch</th><th scope="col">Memory, 5&nbsp;KB note</th><th scope="col">200&nbsp;MB log</th><th scope="col">Typing, 20&nbsp;MB .md</th></tr>
+          </thead>
+          <tbody>
+            <tr><th scope="row">Tachyon 1.0</th><td><strong>199&nbsp;ms</strong></td><td><strong>55&nbsp;ms</strong></td><td>18&nbsp;MB</td><td>1.8&nbsp;s</td><td><strong>73&nbsp;ms</strong></td></tr>
+            <tr><th scope="row">Notepad++ 8.9</th><td>372&nbsp;ms</td><td>87&nbsp;ms</td><td><strong>16&nbsp;MB</strong></td><td><strong>1.5&nbsp;s</strong></td><td>4.2&nbsp;s</td></tr>
+            <tr><th scope="row">Windows Notepad 11</th><td>436&nbsp;ms</td><td>120&nbsp;ms</td><td>35&nbsp;MB</td><td>28&nbsp;s</td><td>keys lost</td></tr>
+            <tr><th scope="row">VS Code 1.139</th><td>1.46&nbsp;s</td><td>473&nbsp;ms</td><td>1,002&nbsp;MB</td><td>5.1&nbsp;s</td><td>108&nbsp;ms</td></tr>
+            <tr><th scope="row">Obsidian 1.13</th><td>934&nbsp;ms</td><td>221&nbsp;ms</td><td>178&nbsp;MB</td><td>won't open .log</td><td>renderer crashed</td></tr>
+            <tr><th scope="row">Typora 1.14</th><td>1.42&nbsp;s</td><td>1.05&nbsp;s</td><td>220&nbsp;MB</td><td>won't open .log</td><td>"too large to render"</td></tr>
+            <tr><th scope="row">MarkText 0.19</th><td>1.50&nbsp;s</td><td>557&nbsp;ms</td><td>177&nbsp;MB</td><td>opened an empty window</td><td>stopped at 6&nbsp;GB</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="compare-note">Core i7-7820HQ, 32&nbsp;GB, Intel HD 630, 1080p at 125&nbsp;%, Windows 11 26H2; OS file cache warm. Launch: process start to a window titled with the file, median of 5 (cold) or 10 (warm: app already running, file opened again from its command line; Tachyon's warm launch is its resident instance, the default on Windows). Memory: private working set of the whole process tree, 10&nbsp;s after loading. Log: 200&nbsp;MB, 1.6&nbsp;M lines, launch until its last line is on screen. Typing: 20 characters at ~60&nbsp;ms each at the end of a 20&nbsp;MB Markdown file, last key to all of them on screen. Tray: resident Tachyon with no windows, 16&nbsp;MB private working set, against one Edge tab on github.com at 100&nbsp;MB. <a href="https://github.com/DailenG/tachyon/blob/main/docs/measurements/windows-comparison-2026-09-28.md">Full method, versions and raw data</a>.</p>
     </div>
   </section>
 
