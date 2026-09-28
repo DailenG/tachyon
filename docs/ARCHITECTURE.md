@@ -505,6 +505,15 @@ from plain `MF_STRING` items with real text, so screen readers and other UI Auto
 can read it like any other menu (`SetForegroundWindow` before `TrackPopupMenuEx`,
 `PostMessage(WM_NULL)` after: the documented pattern for a tray menu that keeps working, and
 closes, on repeated shows).
+On Windows, a resident primary with `hot_exit` on also registers for an OS restart
+(`tachyon_platform::register_restart`/`unregister_restart`, tied to the setting via
+`tachyon_editor::RestartRegistration`/`sync_restart_registration`): after the first window's first
+frame (never before it), so a reboot, a Windows Update install, or signing out and back in with
+"Automatically save my restartable apps..." brings Tachyon back the same way autostart does
+([ADR 0008](adr/0008-restart-registration.md)). The tray's hidden window also handles
+`WM_QUERYENDSESSION`/`WM_ENDSESSION`: a real session end (`TrayEvent::EndSession`) blocks the tray
+thread until every open window's hot-exit backup is written synchronously, since the process may
+be killed as soon as the window procedure returns.
 
 **About window** (`crates/tachyon-editor/src/about.rs`). A separate GPUI window, opened on
 demand by the `About` action (tray, `tachyon --about` forwarded like other launches, and a

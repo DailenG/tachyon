@@ -28,7 +28,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     PostQuitMessage, RegisterClassExW, RegisterWindowMessageW, SM_CXICON, SM_CXSMICON,
     SendMessageW, SetForegroundWindow, SetWindowLongPtrW, TPM_NONOTIFY, TPM_RETURNCMD,
     TPM_RIGHTBUTTON, TrackPopupMenuEx, TranslateMessage, WM_APP, WM_CLOSE, WM_CONTEXTMENU,
-    WM_DESTROY, WM_NULL, WM_SETICON, WNDCLASSEXW, WS_OVERLAPPED,
+    WM_DESTROY, WM_ENDSESSION, WM_NULL, WM_QUERYENDSESSION, WM_SETICON, WNDCLASSEXW, WS_OVERLAPPED,
 };
 
 use super::wide;
@@ -424,6 +424,23 @@ unsafe extern "system" fn window_proc(
             unsafe { Shell_NotifyIconW(NIM_DELETE, &data) };
             // SAFETY: `hwnd` is ours.
             unsafe { DestroyWindow(hwnd) };
+            0
+        }
+        // Answered immediately, never blocking: Windows measures how quickly each top-level
+        // window responds to this message, and a slow or missing answer risks the "these
+        // programs are preventing shutdown" prompt. Allowing the session to end unconditionally
+        // is safe for Tachyon - hot exit means there is never unsaved work to lose - and the
+        // actual backup happens below, in WM_ENDSESSION, which is sent afterwards regardless.
+        (WM_QUERYENDSESSION, _) => 1,
+        // The session is actually ending (not cancelled by another application refusing
+        // WM_QUERYENDSESSION - `wparam` is 0 then): the process may be killed as soon as this
+        // returns, so the backup has to be written before that, not after a typing-pause delay.
+        // `on_event` is an ordinary synchronous call (as every other event here already is), so
+        // blocking inside it blocks this window proc, and so this whole message, exactly as
+        // needed; the application's handler (`crates/tachyon/src/app.rs`) is the one that
+        // actually waits, with a bounded timeout, for every window's backup to finish.
+        (WM_ENDSESSION, Some(state)) if wparam != 0 => {
+            (state.on_event)(TrayEvent::EndSession);
             0
         }
         (WM_DESTROY, _) => {

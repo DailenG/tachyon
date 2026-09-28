@@ -79,6 +79,57 @@ pub fn set_window_icon(window: &impl raw_window_handle::HasWindowHandle) {
     imp::set_window_icon(window);
 }
 
+/// The command line an OS-triggered restart registers with the system ([`register_restart`]): no
+/// leading executable path. `RegisterApplicationRestart`'s own documentation says never to
+/// include it (the OS prepends it), so the relaunch looks exactly like a login autostart launch:
+/// a windowless resident primary that reopens hot exit's backups once a window is asked for
+/// (`crate::instance_id`'s process, `crates/tachyon/src/main.rs`'s `--background` handling).
+/// A plain `pub const`, not only inside the Windows-only implementation, so its shape is covered
+/// by an ordinary unit test on every platform Tachyon builds for, not only when cross-compiling.
+pub const RESTART_COMMAND_LINE: &str = "--background";
+
+/// The flags [`register_restart`] passes to `RegisterApplicationRestart`: `RESTART_NO_CRASH`
+/// (bit `0b0001`) and `RESTART_NO_HANG` (bit `0b0010`) opt out of the two restart reasons Windows
+/// Error Reporting already shows its own "this program has stopped working" dialog for, which
+/// itself offers to restart the app - stacking a silent, automatic restart on top of that dialog
+/// would be confusing. Those two reasons are also the ones gated by the documented "system will
+/// only restart the application if it has been running for a minimum of 60 seconds" rule (to
+/// prevent a crash loop); a reboot or an application-level patch install (`RESTART_NO_PATCH`
+/// `0b0100` and `RESTART_NO_REBOOT` `0b1000`, both left clear) are a different code path with no
+/// such minimum, no confirmation dialog, and no 60 s wait - exactly what a Windows Update restart
+/// or the "restart my apps when I sign back in" setting needs, so a silent restart there is
+/// exactly what `RegisterApplicationRestart` documents itself for:
+/// <https://learn.microsoft.com/windows/win32/api/winbase/nf-winbase-registerapplicationrestart>,
+/// <https://learn.microsoft.com/windows/win32/recovery/registering-for-application-restart>. The
+/// registration itself is a plain Kernel32 export with no packaging requirement, so an MSIX build
+/// needs nothing extra in its manifest for this call; ADR 0007's `packaged_version` distinction is
+/// irrelevant here.
+/// A plain `u32` (the same underlying type as the Windows-only `REGISTER_APPLICATION_RESTART_FLAGS`),
+/// not only inside the Windows-only implementation, so the bits are covered by an ordinary unit
+/// test on every platform.
+pub const RESTART_FLAGS: u32 = 0b0011;
+
+/// Registers this process to be relaunched by Windows after a reboot or an application-level
+/// patch install, with [`RESTART_COMMAND_LINE`] and [`RESTART_FLAGS`], when the user has enabled
+/// "Automatically save my restartable apps and restart them when I sign back in" (Settings >
+/// Accounts > Sign-in options): the relaunch comes back as a windowless resident instance and hot
+/// exit reopens whatever was unsaved. Tachyon calls this only for a resident primary instance,
+/// tied to the `hot_exit` setting (restarting without it would bring the instance back with
+/// nothing to reopen); see `tachyon_editor::RestartRegistration` and
+/// `crates/tachyon/src/app.rs`'s call sites. A no-op everywhere but Windows, and best-effort
+/// there: a failure just means Windows will not bring Tachyon back, never a crash or a startup
+/// failure.
+pub fn register_restart() {
+    imp::register_restart();
+}
+
+/// Reverses [`register_restart`]: called when hot exit is turned off (settings save or the
+/// command palette's toggle), so Windows stops trying to bring Tachyon back with nothing to
+/// restore. A no-op everywhere but Windows.
+pub fn unregister_restart() {
+    imp::unregister_restart();
+}
+
 /// What the tray icon asks the application for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TrayEvent {
@@ -88,6 +139,13 @@ pub enum TrayEvent {
     About,
     /// The "Quit Tachyon" menu item.
     Quit,
+    /// Windows is ending the session (logoff, sign-out, shutdown or restart:
+    /// `WM_QUERYENDSESSION`/`WM_ENDSESSION`): write every open window's unsaved-document backup
+    /// now, without closing anything, so hot exit is current even if the session ends before the
+    /// next typing-pause backup would have written it. Harmless if the session end this followed
+    /// is later cancelled by another application: Tachyon just keeps running with every window
+    /// untouched.
+    EndSession,
 }
 
 /// A resident instance's notification-area icon (Windows): clicking it opens a window, its menu
@@ -316,5 +374,25 @@ impl Client {
     /// foreground.
     pub fn send(self, args: &[String]) -> io::Result<()> {
         imp::send(self.inner, &protocol::encode(args))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression for the exact bit pattern, not merely `RESTART_FLAGS`'s own defining
+    /// expression: a typo (`&` for `|`, or the wrong constant) would silently change which
+    /// restart reasons Tachyon opts out of, and only a literal expected value catches that.
+    #[test]
+    fn restart_flags_allow_reboot_and_patch_but_not_crash_or_hang() {
+        const RESTART_NO_CRASH: u32 = 0b0001;
+        const RESTART_NO_HANG: u32 = 0b0010;
+        const RESTART_NO_PATCH: u32 = 0b0100;
+        const RESTART_NO_REBOOT: u32 = 0b1000;
+        assert_eq!(RESTART_FLAGS & RESTART_NO_CRASH, RESTART_NO_CRASH);
+        assert_eq!(RESTART_FLAGS & RESTART_NO_HANG, RESTART_NO_HANG);
+        assert_eq!(RESTART_FLAGS & RESTART_NO_PATCH, 0, "a patch install must still restart it");
+        assert_eq!(RESTART_FLAGS & RESTART_NO_REBOOT, 0, "a reboot must still restart it");
     }
 }

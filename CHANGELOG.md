@@ -25,6 +25,15 @@ All notable user-visible changes are recorded here. The format follows
   with a minimum gap to the window frame always kept, at every width and zoom. Applies live on
   settings save, like `theme` and `tips`. Command palette rows `Width: 680px`/`820px`/`1100px`/
   `100%` set it through the same path as the theme rows, with a check on the current value.
+- Windows: a resident instance with hot exit on now registers for an OS restart
+  (`RegisterApplicationRestart`), so turning on "Automatically save my restartable apps and
+  restart them when I sign back in" (Settings > Accounts > Sign-in options) brings Tachyon back
+  with its unsaved documents after a reboot, a Windows Update install, or signing out and back
+  in - the same windowless start login autostart already uses. Registered only after the first
+  window's first frame, never before it, and unregistered the moment hot exit is turned off. A
+  session end (logoff, sign-out, shutdown or restart) now also writes every open window's
+  unsaved-document backup synchronously before the process can be killed, closing a gap where
+  text edited in the last 1.5 s before the session ended could be lost.
 
 ### Fixed
 

@@ -199,6 +199,35 @@ pub struct SettingsFile(pub std::path::PathBuf);
 
 impl Global for SettingsFile {}
 
+/// Windows: ties hot exit's `hot_exit` setting to `RegisterApplicationRestart`/
+/// `UnregisterApplicationRestart` (issue #80 - `tachyon_platform::register_restart`,
+/// `tachyon_platform::unregister_restart`). Set only by a resident primary instance
+/// (`crates/tachyon/src/app.rs`'s `Lifecycle`); a standalone (`-n`) or secondary process never
+/// sets it, so it never registers itself for a restart nothing would be around to use hot exit's
+/// backups after. Plain `fn` pointers (no captured state, like `RecentFilesOs`), so the struct
+/// stays `Copy` and cheap to store as a global. Absent everywhere but the primary (and, in
+/// practice, everywhere but Windows: `tachyon_platform`'s Linux and macOS implementations are
+/// no-ops, so setting this there would just cost two pointless calls).
+#[derive(Clone, Copy)]
+pub struct RestartRegistration {
+    pub register: fn(),
+    pub unregister: fn(),
+}
+
+impl Global for RestartRegistration {}
+
+/// Registers or unregisters this process for an OS restart, matching the current `hot_exit`
+/// setting: called once after the first window's first frame (or immediately for a windowless
+/// `--background` primary, which has no first frame to wait for) and again by [`apply_to_windows`]
+/// whenever the setting changes (a settings-file save or the command palette's toggle). A no-op
+/// if [`RestartRegistration`] was never set - not a resident primary instance, so there is
+/// nothing to tie to the setting.
+pub fn sync_restart_registration(cx: &mut App) {
+    let Some(restart) = cx.try_global::<RestartRegistration>().copied() else { return };
+    let hot_exit = cx.try_global::<Settings>().is_none_or(|s| s.hot_exit);
+    if hot_exit { (restart.register)() } else { (restart.unregister)() }
+}
+
 impl Editor {
     /// After a save: if it was the settings file, applies it to every window.
     pub(crate) fn settings_saved(&self, path: &std::path::Path, cx: &mut Context<Self>) {
@@ -277,8 +306,10 @@ fn set_setting_line(text: &str, key: &str, value: &str) -> String {
 
 /// Applies changed settings to every open window: the theme, and (Windows) the native title
 /// bar's and popup menus' dark/light mode, neither of which is GPUI's to draw and so does not
-/// follow `apply_settings`'s own repaint.
+/// follow `apply_settings`'s own repaint; also [`sync_restart_registration`], which has no
+/// per-window effect but belongs with every other side effect of a settings change.
 fn apply_to_windows(cx: &mut App) {
+    sync_restart_registration(cx);
     for window in cx.windows() {
         if let Some(editor) = window.downcast::<Editor>() {
             let _ = editor.update(cx, |editor, window, cx| {

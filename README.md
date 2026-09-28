@@ -156,6 +156,11 @@ tachyon --quit           # end it (unsaved documents come back next time)
 tachyon --desktop-entry on   # Linux: add it to the launcher and "Open with" menus
 ```
 
+On Windows, a resident instance with hot exit on also registers to be brought back automatically
+after a reboot, a Windows Update install, or signing out and back in with "Automatically save my
+restartable apps and restart them when I sign back in" (Settings > Accounts > Sign-in options) -
+the same windowless start autostart uses, reopening whatever was unsaved.
+
 `cargo xtask dist` builds a release archive in `target/dist/`. `tachyon --help` lists all options. Settings live in `settings.toml` (`Ctrl+,` opens it): theme,
 zoom of new windows, whether Quit keeps unsaved documents, whether a faint rotating tip shows
 behind the document, whether an update opens a "What's new" window (the command palette's
