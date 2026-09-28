@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -175,7 +175,7 @@ fn dist(args: Vec<String>) -> Result<ExitCode, String> {
     let _ = std::fs::remove_dir_all(&stage);
     std::fs::create_dir_all(&stage).map_err(|e| format!("{}: {e}", stage.display()))?;
     let binary = release_binary();
-    let copy = |from: &std::path::Path| -> Result<(), String> {
+    let copy = |from: &Path| -> Result<(), String> {
         let to = stage.join(from.file_name().ok_or("file without a name")?);
         std::fs::copy(from, &to).map(drop).map_err(|e| format!("{}: {e}", from.display()))
     };
@@ -249,12 +249,7 @@ fn run_tool(program: &str, args: &[&std::ffi::OsStr]) -> Result<(), String> {
 }
 
 /// Rasterizes `art` (an SVG in `assets/brand`) to a `size` x `size` PNG at `dest`.
-fn render_svg(
-    brand: &std::path::Path,
-    art: &str,
-    size: u32,
-    dest: &std::path::Path,
-) -> Result<(), String> {
+fn render_svg(brand: &Path, art: &str, size: u32, dest: &Path) -> Result<(), String> {
     let size = size.to_string();
     run_tool(
         "rsvg-convert",
@@ -361,7 +356,7 @@ fn check_dib_icon(ico: &[u8]) -> Result<(), String> {
 }
 
 /// `version` from the workspace manifest's `[workspace.package]` table.
-fn workspace_version(root: &std::path::Path) -> Result<String, String> {
+fn workspace_version(root: &Path) -> Result<String, String> {
     let manifest = std::fs::read_to_string(root.join("Cargo.toml")).map_err(|e| e.to_string())?;
     manifest
         .split("[workspace.package]")
@@ -422,10 +417,10 @@ fn manifest_identity(manifest: &str) -> Result<(String, String), String> {
     Ok((attr("Name")?, attr("Publisher")?))
 }
 
-/// Highest-versioned `makeappx.exe` under the Windows 10/11 SDK's `bin` directory. Its version
-/// folders are all `10.0.<5-digit build>.0`, so a plain string sort of the directory names picks
-/// the newest build.
-fn find_makeappx() -> Result<PathBuf, String> {
+/// `name` (`makeappx.exe`, `makepri.exe`) from the highest-versioned Windows 10/11 SDK under its
+/// `bin` directory. The version folders are all `10.0.<5-digit build>.0`, so a plain string sort
+/// of the directory names picks the newest build.
+fn find_sdk_tool(name: &str) -> Result<PathBuf, String> {
     let sdk_bin = PathBuf::from(r"C:\Program Files (x86)\Windows Kits\10\bin");
     let mut versions: Vec<PathBuf> = std::fs::read_dir(&sdk_bin)
         .map_err(|e| format!("{}: {e} (install the Windows 10/11 SDK)", sdk_bin.display()))?
@@ -437,11 +432,18 @@ fn find_makeappx() -> Result<PathBuf, String> {
     versions
         .into_iter()
         .rev()
-        .map(|dir| dir.join("x64").join("makeappx.exe"))
+        .map(|dir| dir.join("x64").join(name))
         .find(|candidate| candidate.is_file())
         .ok_or_else(|| {
-            format!("no makeappx.exe under {} (install the Windows 10/11 SDK)", sdk_bin.display())
+            format!("no {name} under {} (install the Windows 10/11 SDK)", sdk_bin.display())
         })
+}
+
+/// Runs an SDK tool, failing with its name when it cannot start or exits non-zero.
+fn run_sdk_tool(tool: &Path, args: &[&std::ffi::OsStr]) -> Result<(), String> {
+    let status =
+        Command::new(tool).args(args).status().map_err(|e| format!("{}: {e}", tool.display()))?;
+    if status.success() { Ok(()) } else { Err(format!("{} failed ({status})", tool.display())) }
 }
 
 /// `cargo xtask msix`: packs the signed `target/release/tachyon.exe`, `packaging/msix/Assets`
@@ -521,22 +523,65 @@ fn msix(args: Vec<String>) -> Result<ExitCode, String> {
             .map_err(|e| format!("{}: {e}", dest.display()))?;
     }
 
-    let makeappx = find_makeappx()?;
+    // The resource index. Without `resources.pri`, Windows cannot see the `targetsize-*` and
+    // `altform-unplated` icon files and uses the manifest's unqualified, plated 44 px logo
+    // everywhere: the taskbar showed the large-icon art on an accent-coloured square. The config
+    // is written outside the staged folder so it is neither indexed nor packed.
+    let makepri = find_sdk_tool("makepri.exe")?;
+    let pri_config = dist.join("priconfig.xml");
+    let pri_file = stage.join("resources.pri");
+    let result = run_sdk_tool(
+        &makepri,
+        &[
+            "createconfig".as_ref(),
+            "/cf".as_ref(),
+            pri_config.as_os_str(),
+            "/dq".as_ref(),
+            "en-US".as_ref(),
+            "/pv".as_ref(),
+            "10.0.0".as_ref(),
+            "/o".as_ref(),
+        ],
+    )
+    .and_then(|()| {
+        run_sdk_tool(
+            &makepri,
+            &[
+                "new".as_ref(),
+                "/pr".as_ref(),
+                stage.as_os_str(),
+                "/cf".as_ref(),
+                pri_config.as_os_str(),
+                "/mn".as_ref(),
+                staged_manifest.as_os_str(),
+                "/of".as_ref(),
+                pri_file.as_os_str(),
+                "/o".as_ref(),
+            ],
+        )
+    });
+    let _ = std::fs::remove_file(&pri_config);
+    if let Err(e) = result {
+        let _ = std::fs::remove_dir_all(&stage);
+        return Err(e);
+    }
+
+    let makeappx = find_sdk_tool("makeappx.exe")?;
     let package_name = format!("Tachyon_{version}_x64.msix");
     let package_path = dist.join(&package_name);
-    let status = Command::new(&makeappx)
-        .arg("pack")
-        .arg("/o")
-        .arg("/d")
-        .arg(&stage)
-        .arg("/p")
-        .arg(&package_path)
-        .status()
-        .map_err(|e| format!("{}: {e}", makeappx.display()))?;
+    let packed = run_sdk_tool(
+        &makeappx,
+        &[
+            "pack".as_ref(),
+            "/o".as_ref(),
+            "/d".as_ref(),
+            stage.as_os_str(),
+            "/p".as_ref(),
+            package_path.as_os_str(),
+        ],
+    );
     let _ = std::fs::remove_dir_all(&stage);
-    if !status.success() {
-        return Err("makeappx pack failed".into());
-    }
+    packed?;
 
     let (self_uri, package_uri) = match &appinstaller_base {
         Some(base) => {
@@ -574,7 +619,7 @@ fn msix(args: Vec<String>) -> Result<ExitCode, String> {
     std::fs::write(&appinstaller_path, appinstaller)
         .map_err(|e| format!("{}: {e}", appinstaller_path.display()))?;
 
-    let size_mb = |path: &std::path::Path| -> f64 {
+    let size_mb = |path: &Path| -> f64 {
         std::fs::metadata(path).map(|m| m.len() as f64 / 1e6).unwrap_or(0.0)
     };
     println!("{} ({:.1} MB)", package_path.display(), size_mb(&package_path));

@@ -552,9 +552,11 @@ placeholder; `cargo xtask msix` fills in the workspace version as four parts, e.
 (`%LOCALAPPDATA%\Tachyon`) and the autostart `Run` key land in the same real, global locations the
 `.zip` build uses instead of a private per-package store. The manifest's `Publisher` must match
 the Azure Trusted Signing certificate's subject exactly, or the package will not install.
-`cargo xtask msix` (Windows only, needs `makeappx.exe` from the Windows 10/11 SDK) stages the
-manifest, the signed `tachyon.exe` and `packaging/msix/Assets`, packs them, and writes
-`Tachyon.appinstaller` pointing App Installer at the built MSIX. Because an MSIX install's real
+`cargo xtask msix` (Windows only, needs `makepri.exe` and `makeappx.exe` from the Windows 10/11
+SDK) stages the manifest, the signed `tachyon.exe` and `packaging/msix/Assets`, and indexes them
+into `resources.pri`. Without the index, Windows sees only the files the manifest names, so the
+`targetsize-*`/`altform-unplated` icon variants would be ignored. It then packs the stage and
+writes `Tachyon.appinstaller` pointing App Installer at the built MSIX. Because an MSIX install's real
 path is versioned, `tachyon_platform::set_autostart` on Windows checks whether it is running
 packaged (`GetCurrentPackageFullName`, only when `--autostart on` runs, never on the startup
 path) and points the `Run` key at the execution alias instead of the exe it was given, so

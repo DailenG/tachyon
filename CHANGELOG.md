@@ -210,6 +210,11 @@ All notable user-visible changes are recorded here. The format follows
 
 ### Fixed
 
+- A new window now fits on small or scaled screens. It used to open at 1000 px regardless, so at
+  1080p with 125 % scaling its title bar started above the screen and its bottom edge went under
+  the taskbar. It now shrinks so the window, frame included, fits the work area.
+- The MSIX package now includes its resource index (`resources.pri`). Without it, the Windows
+  taskbar ignored the small icon sizes and showed the large-icon art on an accent-coloured square.
 - Typing into the active block of a Markdown file shaped like one giant fenced code block or one
   no-blank-line paragraph (many megabytes, no blank line anywhere to split it) no longer costs
   20-61 ms on the keystroke's frame. `Document::stale_block` no longer copies and rescans the

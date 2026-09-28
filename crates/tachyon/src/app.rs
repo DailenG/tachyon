@@ -295,6 +295,26 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
 
 const WINDOW_SIZE: Size<Pixels> = size(px(900.), px(1000.));
 
+/// Room kept free for the frame and title bar around the window's content. The bounds GPUI takes
+/// are the client area, and on Windows the frame is added outside them. A 1000 px window on a
+/// 1080p screen at 125 % (816 px of work area) otherwise opened with its title bar above the
+/// screen and its bottom edge under the taskbar. The Windows 11 frame is about 31 px.
+const FRAME_ALLOWANCE: Pixels = px(48.);
+
+/// `WINDOW_SIZE`, shrunk to fit with its frame in the primary display's work area, and centred
+/// there.
+fn initial_bounds(cx: &App) -> Bounds<Pixels> {
+    let Some(display) = cx.primary_display() else {
+        return Bounds::centered(None, WINDOW_SIZE, cx);
+    };
+    let visible = display.visible_bounds();
+    let fitted = size(
+        WINDOW_SIZE.width.min(visible.size.width - FRAME_ALLOWANCE),
+        WINDOW_SIZE.height.min(visible.size.height - FRAME_ALLOWANCE),
+    );
+    Bounds::centered_at(visible.center(), fitted)
+}
+
 /// How long start-up waits for the settings file to be read (it is small and local).
 const SETTINGS_WAIT: std::time::Duration = std::time::Duration::from_millis(15);
 
@@ -303,7 +323,7 @@ const APPEARANCE_WAIT: std::time::Duration = std::time::Duration::from_millis(15
 
 fn window_options(title: SharedString, show: bool, cx: &App) -> WindowOptions {
     WindowOptions {
-        window_bounds: Some(WindowBounds::Windowed(Bounds::centered(None, WINDOW_SIZE, cx))),
+        window_bounds: Some(WindowBounds::Windowed(initial_bounds(cx))),
         titlebar: Some(TitlebarOptions { title: Some(title), ..Default::default() }),
         app_id: Some(APP_ID.to_owned()),
         show,
@@ -441,15 +461,17 @@ fn prepare_ready_window(cx: &mut App) {
             if !ready_windows_enabled(cx) || has_ready_window(cx) {
                 return;
             }
+            let bounds = initial_bounds(cx);
             let options = window_options("Tachyon".into(), false, cx);
             match cx.open_window(options, |window, cx| cx.new(|cx| Editor::new("", window, cx))) {
                 Ok(handle) => {
                     // A hidden window only gets its final size when shown,
                     // and resizing the render targets then takes ≈ 20 ms.
                     // Without DWM's open animation the window appears as soon as it is
-                    // shown, and its first frame is drawn sooner (docs/adr/0004).
+                    // shown, and its first frame is drawn sooner (docs/adr/0004). The size is
+                    // the fitted one, so a small screen's work area still holds the window.
                     let _ = handle.update(cx, |_, window, cx| {
-                        window.resize(WINDOW_SIZE);
+                        window.resize(bounds.size);
                         tachyon_platform::disable_window_transitions(window);
                         tachyon_platform::set_window_icon(window);
                         // Same reasoning as in `open_window`: set before this window is ever
