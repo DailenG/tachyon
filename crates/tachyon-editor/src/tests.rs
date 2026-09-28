@@ -526,6 +526,86 @@ fn clicking_in_the_left_margin_activates_the_nearest_rendered_block(cx: &mut Tes
 }
 
 #[gpui::test]
+fn clicking_beside_a_wrapped_row_lands_near_that_row(cx: &mut TestAppContext) {
+    // One long single-line paragraph: wide enough windows wrap it into many visual rows.
+    let doc = "word ".repeat(400);
+    let (editor, cx) = open(&doc, cx);
+    editor.update(cx, |e, cx| e.move_to(0, false, cx));
+    cx.run_until_parked();
+    let bounds =
+        editor.read_with(cx, |e, _| e.window_item_bounds.get(&0).copied()).expect("block rendered");
+    let line_height = editor.read_with(cx, |e, _| e.theme.text_size * 1.6);
+
+    // Both clicks are in the left margin (well left of the centered content column), so the
+    // horizontal column is 0 for each; only the row differs.
+    let x = gpui::px(2.);
+    cx.simulate_click(gpui::point(x, bounds.top() + line_height * 1.5), gpui::Modifiers::none());
+    cx.run_until_parked();
+    let near = editor.read_with(cx, |e, _| e.head());
+
+    cx.simulate_click(gpui::point(x, bounds.top() + line_height * 4.5), gpui::Modifiers::none());
+    cx.run_until_parked();
+    let far = editor.read_with(cx, |e, _| e.head());
+
+    assert!(near > 0, "not the very first row: {near}");
+    assert!(
+        far > near + 20,
+        "a lower row lands further into the wrapped line: near={near} far={far}"
+    );
+    assert!(far < doc.len(), "still inside the block: {far}");
+}
+
+#[gpui::test]
+fn clicking_just_left_of_the_text_in_a_wide_window_lands_at_the_line_start(
+    cx: &mut TestAppContext,
+) {
+    let doc = "one two three\n";
+    let (editor, cx) = open(doc, cx);
+    editor.update(cx, |e, cx| e.move_to(0, false, cx));
+    cx.run_until_parked();
+    let bounds =
+        editor.read_with(cx, |e, _| e.window_item_bounds.get(&0).copied()).expect("block rendered");
+    let content_width = editor.read_with(cx, |e, _| e.theme.content_width);
+
+    // The same insets `render_block`'s centered content column (`px_4`, at the test window's
+    // default zoom `rem` of `BASE_REM_SIZE`) and the active block's raw card
+    // (`crate::render::RAW_INSET`, less its 1 px border) add around the text.
+    let rem = gpui::px(16.);
+    let raw_inset = crate::render::RAW_INSET - gpui::px(1.);
+    let column_left = bounds.left() + (bounds.size.width - content_width) / 2.;
+    let text_start_x = column_left + rem + raw_inset;
+    assert!(
+        text_start_x - bounds.left() > gpui::px(50.),
+        "the window is wide enough to actually center the column: {text_start_x:?}"
+    );
+
+    let point = gpui::point(text_start_x - gpui::px(2.), bounds.top() + gpui::px(5.));
+    cx.simulate_click(point, gpui::Modifiers::none());
+    cx.run_until_parked();
+
+    assert_eq!(selection(&editor, cx), 0..0, "just left of the text still lands at its start");
+}
+
+#[gpui::test]
+fn a_margin_click_with_nothing_rendered_yet_does_not_move_the_caret(cx: &mut TestAppContext) {
+    let (editor, cx) = open(THREE_PARAGRAPHS, cx);
+    editor.update(cx, |e, cx| e.move_to(find("gamma"), false, cx));
+    cx.run_until_parked();
+    let before = selection(&editor, cx);
+
+    // Simulates a click before any frame has ever completed: nothing to click relative to, and
+    // in particular no reason to assume the end of the document.
+    editor.update(cx, |e, _| {
+        e.window_item_bounds.clear();
+        e.rendered = 0..0;
+    });
+    cx.simulate_click(gpui::point(gpui::px(2.), gpui::px(400.)), gpui::Modifiers::none());
+    cx.run_until_parked();
+
+    assert_eq!(selection(&editor, cx), before, "nothing known: the click is ignored");
+}
+
+#[gpui::test]
 fn escape_leaves_edit_mode_and_a_typed_key_resumes_it_at_the_kept_position(
     cx: &mut TestAppContext,
 ) {
