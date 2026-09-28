@@ -703,7 +703,13 @@ impl Editor {
                 div().w_full().h(px(1.)).my_3().bg(theme.border.subtle).into_any_element()
             }
             LineKind::TableRow { header } => {
-                let mut row = div().flex().w_full();
+                // Each cell draws only its right and bottom edges, and the row its left edge (the
+                // header row, always first, also its top): neighbouring cells used to draw two
+                // lines side by side, a double-width grid next to 1 px card and field borders.
+                let mut row = div().flex().w_full().border_l_1().border_color(theme.border.subtle);
+                if header {
+                    row = row.border_t_1();
+                }
                 let mut cell_start = visible.start;
                 let text = &parsed.ir.text[visible.clone()];
                 for cell in text.split('\t') {
@@ -712,7 +718,8 @@ impl Editor {
                         .flex_1()
                         .min_w_0()
                         .px_2()
-                        .border_1()
+                        .border_r_1()
+                        .border_b_1()
                         .border_color(theme.border.subtle)
                         .child(self.rendered_text(range.clone(), parsed, block_start, marks, cx));
                     if header {
