@@ -4,7 +4,7 @@ Each phase has exit criteria that must be met, with evidence, before the phase i
 later phase may start early only when it does not depend on the open criterion (Phase 2's core
 crates are needed whichever way the startup gate goes).
 
-## Phase 1: skeleton and startup gate (gate met; follow-ups open)
+## Phase 1: skeleton and startup gate (done)
 
 - [x] Workspace, pinned toolchain and GPUI revision, release profile, lints
 - [x] GPUI window showing Markdown as raw text (sample, files, clipboard)
@@ -274,6 +274,8 @@ accounts only the project owner has.
       cannot swap a package whose process is still running), documented in the README and
       ARCHITECTURE rather than automated, since Windows has no supported way to force a clean
       full-trust app to restart for an update in progress
+- [x] Project website on GitHub Pages from `site/`, deployed by
+      [`.github/workflows/pages.yml`](../.github/workflows/pages.yml)
 - [ ] *(owner)* macOS code signing and notarization, and where releases beyond GitHub are
       published (winget, a package repository)
 
@@ -310,6 +312,11 @@ opening such a file the way Markdown mode does.
       and a 3 GB sparse file hitting the `PLAIN_HARD_LIMIT` refusal - not run in this pass: the
       machine crashed during an earlier stress run, so this pass was kept to unit and
       `gpui::test` coverage only, with no GUI stress harness and no file over 50 MB
+- [ ] Plain mode: Replace All spanning nearly all of a huge plain-text document still costs a
+      single frame past budget - `Plain`'s chunking has no background path the way Markdown's
+      reparse does, so building the chunked layout for the rewritten text runs on the UI thread;
+      narrowing this further means streaming the chunking itself in the background (see
+      `docs/ARCHITECTURE.md`'s "Plain-text mode")
 
 **Exit:** every item above covered by a `gpui::test`; the live measurements run and recorded, with
 no frame over budget on a 200 MB/1 GB document and the crash-triggering scenario (a 20+ MB single
@@ -440,4 +447,3 @@ already-huge single block also stays within budget (baseline: 20-61 ms per keyst
 frame over 16.7 ms in 40 keystrokes at either the middle or the end of a 15 MiB single block, both
 shapes); `cargo bench -p tachyon-doc` budgets unchanged. Met, apart from Fix 4 (`BlockIr::text`
 sharing the rope), recorded above as a design for a follow-up rather than attempted this phase.
-

@@ -14,16 +14,64 @@ start as fast as a scratchpad and edit like Typora: one pane, inline WYSIWYG, no
   shows rendered rich text. Files that aren't Markdown by extension open in **plain-text mode**
   instead (no syntax hiding at all); `Ctrl+Shift+M` toggles a document between the two.
 - **Platforms:** Windows first, then Linux and macOS.
+- **Website:** <https://daileng.github.io/tachyon/>, published from `site/` by the Pages
+  workflow.
 
-> **Status:** early. Block-swap editing and saving work (the block under the caret is raw
-> Markdown, the rest is rendered), on top of an incremental parser. The startup budget is met by
-> resident mode (default on Windows), and Phase 3's paste and typing criteria are met on
-> the reference Windows machine. Phase 4 added find and replace, a light theme, zoom, links you
-> can follow with `Ctrl+click` and a Windows tray icon; Phase 5 list editing, code highlighting,
-> Go to heading, hot exit and Copy as HTML; Phase 6 reloading of changed files, Open recent,
-> settings and local images; Phase 8 plain-text mode for non-Markdown and oversized files, with
-> streaming loads and background find/backup/save for large documents. Release archives come from
-> `cargo xtask dist`. See [ROADMAP](docs/ROADMAP.md).
+> **Status:** early, but the core holds its budgets. Block-swap editing, incremental parsing,
+> everyday editing (find/replace, themes, zoom, links), writing comfort (lists, code
+> highlighting, hot exit, Copy as HTML) and files/settings are done (Phases 1-6). Distribution,
+> large-file stability and Markdown-mode memory efficiency (Phases 7-9) have shipped their
+> user-facing work; what remains is owner-only (macOS signing and notarization) or a documented
+> measurement follow-up - see [ROADMAP](docs/ROADMAP.md). No release has been published yet:
+> [building from source](#building) is the current way to run Tachyon.
+
+## Highlights
+
+- **Block swap:** the block under the caret shows raw Markdown; every other block is rendered
+  rich text. `Ctrl+Shift+M` toggles a document into plain-text mode instead, for files that
+  aren't Markdown.
+- **Large files stay responsive:** a 200 MB log opens in about 400 MB of memory with the window
+  responsive throughout; a 1 GB log
+  opens in about 1.4 GB and stays responsive; files over 2 GiB are refused with a message rather
+  than crashing.
+- **Markdown memory tracks the text, not the worst block:** a 15 MiB Markdown file shaped like
+  one giant fenced code block used to peak near 5.7 GB; it now peaks around 300 MB.
+- **Speed, measured:** launch into the resident instance is p95 20-35 ms on the reference Windows
+  machine (Core Ultra 7 155H, Intel Arc, 4K; a cold direct launch is 300-450 ms, which is why
+  resident mode is the default on Windows); a keystroke paints within one frame (reparse p99
+  about 45-55 µs against a 0.5 ms budget); a 5 MB paste never drops a frame (worst 5-9 ms).
+- **Signed Windows builds:** `tachyon.exe` is signed with Azure Trusted Signing; an optional MSIX
+  install auto-updates itself from GitHub Releases.
+- **Everyday editing:** find and replace (Replace All is one undo step), light and dark themes
+  following the system or a setting, zoom, `Ctrl+click` links, list continuation and `Tab`
+  nesting, syntax highlighting in fenced code (Rust, Python, JS/TS, C family, Go, Java, C#,
+  shells, PowerShell, SQL, JSON, TOML, YAML), Go to heading, Open recent, hot exit, Copy as HTML,
+  local images, external file change reload, a settings file, and math.
+
+## Keyboard shortcuts
+
+`Ctrl` is `Cmd` on macOS unless noted.
+
+| Action | Shortcut |
+|---|---|
+| New window | `Ctrl+N` |
+| Open | `Ctrl+O` |
+| Save / Save As | `Ctrl+S` / `Ctrl+Shift+S` |
+| Close window / Quit | `Ctrl+W` / `Ctrl+Q` |
+| Settings | `Ctrl+,` |
+| Open recent | `Ctrl+R` |
+| Find | `Ctrl+F` |
+| Find next / previous | `F3` / `Shift+F3` (also `Ctrl+G` / `Ctrl+Shift+G`) |
+| Replace | `Ctrl+H` (`Cmd+Alt+F` on macOS) |
+| Replace all, in the replace bar | `Ctrl+Enter` |
+| Go to heading | `Ctrl+Shift+O` |
+| Copy as HTML | `Ctrl+Shift+C` |
+| Toggle plain-text mode | `Ctrl+Shift+M` (same on every platform) |
+| Zoom in / out / reset | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` |
+| Frame-time overlay | `Ctrl+Alt+F` (same on every platform) |
+| Undo / redo | `Ctrl+Z` / `Ctrl+Shift+Z` |
+| Select all | `Ctrl+A` |
+| Document start / end | `Ctrl+Home` / `Ctrl+End` |
 
 ## Performance budgets
 
@@ -38,24 +86,29 @@ Budgets are requirements, not goals: a change that regresses one needs a recorde
 
 ## Install
 
+No release has been published yet: [building from source](#building) is the current way to run
+Tachyon. The instructions below describe what each GitHub Release will contain once the first
+one ships.
+
 Prebuilt archives for Windows, Linux and macOS are attached to each
-[release](https://github.com/DailenG/tachyon/releases): a `.zip` on Windows, a `.tar.gz`
+[release](https://github.com/DailenG/tachyon/releases/latest): a `.zip` on Windows, a `.tar.gz`
 elsewhere, plus a `SHA256SUMS.txt` to verify the download. Extract it and run `tachyon`
 (`tachyon.exe` on Windows); no installer or separate runtime is required. `tachyon.exe` is signed
-with Azure Trusted Signing; macOS signing and notarization are not done yet, so Gatekeeper will
-warn on first launch.
+with Azure Trusted Signing; macOS builds are not signed or notarized yet, so Gatekeeper will warn
+on first launch.
 
-**Windows, with automatic updates:** download `Tachyon.appinstaller` from the latest release and
-open it (or `Add-AppxPackage -AppInstallerFile Tachyon.appinstaller` from PowerShell), then follow
-the prompt to install. This registers Tachyon as an MSIX package (also signed with Azure Trusted
-Signing) that checks for an update every time it launches and applies it in the background; a
-resident Tachyon (the default) picks up the update the next time it fully quits (tray icon →
-"Quit Tachyon", or `tachyon --quit`) or at the next sign-in. `tachyon` also works from any
-terminal, and opening a `.md` or `.markdown` file offers Tachyon in "Open with". Launches of a
-packaged app go through Windows' package activation, which adds about 35-40 ms per launch on the
-reference machine (p50 about 59 ms instead of about 21 ms), so the `.zip` above is the faster choice
-if you would rather manage updates yourself. Uninstalling the package does not remove the
-autostart entry if you turned it on; run `tachyon --autostart off` first.
+**Windows, with automatic updates:** download `Tachyon.appinstaller` from the
+[latest release](https://github.com/DailenG/tachyon/releases/latest) and open it (or
+`Add-AppxPackage -AppInstallerFile Tachyon.appinstaller` from PowerShell), then follow the prompt
+to install. This registers Tachyon as an MSIX package (also signed with Azure Trusted Signing)
+that checks for an update every time it launches and applies it in the background; a resident
+Tachyon (the default) picks up the update the next time it fully quits (tray icon → "Quit
+Tachyon", or `tachyon --quit`) or at the next sign-in. `tachyon` also works from any terminal, and
+opening a `.md` or `.markdown` file offers Tachyon in "Open with". Launches of a packaged app go
+through Windows' package activation, which adds about 35-40 ms per launch on the reference
+machine (p50 about 59 ms instead of about 21 ms), so the `.zip` above is the faster choice if you
+would rather manage updates yourself. Uninstalling the package does not remove the autostart
+entry if you turned it on; run `tachyon --autostart off` first.
 
 ## Building
 
