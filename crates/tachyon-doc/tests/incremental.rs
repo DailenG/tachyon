@@ -319,3 +319,40 @@ fn a_definition_misread_in_a_window_does_not_stick() {
     let fresh = Document::new(&doc.buffer().text());
     assert_eq!(parsed(&doc), parsed(&fresh));
 }
+
+/// Like `a_definition_misread_in_a_window_does_not_stick`, but for footnotes, which have no
+/// self-correcting mechanism: a reference link's resolution is rechecked against the `DefTable`
+/// once the misread window is reparsed correctly, but a footnote reference resolves natively
+/// within whatever text pulldown-cmark was handed, so nothing rechecks it once the document-wide
+/// footnote set (which never actually changed) says it is still fine. Presegment's fence tracker
+/// used to be fooled by a `~~~` swallowed as literal content inside an open `<div>` block: it
+/// treated that swallowed `~~~` as a real fence open, then treated the *next*, genuinely real
+/// `~~~` as closing it, leaving a provisional chunk boundary inside what is really still an open
+/// fence. A streamed window starting there read `[^1]: note` (itself inside that same still-open
+/// fence) as a real footnote definition and resolved a later `[^1]` reference in the same window
+/// against it.
+#[test]
+fn a_footnote_misread_in_a_window_does_not_stick() {
+    let parts = [
+        "```rust\n```rust\n~~~\n- item\n```rust",
+        "| a | b |\n- item\n- [x] task\ntext\n  - nested\n```rust\n```rust\n  - nested\n1. one\n- [x] task\n$$\n</div>\n```rust\n```\n<div>\n[^1]: note\n~~~\ntext\n1. one\n",
+        "text\n- [x] task\n[^1]",
+        "~~~\n| a | b |\n[^1]\n[y][x]\n***\n    indented\n",
+        "[x]: /u\n|---|:-:|\n> > deep\ntext\n[^1]: note\n> quote\n> > deep\n[x]\n> quote\n</div>\n<div>\n| a | b |\n> > deep\ntext\n2) two\n\né😀\n- [x] task\n",
+    ];
+    let mut paste = String::new();
+    while paste.len() <= tachyon_doc::UNPARSED_SPLIT_THRESHOLD {
+        for part in &parts {
+            paste.push_str(part);
+            paste.push('\n');
+        }
+    }
+    let mut doc = Document::new("# before\n\n");
+    doc.edit(doc.len()..doc.len(), &paste).unwrap();
+    let focus = 831_316_235_813_607_195 % (doc.len() + 1);
+    while let Some(job) = doc.parse_job_near(focus, 32) {
+        assert_eq!(doc.apply(job.run()), Applied::Spliced);
+    }
+    let fresh = Document::new(&doc.buffer().text());
+    assert_eq!(parsed(&doc), parsed(&fresh));
+}

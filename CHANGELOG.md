@@ -177,6 +177,21 @@ All notable user-visible changes are recorded here. The format follows
   41.4 ms → 8.7 ms (paragraph); no frame over budget after the fix, versus most frames over it
   before. Normal-file typing, a 5 MB paste and `cargo bench -p tachyon-doc`'s keystroke p99 are
   unaffected.
+- A large paste's streamed background parse could invent a footnote: the presegmenter that picks
+  provisional chunk boundaries tracked fenced code but not `<div>`-style HTML blocks, so a fence
+  marker swallowed as literal HTML content could desync its notion of "inside a fence" from the
+  real parser, and a later boundary it proposed as safe (after what looked like a blank line
+  outside any fence) could land inside a fence that was genuinely still open. A window starting
+  there then read a `[^label]: text`-shaped line of code as a real footnote definition and
+  resolved a `[^label]` reference further down the same window against it - unlike the equivalent
+  bug already fixed for link reference definitions, nothing rechecked the reference once the
+  window's start was reparsed correctly, because the document-wide footnote set it depends on
+  never actually changed (the phantom definition never left that one mis-windowed parse). The
+  presegmenter now recognizes an open HTML block exactly like an open fence and never proposes a
+  cut inside either; typing into a huge single block that opens with an HTML tag (the same shape
+  the keystroke-cost fix above targets) now always rescans the whole block rather than risking
+  the same misread through that fix's bounded-window shortcut, which does not hold for a
+  construct that, unlike a fence, ends at the next blank line.
 - Table grid lines are 1 px: neighbouring cells drew two lines side by side (2 px at 100 %, and
   visibly heavier than card and field borders at 150 %).
 - Windows: the tray icon's context menu ("New window", "Quit Tachyon") now follows Tachyon's

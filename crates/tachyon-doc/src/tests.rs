@@ -728,3 +728,57 @@ fn a_huge_single_block_still_converges_correctly_after_a_bounded_edit() {
         }
     }
 }
+
+/// An HTML block, unlike a fence, ends at the next blank line rather than swallowing every line
+/// indefinitely, so `block_shape`'s bounded/empty fast paths (safe for a fence or a plain
+/// no-blank-line paragraph) do not apply to it: a huge single block opening with `<div>` must
+/// always fall back to the full scan (`BlockShape::Unknown`), never `Fence` or `Plain`. This is
+/// the same class of bug `a_footnote_misread_in_a_window_does_not_stick` (`tests/incremental.rs`)
+/// covers for the streamed-paste presegmenter: a fence-marker-shaped line typed far into a still
+/// (per the real parser) HTML-swallowed block must never be misread as a real fence opener by a
+/// bounded window that starts scanning fresh partway through it.
+#[test]
+fn edits_into_a_huge_html_block_never_use_the_bounded_fast_path() {
+    let mut body = String::from("<div>\n");
+    while body.len() < 512 * 1024 {
+        body.push_str("the quick brown fox jumps over the lazy dog\n");
+    }
+    let mut doc = Document::new(&body);
+    assert_eq!(doc.blocks().len(), 1, "no blank line: one top-level block");
+    assert!(tachyon_md::ends_in_fence(&body), "the whole block is still-open HTML");
+
+    // Type a fence-marker-shaped line well past `BOUNDARY_SCAN_MARGIN` from the block's start:
+    // a bounded window here would start scanning fresh, not knowing it is still inside the
+    // `<div>` opened at byte 0, and could misread it as a real fence opener.
+    let at = body.len() / 2;
+    take_presegment_bytes();
+    doc.edit(at..at, "~~~\n").unwrap();
+    let bytes = take_presegment_bytes();
+    assert!(
+        bytes >= body.len() - 4,
+        "an HTML-opening block must presegment (at least) the whole range, not a bounded window \
+         around the edit (presegmented {bytes} of {} bytes)",
+        body.len()
+    );
+    doc.reparse_now();
+    assert_matches_full_parse(&doc);
+}
+
+/// Companion to `a_huge_single_block_still_converges_correctly_after_a_bounded_edit`: a fence
+/// marker typed at the very start, middle and end of a huge single `<div>` block (which stays
+/// open the whole way, per `edits_into_a_huge_html_block_never_use_the_bounded_fast_path`) still
+/// converges to a full parse either way.
+#[test]
+fn a_huge_html_block_still_converges_correctly_after_an_edit() {
+    let mut body = String::from("<div>\n");
+    for i in 0..3000 {
+        body.push_str(&format!("line {i}\n"));
+    }
+    for at in [6usize, body.len() / 2, body.len()] {
+        let mut doc = Document::new(&body);
+        assert_eq!(doc.blocks().len(), 1);
+        doc.edit(at..at, "~~~\nnot really a fence, still inside the div\n").unwrap();
+        doc.reparse_now();
+        assert_matches_full_parse(&doc);
+    }
+}

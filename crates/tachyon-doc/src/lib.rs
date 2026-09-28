@@ -1144,17 +1144,26 @@ impl Document {
     /// never carries `cuts`: only [`PreparedInsert`]'s paste path does). A `single_source` block
     /// parses identically alone (ADR 0005's segmenter invariant), so one already big enough to
     /// reach here had *no* interior boundary before this edit (else it would have been split
-    /// then): a fence never re-opens inside one CommonMark block once closed, and a non-fence,
-    /// non-container block (a paragraph, heading, table, thematic break, definition or HTML
-    /// block) never opens one at all - a line that could would always end that block for real -
-    /// so which of those `range` is can be told from its own first line alone
-    /// ([`block_shape`]), and any *new* boundary this edit creates can only appear near where it
-    /// happened: the rest of `range` is provably unchanged since the last time this same
-    /// argument applied to it. A fenced `range` gets no boundaries at all (every interior blank
-    /// line is inside it); anything else safe to assume fence-free is presegmented in just a
-    /// window around the edit. A container (a list item or block quote, whose own nested content
-    /// can open a fence at a column a top-level line never could) or a first line too long to
-    /// read within [`BOUNDARY_FENCE_PEEK_LIMIT`] falls back to the full scan below.
+    /// then), and any *new* boundary this edit creates can only appear near where it happened:
+    /// the rest of `range` is provably unchanged since the last time this same argument applied
+    /// to it. Whether a bounded window around the edit can be presegmented on its own instead of
+    /// the whole range depends on whether the fence/HTML state a window elsewhere in `range`
+    /// would need to start from is trivially known without scanning up to it: a fence never
+    /// re-opens inside one CommonMark block once closed - a line that could would end the block
+    /// for real - so a block whose first line opens one is fence-open throughout, and gets no
+    /// boundaries at all ([`block_shape`]'s `Fence`); a block whose first line opens neither a
+    /// fence nor a container (a list item or block quote, whose own nested content can open a
+    /// fence at a column a top-level line never could) nor an HTML block is fence-and-HTML-free
+    /// throughout, and a bounded window anywhere in it is safe (`Plain`). An HTML block's first
+    /// line does *not* similarly make the rest of `range` safe to assume: unlike a fence, it
+    /// ends at the next blank line rather than swallowing everything, so - unlike genuine
+    /// `Plain` content - the state a bounded window elsewhere in `range` would need to start
+    /// from is "still inside the HTML block opened at `range.start`", which a window starting
+    /// fresh partway through cannot represent; a fence-marker-shaped line the edit adds there
+    /// would misread as a real fence the same way one swallowed by an HTML block already did
+    /// once (`tachyon_md::presegment`'s module doc comment). A container, an HTML block, or a
+    /// first line too long to read within [`BOUNDARY_FENCE_PEEK_LIMIT`] therefore falls back to
+    /// the full scan below (`Unknown`).
     fn boundaries(
         &self,
         range: Range<usize>,
@@ -1616,18 +1625,18 @@ fn has_blank_line(rope: &Rope, from: usize, before: usize) -> bool {
 /// this block's own start whenever `single_source` holds, and stays so across every stale
 /// transition an edit inside it makes, since none of them ever touch byte 0 of the block).
 enum BlockShape {
-    /// `range`'s first line opens a fence. ADR 0005's segmenter invariant means a
-    /// `single_source` block parses identically alone, so one whose first line opens a fence
-    /// never closes and reopens one inside itself - closing it for real would end the block.
-    /// Every interior blank line is therefore inside that fence, so `range` can never gain a
-    /// boundary.
+    /// `range`'s first line opens a fence (and does not open an HTML block instead - see
+    /// `block_shape`). ADR 0005's segmenter invariant means a `single_source` block parses
+    /// identically alone, so one whose first line opens a fence never closes and reopens one
+    /// inside itself - closing it for real would end the block. Every interior blank line is
+    /// therefore inside that fence, so `range` can never gain a boundary.
     Fence,
-    /// `range`'s first line neither opens a fence nor could start a construct (a list item, a
-    /// block quote) whose own nested content might open one at a raw column a top-level line
-    /// never could. Fence state is `None` throughout `range`, so a bounded window anywhere in it
-    /// is safe to presegment on its own.
+    /// `range`'s first line neither opens a fence or an HTML block, nor could start a construct
+    /// (a list item, a block quote) whose own nested content might open one at a raw column a
+    /// top-level line never could. Fence state is `None` throughout `range`, so a bounded window
+    /// anywhere in it is safe to presegment on its own.
     Plain,
-    /// Anything else: a container, or a first line too long to read within
+    /// Anything else: a container, an HTML block, or a first line too long to read within
     /// [`BOUNDARY_FENCE_PEEK_LIMIT`]. [`Document::boundaries`] falls back to the full scan.
     Unknown,
 }
@@ -1636,6 +1645,18 @@ fn block_shape(rope: &Rope, range: &Range<usize>) -> BlockShape {
     let peek_limit = (range.start + BOUNDARY_FENCE_PEEK_LIMIT).min(range.end);
     let Some(nl) = find_newline(rope, range.start, peek_limit) else { return BlockShape::Unknown };
     let first_line = rope.byte_slice(range.start..nl + 1).to_string();
+    // An HTML block, unlike a fence, ends at the next blank line rather than swallowing every
+    // line indefinitely: an edit elsewhere in `range` (Fence's own reasoning does not apply) can
+    // still create a genuinely new boundary there, which only the full scan below is guaranteed
+    // to find - a bounded window starting fresh partway through the block would not know it is
+    // still "inside HTML" and could misread a fence-marker-shaped line the same way a swallowed
+    // one already did once (see `tachyon_md::presegment`'s module doc comment). Checked before
+    // `ends_in_fence`, which also reports true for an HTML-opening line (an HTML block swallows
+    // fence markers exactly like a fence swallows blank lines), so this must not fall through to
+    // the `Fence` arm below.
+    if md::opens_html_block(&first_line) {
+        return BlockShape::Unknown;
+    }
     if md::ends_in_fence(&first_line) {
         return BlockShape::Fence;
     }
