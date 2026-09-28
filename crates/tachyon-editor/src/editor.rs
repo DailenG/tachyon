@@ -192,6 +192,17 @@ pub struct Editor {
     pub(crate) list: ListState,
     pub(crate) focus: FocusHandle,
     pub(crate) theme: Theme,
+    /// The text column's width setting (`Settings::content_width`); resolved into
+    /// `theme.content_width` fresh every frame from the current window size and zoom
+    /// (`Editor::render`), so a resize alone re-wraps blocks without a settings round-trip.
+    pub(crate) content_width: crate::settings::ContentWidth,
+    /// `theme.content_width` as resolved last frame: `Editor::render` remeasures the list
+    /// (`ListState::remeasure`) whenever the resolved value actually changes, whatever the
+    /// cause - a window resize changing a percentage width just as much as a settings save or
+    /// zoom changing a pixel one - since `ListState` caches each item's own measured size and
+    /// nothing else would tell it that this block's available width, and so its wrapped height,
+    /// changed underneath it.
+    pub(crate) resolved_content_width: Option<Pixels>,
     /// The theme follows an [`AppearanceHint`] that GPUI's window appearance has not caught up
     /// with yet; until it does, the window's (default) appearance is ignored.
     appearance_unconfirmed: bool,
@@ -346,6 +357,8 @@ impl Editor {
             theme: Theme::for_dark(settings.dark(hint.unwrap_or(reported)))
                 .with_text_font(window)
                 .zoomed(settings.zoom),
+            content_width: settings.content_width,
+            resolved_content_width: None,
             appearance_unconfirmed: settings.theme == crate::ThemeChoice::System
                 && hint.is_some_and(|dark| dark != reported),
             active: None,
@@ -585,14 +598,21 @@ impl Editor {
         cx.notify();
     }
 
-    /// Applies changed settings: the theme now, and whether the rotating tip shows (zoom
-    /// applies to new windows).
+    /// Applies changed settings: the theme, the rotating tip and the text column width now
+    /// (zoom applies to new windows).
     pub(crate) fn apply_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let settings = cx.try_global::<crate::Settings>().cloned().unwrap_or_default();
         let dark = settings.dark(is_dark(window.appearance()));
         self.appearance_unconfirmed = false;
         if dark != self.theme.dark {
             self.theme = self.theme.restyled(dark);
+            cx.notify();
+        }
+        if settings.content_width != self.content_width {
+            self.content_width = settings.content_width;
+            // `Editor::render` remeasures the list itself once the resolved width actually
+            // changes (it also covers a plain window resize, which never reaches here); just
+            // notifying is enough to get that next render.
             cx.notify();
         }
         self.set_tips_shown(settings.tips, cx);

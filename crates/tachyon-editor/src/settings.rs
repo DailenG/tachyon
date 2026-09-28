@@ -2,7 +2,7 @@
 //! in the config directory. The application reads it at start-up, off the UI thread, and sets
 //! [`Settings`]; saving the file from a Tachyon window applies it to every open window.
 
-use gpui::{App, Context, Global};
+use gpui::{App, Context, Global, Pixels, px};
 
 use crate::editor::Editor;
 use crate::theme::is_dark;
@@ -14,6 +14,61 @@ pub enum ThemeChoice {
     System,
     Dark,
     Light,
+}
+
+/// The text column's width, as written in `settings.toml`: a fixed logical-pixel size
+/// (`"820px"`, or a bare `"820"` meaning the same thing), scaled by zoom like other sizes, or a
+/// percentage of the window's own content width (`"80%"`), re-evaluated on resize and never
+/// scaled by zoom again since it is already relative to the window.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ContentWidth {
+    Px(f32),
+    Percent(f32),
+}
+
+/// Below this, a pixel width would not leave a usable column; values under it are rejected
+/// (falling back to the default) rather than silently forced up to it, matching how every other
+/// out-of-range setting here behaves (see `zoom`).
+const CONTENT_WIDTH_MIN_PX: f32 = 200.;
+
+/// The only useful percentage range: above 100 the column could never actually get that wide
+/// (see `ContentWidth::resolve`), and 0 or below leaves no column at all.
+const CONTENT_WIDTH_PERCENT_RANGE: (f32, f32) = (1., 100.);
+
+impl Default for ContentWidth {
+    fn default() -> Self {
+        ContentWidth::Px(820.)
+    }
+}
+
+impl ContentWidth {
+    /// Parses a CSS-style content width: `"820px"`, a bare `"820"` (equivalent to `"820px"`), or
+    /// a percentage like `"80%"`. `None` for anything malformed or out of range, so the caller
+    /// can fall back to the default exactly like every other invalid setting.
+    fn parse(value: &str) -> Option<ContentWidth> {
+        let value = value.trim();
+        if let Some(percent) = value.strip_suffix('%') {
+            let percent: f32 = percent.trim().parse().ok()?;
+            let (min, max) = CONTENT_WIDTH_PERCENT_RANGE;
+            return (percent >= min && percent <= max).then_some(ContentWidth::Percent(percent));
+        }
+        let px_part = value.strip_suffix("px").unwrap_or(value).trim();
+        let value: f32 = px_part.parse().ok()?;
+        (value >= CONTENT_WIDTH_MIN_PX).then_some(ContentWidth::Px(value))
+    }
+
+    /// The column width for one frame: the setting's own request - a pixel size scaled by
+    /// `zoom`, or a share of `window_width` (already window-relative, so `zoom` does not scale
+    /// it again) - capped to `window_width` less `gap` on each side, so text keeps a minimum gap
+    /// from the window frame at every width and zoom, including `100 %`. Pure arithmetic: O(1),
+    /// no allocation, safe to call every frame (`Editor::render`).
+    pub fn resolve(self, zoom: f32, window_width: Pixels, gap: Pixels) -> Pixels {
+        let requested = match self {
+            ContentWidth::Px(value) => px(value) * zoom,
+            ContentWidth::Percent(percent) => window_width * (percent / 100.),
+        };
+        requested.min((window_width - gap * 2.).max(px(0.)))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -28,6 +83,8 @@ pub struct Settings {
     /// Show the What's new window once, after an update (`tachyon::whats_new`). The command
     /// palette's "What's new" row opens it on demand regardless of this setting.
     pub whats_new: bool,
+    /// The text column's width (`render::Editor::render_block`, `tip_overlay`).
+    pub content_width: ContentWidth,
 }
 
 impl Default for Settings {
@@ -38,6 +95,7 @@ impl Default for Settings {
             hot_exit: true,
             tips: true,
             whats_new: true,
+            content_width: ContentWidth::default(),
         }
     }
 }
@@ -63,6 +121,10 @@ tips = true
 # Show what's new after an update, once, the next time Tachyon starts. false only stops that
 # automatic prompt; the command palette's \"What's new\" row still opens the notes any time.
 whats_new = true
+# Text column width: a pixel size like \"820px\" (or a bare 820), scaled by zoom, or a
+# percentage of the window like \"80%\"; \"100%\" is the widest the column can get, and a
+# minimum gap to the window frame always remains.
+content_width = \"820px\"
 ";
 
 impl Settings {
@@ -109,6 +171,12 @@ impl Settings {
                     "true" => settings.whats_new = true,
                     "false" => settings.whats_new = false,
                     _ => problems.push(format!("{number}: whats_new is true or false")),
+                },
+                "content_width" => match ContentWidth::parse(unquoted) {
+                    Some(width) => settings.content_width = width,
+                    None => problems.push(format!(
+                        "{number}: content_width is a pixel width of at least {CONTENT_WIDTH_MIN_PX}px (e.g. \"820px\") or a percentage from 1% to 100% (e.g. \"80%\")"
+                    )),
                 },
                 other => problems.push(format!("{number}: unknown setting `{other}`")),
             }
@@ -247,6 +315,7 @@ mod tests {
                 hot_exit: false,
                 tips: false,
                 whats_new: false,
+                content_width: ContentWidth::default(),
             }
         );
         assert_eq!(
@@ -256,6 +325,71 @@ mod tests {
                 "7: unknown setting `colour`",
                 "8: expected `key = value`",
             ]
+        );
+    }
+
+    #[test]
+    fn content_width_parses_pixels_and_a_bare_number() {
+        assert_eq!(ContentWidth::parse("820px"), Some(ContentWidth::Px(820.)));
+        assert_eq!(ContentWidth::parse("680px"), Some(ContentWidth::Px(680.)));
+        assert_eq!(ContentWidth::parse("820"), Some(ContentWidth::Px(820.)), "a bare number");
+    }
+
+    #[test]
+    fn content_width_parses_percentages() {
+        assert_eq!(ContentWidth::parse("80%"), Some(ContentWidth::Percent(80.)));
+        assert_eq!(ContentWidth::parse(" 100% "), Some(ContentWidth::Percent(100.)));
+    }
+
+    #[test]
+    fn content_width_rejects_invalid_values() {
+        for invalid in ["abc", "-5px", "0%", "250%", "", "820em"] {
+            assert_eq!(ContentWidth::parse(invalid), None, "{invalid:?} should be invalid");
+        }
+    }
+
+    #[test]
+    fn content_width_enforces_its_range_bounds() {
+        // Right at the edges of the accepted range: still valid.
+        assert_eq!(ContentWidth::parse("200px"), Some(ContentWidth::Px(200.)), "the px minimum");
+        assert_eq!(ContentWidth::parse("1%"), Some(ContentWidth::Percent(1.)));
+        assert_eq!(ContentWidth::parse("100%"), Some(ContentWidth::Percent(100.)));
+        // Just outside them: rejected, not silently pulled back in.
+        assert_eq!(ContentWidth::parse("199px"), None, "just under the px minimum");
+        assert_eq!(ContentWidth::parse("101%"), None, "just over the percent maximum");
+    }
+
+    #[test]
+    fn an_invalid_content_width_falls_back_to_the_default_without_failing_the_file() {
+        let (settings, problems) = Settings::parse("content_width = \"250%\"\n");
+        assert_eq!(settings.content_width, ContentWidth::default());
+        assert_eq!(problems.len(), 1, "{problems:?}");
+    }
+
+    #[test]
+    fn content_width_resolve_scales_pixels_by_zoom_and_percent_by_window_width() {
+        let gap = px(16.);
+        assert_eq!(
+            ContentWidth::Px(820.).resolve(2., px(4000.), gap),
+            px(1640.),
+            "a pixel width scales with zoom"
+        );
+        assert_eq!(
+            ContentWidth::Percent(50.).resolve(2., px(2000.), gap),
+            px(1000.),
+            "a percentage is a share of the window, not scaled again by zoom"
+        );
+    }
+
+    #[test]
+    fn content_width_resolve_always_leaves_the_frame_gap_even_at_100_percent() {
+        let gap = px(16.);
+        let window_width = px(1400.);
+        let resolved = ContentWidth::Percent(100.).resolve(1., window_width, gap);
+        assert_eq!(resolved, window_width - gap * 2.);
+        assert!(
+            resolved + gap * 2. <= window_width,
+            "the column plus both gaps never exceeds the window: {resolved:?}"
         );
     }
 }

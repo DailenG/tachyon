@@ -623,6 +623,58 @@ fn clicking_just_left_of_the_text_in_a_wide_window_lands_at_the_line_start(
 }
 
 #[gpui::test]
+fn a_100_percent_content_width_still_leaves_a_frame_gap(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        cx.set_global(crate::Settings {
+            theme: crate::ThemeChoice::System,
+            zoom: 1.,
+            hot_exit: true,
+            tips: true,
+            whats_new: true,
+            content_width: crate::ContentWidth::Percent(100.),
+        })
+    });
+    let (editor, cx) = open("hello\n", cx);
+    let (content_width, window_width) =
+        editor.read_with(cx, |e, _| (e.theme.content_width, e.window_viewport.size.width));
+    // The gap is `CONTENT_WIDTH_GAP_REMS` (3) rems at this window's default zoom of 1
+    // (`BASE_REM_SIZE` is 16px).
+    let gap = gpui::px(16.) * 3.;
+    assert_eq!(
+        content_width,
+        window_width - gap * 2.,
+        "100% is still capped to the window less a gap on each side"
+    );
+    assert!(
+        content_width < window_width,
+        "the column never reaches the window's own edges: {content_width:?} vs {window_width:?}"
+    );
+}
+
+#[gpui::test]
+fn saving_a_new_content_width_reflows_an_open_windows_column(cx: &mut TestAppContext) {
+    let dir = backup_dir("content-width-setting");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let file = dir.join("settings.toml");
+    std::fs::write(&file, crate::DEFAULT_SETTINGS).expect("write");
+    cx.update(|cx| cx.set_global(crate::SettingsFile(file.clone())));
+    let (editor, cx) = open_file(&file, cx);
+    let before = editor.read_with(cx, |e, _| e.theme.content_width);
+    assert_eq!(before, gpui::px(820.), "the default width, from the freshly written file");
+
+    cx.simulate_keystrokes("secondary-a");
+    cx.simulate_input("content_width = \"680px\"\n");
+    cx.simulate_keystrokes("secondary-s");
+    cx.run_until_parked();
+
+    let after = editor.read_with(cx, |e, _| e.theme.content_width);
+    assert_eq!(after, gpui::px(680.), "saved settings resize an open window's column, live");
+    let settings = cx.update(|_, cx| cx.global::<crate::Settings>().clone());
+    assert_eq!(settings.content_width, crate::ContentWidth::Px(680.));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[gpui::test]
 fn a_margin_click_with_nothing_rendered_yet_does_not_move_the_caret(cx: &mut TestAppContext) {
     let (editor, cx) = open(THREE_PARAGRAPHS, cx);
     editor.update(cx, |e, cx| e.move_to(find("gamma"), false, cx));
@@ -1683,6 +1735,7 @@ fn theme_row_order(initial: crate::ThemeChoice, cx: &mut TestAppContext) -> Vec<
             hot_exit: true,
             tips: true,
             whats_new: true,
+            content_width: crate::ContentWidth::default(),
         });
     });
     let (editor, cx) = open("text\n", cx);
@@ -1735,6 +1788,7 @@ fn command_palette_theme_light_applies_at_once_and_persists_keeping_a_comment(
             hot_exit: true,
             tips: true,
             whats_new: true,
+            content_width: crate::ContentWidth::default(),
         });
         cx.set_global(crate::SettingsFile(file.clone()));
     });
@@ -1773,6 +1827,7 @@ fn command_palette_whats_new_toggle_turns_it_off_and_persists_keeping_other_line
             hot_exit: true,
             tips: true,
             whats_new: true,
+            content_width: crate::ContentWidth::default(),
         });
         cx.set_global(crate::SettingsFile(file.clone()));
     });
@@ -1830,6 +1885,7 @@ fn settings_choose_theme_and_zoom_and_saving_them_applies_at_once(cx: &mut TestA
             hot_exit: true,
             tips: true,
             whats_new: true,
+            content_width: crate::ContentWidth::default(),
         });
         cx.set_global(crate::SettingsFile(file.clone()));
     });
@@ -1907,6 +1963,7 @@ fn prompts_use_the_theme_the_settings_choose(cx: &mut TestAppContext) {
             hot_exit: true,
             tips: true,
             whats_new: true,
+            content_width: crate::ContentWidth::default(),
         })
     });
     let (_editor, cx) = open("", cx);
@@ -2282,6 +2339,7 @@ fn tips_false_in_settings_keeps_the_tip_hidden(cx: &mut TestAppContext) {
             hot_exit: true,
             tips: false,
             whats_new: true,
+            content_width: crate::ContentWidth::default(),
         })
     });
     let (editor, cx) = open("", cx);
@@ -2312,6 +2370,7 @@ fn saving_tips_false_hides_an_already_shown_tip(cx: &mut TestAppContext) {
             hot_exit: true,
             tips: true,
             whats_new: true,
+            content_width: crate::ContentWidth::default(),
         });
         cx.set_global(crate::SettingsFile(file.clone()));
     });

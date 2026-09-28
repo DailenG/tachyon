@@ -20,6 +20,11 @@ All notable user-visible changes are recorded here. The format follows
   `crates.io`-style package) simply never shows the window. The version last seen lives in a
   small file next to hot-exit backups and recent files, checked off the UI thread after the
   first window's first frame, so nothing is added to the startup path.
+- `content_width` setting: a CSS-style text column width, `"820px"` (or a bare `820`) scaled by
+  zoom like before, or a percentage of the window like `"80%"`; `"100%"` is the widest it can get,
+  with a minimum gap to the window frame always kept, at every width and zoom. Applies live on
+  settings save, like `theme` and `tips`. Command palette rows `Width: 680px`/`820px`/`1100px`/
+  `100%` set it through the same path as the theme rows, with a check on the current value.
 
 ### Fixed
 

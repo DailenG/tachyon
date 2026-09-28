@@ -50,6 +50,13 @@ const RENDER_WINDOW_OVERDRAW_VIEWPORTS: f32 = 2.;
 /// what is on screen instead of the whole document (report fix 6).
 const EVICT_MARGIN_BLOCKS: usize = 200;
 
+/// Minimum gap kept between the resolved text column and the window frame, in rems (so it
+/// scales with zoom): real padding the owner wants felt at every width, wider than the one-rem
+/// text inset (`px_4`) `render_block`'s own centred column always applies inside whatever this
+/// leaves. Only ever narrows the column below its requested width - `680px`/`820px` in an
+/// ordinary window are far under this and unaffected (`ContentWidth::resolve`).
+const CONTENT_WIDTH_GAP_REMS: f32 = 3.;
+
 impl Render for Editor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_title(window);
@@ -66,6 +73,27 @@ impl Render for Editor {
         // Spacing given in rems (padding, gaps) follows the zoom.
         window.set_rem_size(self.theme.scaled(BASE_REM_SIZE));
         let viewport = window.viewport_size();
+        // The column's width for this frame: the setting's own request, capped so a real gap
+        // (`CONTENT_WIDTH_GAP_REMS` per side, scaled by zoom) always remains between the column
+        // and the window frame, at every width and zoom, including 100 % (`ContentWidth::
+        // resolve`'s own doc comment) - wider than `render_block`'s own one-rem text inset
+        // (`px_4`), which stays unchanged and still applies inside whatever column this leaves.
+        // Pure arithmetic against the viewport GPUI already reports, so a resize costs nothing
+        // beyond the re-wrap its own changed available width already causes.
+        self.theme.content_width = self.content_width.resolve(
+            self.theme.zoom,
+            viewport.width,
+            window.rem_size() * CONTENT_WIDTH_GAP_REMS,
+        );
+        // `ListState` caches each item's own measured size; nothing else tells it that a
+        // block's wrapped height changed when only its *available width* did - a plain window
+        // resize changing a percentage-based width, not just a settings save or zoom step (both
+        // already remeasure explicitly). Comparing against last frame's resolved value catches
+        // every cause in one place, including the very first frame (`None` always differs).
+        if self.resolved_content_width != Some(self.theme.content_width) {
+            self.resolved_content_width = Some(self.theme.content_width);
+            self.list.remeasure();
+        }
         // Snapshotted here, before `list(...)` below borrows `self.list`'s `ListState` for its
         // own layout pass: `render_window` (called from inside that pass, through `render_block`)
         // must not call back into `ListState` itself (it already holds the same `RefCell`
