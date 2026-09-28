@@ -159,7 +159,8 @@ tachyon --desktop-entry on   # Linux: add it to the launcher and "Open with" men
 ```
 
 `cargo xtask dist` builds a release archive in `target/dist/`. `tachyon --help` lists all options. Settings live in `settings.toml` (`Ctrl+,` opens it): theme,
-zoom of new windows, and whether Quit keeps unsaved documents.
+zoom of new windows, whether Quit keeps unsaved documents, and whether a faint rotating tip shows
+behind the document.
 
 ## Development
 

@@ -281,6 +281,11 @@ pub struct Editor {
     /// A one-line notice shown at the top of the view (currently only the oversized-Markdown
     /// fallback; see `disk::oversized_markdown_notice`).
     pub(crate) notice: Option<SharedString>,
+    /// This window's rotating tip (`Settings::tips`; `tips::next_tip`), drawn faintly behind the
+    /// document (`render::tip_overlay`). `None` before `refresh_tip` first runs (deferred past
+    /// the first frame, see `with_document`) or while tips are turned off; picked once and kept
+    /// for the rest of the window's life otherwise.
+    pub(crate) tip: Option<SharedString>,
 }
 
 /// Zoom levels `Ctrl+=` and `Ctrl+-` step through, as in browsers.
@@ -300,6 +305,15 @@ impl Editor {
             editor.update(cx, |editor, cx| editor.should_close(window, cx)).unwrap_or(true)
         });
         cx.on_next_frame(window, |editor, window, cx| editor.resolve_code_font(window, cx));
+        // Deferred past construction like `resolve_code_font` above, but through a spawned task
+        // rather than `on_next_frame`: unlike a font warm-up tied to an actual paint, nothing
+        // here needs a frame to have been drawn, and a task the executor runs at its next turn
+        // keeps this reliably observable in tests (`run_until_parked`) instead of depending on
+        // a redraw the test harness has no other reason to schedule.
+        cx.spawn(async move |this, cx| {
+            let _ = this.update(cx, |editor, cx| editor.refresh_tip(cx));
+        })
+        .detach();
         cx.observe_window_appearance(window, |editor, window, cx| {
             editor.follow_appearance(window, cx);
         })
@@ -358,6 +372,7 @@ impl Editor {
             frame_log: crate::frame_log::FrameLog::from_env(),
             lossy: false,
             notice: None,
+            tip: None,
         };
         editor.doc.take_splices();
         editor.update_active();
@@ -547,13 +562,39 @@ impl Editor {
         cx.notify();
     }
 
-    /// Applies changed settings: the theme now (zoom applies to new windows).
+    /// Applies changed settings: the theme now, and whether the rotating tip shows (zoom
+    /// applies to new windows).
     pub(crate) fn apply_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let settings = cx.try_global::<crate::Settings>().cloned().unwrap_or_default();
         let dark = settings.dark(is_dark(window.appearance()));
         self.appearance_unconfirmed = false;
         if dark != self.theme.dark {
             self.theme = self.theme.restyled(dark);
+            cx.notify();
+        }
+        self.set_tips_shown(settings.tips, cx);
+    }
+
+    /// Picks this window's tip the first time it runs (deferred past construction, see
+    /// `with_document`), reading whether `Settings::tips` allows it directly since nothing has
+    /// fetched settings yet at that point. `apply_settings` handles the same on/off switch again
+    /// on every settings save, through `set_tips_shown` directly with the settings it already
+    /// read, rather than calling back into this.
+    pub(crate) fn refresh_tip(&mut self, cx: &mut Context<Self>) {
+        let show = cx.try_global::<crate::Settings>().is_none_or(|s| s.tips);
+        self.set_tips_shown(show, cx);
+    }
+
+    /// Turns the rotating tip on or off (`Settings::tips`): a tip already picked
+    /// (`tips::next_tip`) keeps its text for the rest of the window's life - this never re-rolls
+    /// it, only shows or hides whichever one this window already has.
+    fn set_tips_shown(&mut self, show: bool, cx: &mut Context<Self>) {
+        if !show {
+            if self.tip.take().is_some() {
+                cx.notify();
+            }
+        } else if self.tip.is_none() {
+            self.tip = crate::tips::next_tip();
             cx.notify();
         }
     }

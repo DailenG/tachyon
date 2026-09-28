@@ -1721,6 +1721,7 @@ fn settings_choose_theme_and_zoom_and_saving_them_applies_at_once(cx: &mut TestA
             theme: crate::ThemeChoice::Dark,
             zoom: 1.25,
             hot_exit: true,
+            tips: true,
         });
         cx.set_global(crate::SettingsFile(file.clone()));
     });
@@ -1792,7 +1793,12 @@ fn the_current_find_match_keeps_its_fill_and_a_thicker_underline(cx: &mut TestAp
 fn prompts_use_the_theme_the_settings_choose(cx: &mut TestAppContext) {
     // The test window reports a light system appearance.
     cx.update(|cx| {
-        cx.set_global(crate::Settings { theme: crate::ThemeChoice::Dark, zoom: 1., hot_exit: true })
+        cx.set_global(crate::Settings {
+            theme: crate::ThemeChoice::Dark,
+            zoom: 1.,
+            hot_exit: true,
+            tips: true,
+        })
     });
     let (_editor, cx) = open("", cx);
     let dark = cx.update(|window, cx| crate::Theme::for_window(window, cx).dark);
@@ -2149,4 +2155,63 @@ fn the_environment_details_include_the_version_and_settings_path(cx: &mut TestAp
     let details = handle.read_with(cx, |view, _| view.environment_text()).expect("window is open");
     assert!(details.contains("9.9.9"), "{details}");
     assert!(details.contains(&settings_path.display().to_string()), "{details}");
+}
+
+#[gpui::test]
+fn a_pro_tip_shows_by_default_after_the_first_frame(cx: &mut TestAppContext) {
+    let (editor, cx) = open("", cx);
+    let tip = editor.read_with(cx, |e, _| e.tip.clone());
+    assert!(tip.as_deref().is_some_and(|t| t.starts_with("Pro Tip: ")), "{tip:?}");
+}
+
+#[gpui::test]
+fn tips_false_in_settings_keeps_the_tip_hidden(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        cx.set_global(crate::Settings {
+            theme: crate::ThemeChoice::System,
+            zoom: 1.,
+            hot_exit: true,
+            tips: false,
+        })
+    });
+    let (editor, cx) = open("", cx);
+    assert_eq!(editor.read_with(cx, |e, _| e.tip.clone()), None);
+}
+
+#[gpui::test]
+fn the_tip_does_not_change_while_editing(cx: &mut TestAppContext) {
+    let (editor, cx) = open("hello\n", cx);
+    let before = editor.read_with(cx, |e, _| e.tip.clone());
+    cx.simulate_keystrokes("end");
+    cx.simulate_input(" world");
+    cx.run_until_parked();
+    let after = editor.read_with(cx, |e, _| e.tip.clone());
+    assert_eq!(before, after, "one tip per window, not re-picked on every edit");
+}
+
+#[gpui::test]
+fn saving_tips_false_hides_an_already_shown_tip(cx: &mut TestAppContext) {
+    let dir = backup_dir("tips-setting");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let file = dir.join("settings.toml");
+    std::fs::write(&file, crate::DEFAULT_SETTINGS).expect("write");
+    cx.update(|cx| {
+        cx.set_global(crate::Settings {
+            theme: crate::ThemeChoice::System,
+            zoom: 1.,
+            hot_exit: true,
+            tips: true,
+        });
+        cx.set_global(crate::SettingsFile(file.clone()));
+    });
+    let (editor, cx) = open_file(&file, cx);
+    let tip = |cx: &mut VisualTestContext| editor.read_with(cx, |e, _| e.tip.clone());
+    assert!(tip(cx).is_some_and(|t| t.starts_with("Pro Tip: ")), "tips on by default");
+
+    cx.simulate_keystrokes("secondary-a");
+    cx.simulate_input("tips = false\n");
+    cx.simulate_keystrokes("secondary-s");
+    cx.run_until_parked();
+    assert_eq!(tip(cx), None, "saved tips = false hides an already-shown tip, live");
+    let _ = std::fs::remove_dir_all(&dir);
 }
