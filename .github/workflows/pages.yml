@@ -1,0 +1,68 @@
+name: Deploy site
+
+# Custom domain: this workflow never writes a CNAME file, so the site is
+# reachable at both https://daileng.github.io/tachyon/ and, once chosen, a
+# custom domain root. To attach one later: add a file named exactly `CNAME`
+# under `site/` containing the bare domain (for example `tachyon.dev`, no
+# scheme, no path), point its DNS at GitHub Pages (an ApEx domain needs the
+# four GitHub Pages A records, or an ALIAS/ANAME; a subdomain needs a CNAME
+# record to daileng.github.io), then set the domain once in the repository's
+# Settings -> Pages so GitHub keeps `CNAME` and HTTPS in sync. Every asset
+# and link in `site/` is already relative, so nothing else changes.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - "assets/brand/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Assemble artifact
+        run: |
+          set -euo pipefail
+          rm -rf _site
+          mkdir -p _site
+          cp -r site/. _site/
+
+          # assets/brand is the one source of truth for the favicon mark;
+          # re-copy it into the artifact so the deployed site can never
+          # drift from the canonical vector file.
+          cp assets/brand/app-icon-small.svg _site/assets/favicon.svg
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v6
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+
+  deploy:
+    name: Deploy
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
