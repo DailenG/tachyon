@@ -65,6 +65,23 @@ pub const PLAIN_CHUNK_BYTES: usize = 16 * 1024;
 /// a 20 MB single-line file - never grows a chunk past a small, bounded shaping cost.
 pub const PLAIN_FORCED_CUT_BYTES: usize = 8 * 1024;
 
+/// Below this many lines *and* below [`PLAIN_MIN_CHUNK_BYTES`] bytes (a quarter of
+/// [`PLAIN_CHUNK_LINES`]), a plain block that fits in one chunk on its own is too small to stand
+/// alone after an edit and merges with the next block instead - unless it is the document's own
+/// last block, or immediately follows a forced cut, where a short remainder is normal (see
+/// [`Document::on_edit_plain`] and [`plain_block_is_small`]).
+const PLAIN_MIN_CHUNK_LINES: usize = PLAIN_CHUNK_LINES / 4;
+
+/// A quarter of [`PLAIN_CHUNK_BYTES`]; see [`PLAIN_MIN_CHUNK_LINES`].
+const PLAIN_MIN_CHUNK_BYTES: usize = PLAIN_CHUNK_BYTES / 4;
+
+/// [`Document::on_edit_plain`] gives up extending its merge into further neighbours after this
+/// many attempts. Never expected to matter - merging one whole neighbour always clears the
+/// minimum unless that neighbour is itself an exempt short remainder right after a forced cut,
+/// and a single source line has only one such remainder - but bounds the work to a small
+/// constant regardless, rather than relying on that argument alone.
+const PLAIN_MERGE_ATTEMPTS: usize = 4;
+
 /// Above this size a Markdown-extension file opens as plain text instead (and the toggle back to
 /// Markdown is refused): `cargo bench -p tachyon-doc` measured a full parse at 220 ms for 10 MiB;
 /// well past that, the parse itself risks becoming the kind of multi-hundred-millisecond stall
@@ -99,7 +116,10 @@ const MARKDOWN_EXTENSIONS: [&str; 6] = ["md", "markdown", "mdown", "mkd", "mkdn"
 
 /// A document's editing and rendering mode. Plain text never runs Markdown parsing, has no
 /// definitions table and never schedules a [`ParseJob`]: its blocks only chunk the text for the
-/// virtualized list (see [`plain_chunk_lens`]), and edits re-chunk locally and synchronously.
+/// virtualized list, at load with [`plain_chunk_lens`] (greedy: pack each chunk to the maximum).
+/// An edit instead re-chunks only the block(s) it touched, and - if a boundary chunk of that
+/// re-chunk would fall under the minimum - the next block too (see [`Document::on_edit_plain`]):
+/// local by construction, never proportional to the rest of the document.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum DocMode {
     Markdown,
@@ -375,16 +395,41 @@ impl Document {
         self.buffer.seal_undo_group();
     }
 
+    /// Reverts the last undo group. Reconciles the block list after each
+    /// individual change (`Buffer::undo_step`), not after the whole group:
+    /// `on_edit`/`on_edit_plain` assume the buffer reflects exactly the one
+    /// edit just passed to them, which only holds if each change is applied
+    /// and reconciled before the next one runs. Reconciling once after the
+    /// group was fully applied (its `Buffer::undo`, still used by callers
+    /// that do not need this) made a plain document's re-chunk compare
+    /// against a rope that had already moved past every other change in
+    /// the group, so it never found the old chunk boundary it was looking
+    /// for and rescanned all the way to the end of the document, once per
+    /// change in the group.
     pub fn undo(&mut self) -> Option<Vec<Edit>> {
-        let edits = self.buffer.undo()?;
-        edits.iter().for_each(|e| self.on_edit(e, None));
-        Some(edits)
+        let mut edits = Vec::new();
+        loop {
+            let (edit, done) = self.buffer.undo_step()?;
+            self.on_edit(&edit, None);
+            edits.push(edit);
+            if done {
+                return Some(edits);
+            }
+        }
     }
 
+    /// Re-applies the last undone group. See [`Document::undo`] for why
+    /// this reconciles after each change instead of the whole group.
     pub fn redo(&mut self) -> Option<Vec<Edit>> {
-        let edits = self.buffer.redo()?;
-        edits.iter().for_each(|e| self.on_edit(e, None));
-        Some(edits)
+        let mut edits = Vec::new();
+        loop {
+            let (edit, done) = self.buffer.redo_step()?;
+            self.on_edit(&edit, None);
+            edits.push(edit);
+            if done {
+                return Some(edits);
+            }
+        }
     }
 
     /// The next reparse to run, covering the first dirty range whole, or
@@ -684,14 +729,23 @@ impl Document {
         self.mark_dirty(start..start + len);
     }
 
-    /// A plain document's whole reaction to an edit: re-chunks starting at the edited block,
-    /// stopping as soon as a newly computed chunk boundary lands exactly where an old one
-    /// (shifted through the edit) already was - at that point everything past it is provably
-    /// unaffected, since [`next_plain_chunk_len`] only ever looks forward. Bounded to the touched
-    /// blocks plus however far a changed chunk boundary ripples into its neighbors (typically
-    /// none or one; see the type's docs for the pathological worst case), never the whole
-    /// document. No dirty tracking, no definitions, no parse job: chunking is counting bytes and
-    /// lines, not parsing, so it always runs inline.
+    /// A plain document's whole reaction to an edit: replaces the block(s) it touched with a
+    /// fresh chunking of exactly their new combined span (`region_start..region_end`, the old
+    /// touched span's start and end, the latter shifted through the edit) - never the rest of
+    /// the document, since every other block's own length is untouched by an edit elsewhere (an
+    /// edit only moves its *absolute offset*, which [`Document::splice`]'s
+    /// [`Document::recompute_starts`] handles without touching content). That span is split, if
+    /// it grew past the maximum, with [`split_evenly`] rather than packed greedily
+    /// ([`plain_chunk_lens`]): the two ends of a touched span are constrained by whatever
+    /// surrounds them, and a greedy pack's last, partial chunk cannot promise to clear the
+    /// minimum the way an even split can (see [`split_evenly`]'s docs) - packing greedily here,
+    /// re-anchored at the touched span instead of the document start, would only move the
+    /// original bug's rippling from one anchor to another. If the span fits in one chunk on its
+    /// own but that chunk falls under the minimum, [`plain_block_is_small`] merges it with the
+    /// next block instead (bounded by [`PLAIN_MERGE_ATTEMPTS`], though one merge is normally
+    /// enough) unless it is the document's own last block or immediately follows a forced cut.
+    /// No dirty tracking, no definitions, no parse job: chunking is counting bytes and lines, not
+    /// parsing, so it always runs inline.
     fn on_edit_plain(&mut self, edit: &Edit) {
         let new_total = self.buffer.len();
         if self.blocks.is_empty() {
@@ -705,32 +759,39 @@ impl Document {
         }
         let n = self.blocks.len();
         let first = self.block_at(edit.range.start).unwrap_or(0);
-        let start = self.starts[first];
-        let mut new_lens: Vec<usize> = Vec::new();
-        let mut at = start;
-        // The next old block boundary that might still be valid, once shifted through the edit.
-        // Boundaries the edit itself overwrote (before `edit.range.end`) can never be one.
-        let mut candidate = first + 1;
-        let last_old = loop {
-            while candidate < n && self.starts[candidate] < edit.range.end {
-                candidate += 1;
-            }
-            if candidate < n && shift_offset(self.starts[candidate], edit) == at {
-                break candidate;
-            }
-            if at >= new_total {
-                break n;
-            }
-            let len = next_plain_chunk_len(self.buffer.rope(), at);
-            new_lens.push(len);
-            at += len;
+        let mut last = if edit.range.end > edit.range.start {
+            self.block_at(edit.range.end - 1).unwrap_or(first)
+        } else {
+            first
         };
+        let region_start = self.starts[first];
+        let mut region_end = shift_offset(self.starts[last + 1], edit);
+        let rope = self.buffer.rope().clone();
+
+        for _ in 0..PLAIN_MERGE_ATTEMPTS {
+            let span = region_end - region_start;
+            let fits_as_one = span <= PLAIN_CHUNK_BYTES
+                && rope.byte_to_line(region_end) - rope.byte_to_line(region_start)
+                    <= PLAIN_CHUNK_LINES;
+            if !fits_as_one || !plain_block_is_small(&rope, region_start, span) {
+                break;
+            }
+            let is_last_block = last + 1 == n;
+            let follows_forced_cut = first > 0 && rope.byte(region_start - 1) != b'\n';
+            if is_last_block || follows_forced_cut {
+                break;
+            }
+            last += 1;
+            region_end = shift_offset(self.starts[last + 1], edit);
+        }
+
+        let new_lens = split_evenly(&rope, region_start..region_end);
         let mut new_blocks: Vec<Block> =
             new_lens.into_iter().map(|len| self.new_block(md::plain(len), false)).collect();
         if let Some(first_new) = new_blocks.first_mut() {
             first_new.id = self.blocks[first].id;
         }
-        self.splice(first..last_old, new_blocks);
+        self.splice(first..last + 1, new_blocks);
     }
 
     /// Blocks for a changed range `range` (current coordinates): one stale
@@ -1156,34 +1217,34 @@ fn floor_char_boundary(rope: &Rope, mut byte_idx: usize) -> usize {
     byte_idx
 }
 
-/// Length of the next plain-text chunk starting at absolute offset `start` (`0` only when
-/// `start` is the end of the text): cut after a `\n`, targeting [`PLAIN_CHUNK_BYTES`] bytes or
-/// [`PLAIN_CHUNK_LINES`] lines, whichever comes first. A line with no `\n` within
-/// [`PLAIN_FORCED_CUT_BYTES`] is cut there instead - a display-only break (the underlying bytes
-/// are unchanged, and the next chunk continues the same source line) that keeps a single
-/// pathologically long line from ever making the virtualized list lay out or shape more than a
-/// bounded amount of text. Scans at most `PLAIN_CHUNK_BYTES` bytes ahead of `start`, never the
-/// rest of the document, and never copies `rope`'s text.
+/// Length of the next plain-text chunk starting at absolute offset `start`, never reading past
+/// `cap` (`0` only when `start >= cap`): cut after a `\n`, targeting [`PLAIN_CHUNK_BYTES`] bytes
+/// or [`PLAIN_CHUNK_LINES`] lines, whichever comes first, or `cap` itself if reached first. A
+/// line with no `\n` within [`PLAIN_FORCED_CUT_BYTES`] of its own start is cut there instead - a
+/// display-only break (the underlying bytes are unchanged, and the next chunk continues the same
+/// source line) that keeps a single pathologically long line from ever making the virtualized
+/// list lay out or shape more than a bounded amount of text. Scans at most
+/// `min(PLAIN_CHUNK_BYTES, cap - start)` bytes, never the rest of the document, and never copies
+/// `rope`'s text.
 ///
-/// Because this only ever looks *forward* from `start`, calling it again at the same `start` on
-/// the same bytes (even if what follows changed) always gives the same length: a from-scratch
-/// chunking and an incremental re-chunk that starts at the same offset agree until whichever one
-/// stops first (see `Document::on_edit_plain`).
-fn next_plain_chunk_len(rope: &Rope, start: usize) -> usize {
-    let total = rope.len_bytes();
-    if start >= total {
+/// `cap` needs no precondition (unlike a plain byte offset picked at random, it is always itself
+/// a valid chunk boundary in the caller's own terms: the end of the document, or the start/end of
+/// a block the caller is not touching) - this only ever *shrinks* the chunk that would otherwise
+/// be returned, cutting at `cap` instead of the usual stopping point, and `cap` is exactly as
+/// valid a place to cut as whatever `cap` itself bounds.
+fn plain_chunk_len_capped(rope: &Rope, start: usize, cap: usize) -> usize {
+    if start >= cap {
         return 0;
     }
     let mut pos = start;
     let mut lines = 0usize;
     loop {
-        let force_at = floor_char_boundary(rope, (pos + PLAIN_FORCED_CUT_BYTES).min(total));
+        let force_at = floor_char_boundary(rope, (pos + PLAIN_FORCED_CUT_BYTES).min(cap));
         match find_newline(rope, pos, force_at) {
             Some(nl) => {
                 lines += 1;
                 let len_so_far = nl + 1 - start;
-                if len_so_far >= PLAIN_CHUNK_BYTES || lines >= PLAIN_CHUNK_LINES || nl + 1 >= total
-                {
+                if len_so_far >= PLAIN_CHUNK_BYTES || lines >= PLAIN_CHUNK_LINES || nl + 1 >= cap {
                     return len_so_far;
                 }
                 pos = nl + 1;
@@ -1193,19 +1254,78 @@ fn next_plain_chunk_len(rope: &Rope, start: usize) -> usize {
     }
 }
 
-/// Chunk lengths tiling `range` exactly: [`next_plain_chunk_len`] repeatedly from `range.start`,
-/// stopping once a chunk reaches `range.end` (never overshooting it: `range.end` must itself be
-/// a chunk boundary, true of the whole document's length and of any offset `Document` calls this
-/// with).
+/// Chunk lengths tiling `range` exactly, packed greedily to the maximum:
+/// [`plain_chunk_len_capped`] repeatedly from `range.start`, capped at `range.end`. Used for a
+/// fresh span with nothing past its own end to answer to - the whole document at load, or new
+/// content mid-document before [`Document::on_edit_plain`] decides how much of what surrounds it
+/// to fold in - never for re-chunking an existing span in place (see [`split_evenly`]).
 fn plain_chunk_lens(rope: &Rope, range: Range<usize>) -> Vec<usize> {
     let mut lens = Vec::new();
     let mut at = range.start;
     while at < range.end {
-        let len = next_plain_chunk_len(rope, at);
+        let len = plain_chunk_len_capped(rope, at, range.end);
         lens.push(len);
         at += len;
     }
     lens
+}
+
+/// The block `start..start+len` is too small to stand on its own (under [`PLAIN_MIN_CHUNK_BYTES`]
+/// *and* under [`PLAIN_MIN_CHUNK_LINES`] - either alone is enough to clear the minimum, matching
+/// how a chunk is cut on whichever of lines or bytes hits its cap first). Whether it is actually
+/// allowed to be that small anyway (the document's last block, or right after a forced cut) is
+/// for the caller to judge; this only measures.
+fn plain_block_is_small(rope: &Rope, start: usize, len: usize) -> bool {
+    if len >= PLAIN_MIN_CHUNK_BYTES {
+        return false;
+    }
+    let lines = rope.byte_to_line(start + len) - rope.byte_to_line(start);
+    lines < PLAIN_MIN_CHUNK_LINES
+}
+
+/// Splits `range` into the fewest chunks that each respect [`PLAIN_CHUNK_BYTES`] and
+/// [`PLAIN_CHUNK_LINES`], cut at *even* line indices (`Rope::line_to_byte`) rather than packed
+/// greedily to the maximum like [`plain_chunk_lens`]. Used to re-chunk a span already bounded on
+/// both ends by whatever [`Document::on_edit_plain`] decided surrounds it - a block that grew
+/// past the maximum, alone or after merging with a too-small neighbour - where the two ends may
+/// themselves need to clear [`PLAIN_MIN_CHUNK_BYTES`]/[`PLAIN_MIN_CHUNK_LINES`]: a greedy pack's
+/// last, partial chunk cannot promise that (it is sized only by where it happens to run out of
+/// room, not by what is left over), while halving a range that is at most twice the maximum
+/// always leaves both halves at least half the maximum - comfortably over a quarter. Halving is
+/// recursive because one side of an uneven split (very unequal line lengths) may still be over
+/// the maximum. Still cut only at line ends, or, once no further line boundary can subdivide a
+/// piece (a single source line, or part of one, spans it entirely), at a forced cut - the same
+/// display-only break as [`plain_chunk_len_capped`], delegated to it directly.
+fn split_evenly(rope: &Rope, range: Range<usize>) -> Vec<usize> {
+    let mut lens = Vec::new();
+    split_evenly_into(rope, range, &mut lens);
+    lens
+}
+
+fn split_evenly_into(rope: &Rope, range: Range<usize>, lens: &mut Vec<usize>) {
+    let total = range.len();
+    if total == 0 {
+        return;
+    }
+    let start_line = rope.byte_to_line(range.start);
+    let end_line = rope.byte_to_line(range.end);
+    if total <= PLAIN_CHUNK_BYTES && end_line - start_line <= PLAIN_CHUNK_LINES {
+        lens.push(total);
+        return;
+    }
+    let mid_line = start_line + (end_line - start_line) / 2;
+    let mid = rope.line_to_byte(mid_line.min(end_line));
+    if mid <= range.start || mid >= range.end {
+        let mut at = range.start;
+        while at < range.end {
+            let len = plain_chunk_len_capped(rope, at, range.end);
+            lens.push(len);
+            at += len;
+        }
+        return;
+    }
+    split_evenly_into(rope, range.start..mid, lens);
+    split_evenly_into(rope, mid..range.end, lens);
 }
 
 /// Maps `offset` (in the text *before* `edit`) to its position after, like [`shift_range`] for a

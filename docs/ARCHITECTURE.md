@@ -119,6 +119,27 @@ via `rope.byte_to_line`) cannot see across such a cut - the whole multi-chunk li
 and continues into the neighboring block at the same byte offset from its start instead, before
 falling back to `movement::vertical` for an ordinary line boundary.
 
+That greedy packing runs once, at load (`plain_chunk_lens`) - it anchors every boundary to an
+exact line/byte count from the start of the text, so it is never run again after an edit: shifting
+the line count by anything that is not a multiple of 256 (typing `Enter` is the common case) would
+move every boundary after it, turning a one-line edit into a splice of the whole document (a
+1,000,000-line file cost ~487 ms for one keystroke, the regression this fixed). Instead, the
+chunking invariant is local: a block ends at a line end or a forced cut as above, and is between a
+minimum and a maximum size - at most `PLAIN_CHUNK_LINES`/`PLAIN_CHUNK_BYTES`, at least a quarter of
+each (`PLAIN_MIN_CHUNK_LINES`/`PLAIN_MIN_CHUNK_BYTES`) unless it is the document's own last block
+or immediately follows a forced cut, where a short remainder is expected. `Document::on_edit_plain`
+restores it by touching only the block(s) the edit changed: it re-chunks their combined span with
+`split_evenly` (even line-index splits, not greedy packing - the two ends of an existing span are
+already constrained by whatever surrounds them, and a greedy pack's last, partial chunk cannot
+promise to clear the minimum the way an even split can), and, if that span alone is too small to
+stand on its own, first merges it with the next block (bounded by `PLAIN_MERGE_ATTEMPTS`, though
+one merge is normally enough). Every other block keeps its exact length; an edit elsewhere only
+moves its *absolute offset*, which the prefix-sum recompute after a splice handles without
+touching content. A property test asserts the invariant (bounds, valid cut points, exact tiling)
+after randomized edits, undo and redo of any size, and a separate test asserts that an edit
+splices only a small, constant number of blocks regardless of document size, including `Enter`
+near the top of a 1,000,000-line document.
+
 Because every block in `Plain` mode renders raw (`render_block`'s `DocMode::Plain` arm), more than
 one of them can paint in a frame - unlike Markdown, where only the active block ever does. Only
 the block whose canvas paints a caret position (i.e. actually holds `head`) may write

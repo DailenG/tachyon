@@ -136,6 +136,25 @@ struct History {
     redo: Vec<Vec<Change>>,
     /// Whether the next edit joins the last undo group.
     open: bool,
+    /// A group popped from `undo` or `redo` but not yet fully replayed by
+    /// [`Buffer::undo_step`]/[`Buffer::redo_step`]: the changes plus which
+    /// stack the group returns to once every one of them has been applied.
+    /// Lets a caller (`tachyon_doc::Document`) react to each change against
+    /// the buffer state it actually produces - the same interleaving
+    /// `Buffer::edit` gives a typed keystroke - instead of the whole
+    /// group's final state, which is what applying the group first and
+    /// reacting after used to do.
+    replay: Option<Replay>,
+}
+
+#[derive(Debug)]
+struct Replay {
+    group: Vec<Change>,
+    /// Index of the next change [`Buffer::undo_step`]/[`Buffer::redo_step`]
+    /// applies: counts down from `group.len()` for a group undone (changes
+    /// revert newest first), up from `0` for one redone (oldest first).
+    cursor: usize,
+    is_undo: bool,
 }
 
 /// What [`Buffer::load`] found while decoding: whether any invalid UTF-8 was replaced with
@@ -359,23 +378,103 @@ impl Buffer {
         self.history.open = false;
     }
 
-    /// Reverts the last undo group. Returns the edits applied, in order.
+    /// Reverts the last undo group, applying every change in one call.
+    /// Returns the edits applied, in order. Equivalent to calling
+    /// [`Buffer::undo_step`] until it reports the group's last step;
+    /// prefer that when a caller needs to react (re-chunk, reparse) to each
+    /// change against the buffer state it individually produced, rather
+    /// than the group's final state.
     pub fn undo(&mut self) -> Option<Vec<Edit>> {
-        self.history.open = false;
-        let group = self.history.undo.pop()?;
-        let edits =
-            group.iter().rev().map(|c| self.apply(c.at..c.at + c.new.len(), &c.old)).collect();
-        self.history.redo.push(group);
-        Some(edits)
+        let mut edits = Vec::new();
+        loop {
+            let (edit, done) = self.undo_step()?;
+            edits.push(edit);
+            if done {
+                return Some(edits);
+            }
+        }
     }
 
-    /// Re-applies the last undone group. Returns the edits applied, in order.
+    /// Re-applies the last undone group, applying every change in one call.
+    /// Returns the edits applied, in order. Equivalent to calling
+    /// [`Buffer::redo_step`] until it reports the group's last step; see
+    /// its docs for why a caller may prefer that.
     pub fn redo(&mut self) -> Option<Vec<Edit>> {
+        let mut edits = Vec::new();
+        loop {
+            let (edit, done) = self.redo_step()?;
+            edits.push(edit);
+            if done {
+                return Some(edits);
+            }
+        }
+    }
+
+    /// Reverts one change of the last undo group and returns its edit and
+    /// whether it was the group's last change (the group has now moved to
+    /// the redo stack), or `None` if there is nothing left to undo. Call in
+    /// a loop until `true`; do not interleave with
+    /// [`Buffer::edit`]/[`Buffer::redo_step`] before a group reports `true`.
+    ///
+    /// Applying one change at a time - instead of the whole group, then
+    /// reporting all its edits together - lets a caller like
+    /// `tachyon_doc::Document` re-chunk or reparse after each change
+    /// against the buffer state that change actually produced, the same
+    /// interleaving a typed keystroke gets from [`Buffer::edit`]. Reacting
+    /// only after the whole group had already been replayed made a plain
+    /// document's re-chunk (`on_edit_plain`'s convergence search, which
+    /// compares a per-change shift against the current rope) compare against
+    /// a rope that had already moved past every other change in the group,
+    /// so it never converged and rescanned the entire document once per
+    /// change in the group instead of once per edited region.
+    pub fn undo_step(&mut self) -> Option<(Edit, bool)> {
         self.history.open = false;
-        let group = self.history.redo.pop()?;
-        let edits = group.iter().map(|c| self.apply(c.at..c.at + c.old.len(), &c.new)).collect();
-        self.history.undo.push(group);
-        Some(edits)
+        let mut replay = match self.history.replay.take() {
+            Some(replay) => replay,
+            None => {
+                let group = self.history.undo.pop()?;
+                let cursor = group.len();
+                Replay { group, cursor, is_undo: true }
+            }
+        };
+        debug_assert!(replay.is_undo, "redo_step left a group only partly replayed");
+        replay.cursor -= 1;
+        let c = &replay.group[replay.cursor];
+        let edit = self.apply(c.at..c.at + c.new.len(), &c.old);
+        let done = replay.cursor == 0;
+        if done {
+            self.history.redo.push(replay.group);
+        } else {
+            self.history.replay = Some(replay);
+        }
+        Some((edit, done))
+    }
+
+    /// Re-applies one change of the last undone group and returns its edit
+    /// and whether it was the group's last change (the group has now moved
+    /// back to the undo stack), or `None` if there is nothing left to redo.
+    /// See [`Buffer::undo_step`] for why a caller may prefer this over
+    /// [`Buffer::redo`].
+    pub fn redo_step(&mut self) -> Option<(Edit, bool)> {
+        self.history.open = false;
+        let mut replay = match self.history.replay.take() {
+            Some(replay) => replay,
+            None => {
+                let group = self.history.redo.pop()?;
+                Replay { group, cursor: 0, is_undo: false }
+            }
+        };
+        debug_assert!(!replay.is_undo, "undo_step left a group only partly replayed");
+        let c = &replay.group[replay.cursor];
+        let edit = self.apply(c.at..c.at + c.old.len(), &c.new);
+        replay.cursor += 1;
+        let done = replay.cursor == replay.group.len();
+        if done {
+            self.history.undo.push(replay.group);
+        } else {
+            self.history.replay = Some(replay);
+        }
+        Some((edit, done))
     }
 
     /// Edits applied after `version`, oldest first, or `None` if they have

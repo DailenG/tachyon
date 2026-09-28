@@ -177,6 +177,18 @@ All notable user-visible changes are recorded here. The format follows
 - Editing a line after a paragraph-continuation line could leave a block rendered differently
   from a full reparse (look-behind now reaches the previous blank line).
 - Exit with an error instead of hanging when no display server is available on Linux.
+- Plain-text mode: undoing or redoing more than one change in a single undo group (for example,
+  a burst of typed keystrokes, or "Replace All") no longer costs time proportional to the whole
+  document. Each change in the group is now re-chunked against the buffer state it individually
+  produced, the same as typing, instead of the whole group being applied first and every change
+  in it separately triggering a re-chunk of everything from the edit to the end of the document.
+- Plain-text mode: any edit that changed the line count by an amount that is not a multiple of
+  256 (pressing `Enter`, pasting or deleting lines) re-chunked and re-rendered the entire rest of
+  the document, not just the edited part (487 ms for one `Enter` near the top of a 1,000,000-line
+  log). Chunk boundaries no longer have to match a from-scratch chunking of the whole document;
+  an edit now re-chunks only the block(s) it touched, splitting one that grew past the maximum
+  and merging one that fell under the minimum with its next neighbour, so the cost and the number
+  of blocks touched no longer depend on the document's size.
 - Forwarded launches are acknowledged by the running instance; a launch is no longer lost when the
   secondary process exits before the primary has read it (seen as a flaky test on Windows CI), and
   a secondary whose primary does not reply starts standalone.
