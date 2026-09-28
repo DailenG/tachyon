@@ -6,6 +6,7 @@
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+use std::path::{Path, PathBuf};
 use std::ptr;
 use std::sync::{Mutex, PoisonError, mpsc};
 use std::time::{Duration, Instant};
@@ -255,7 +256,7 @@ pub fn desktop_entry_installed() -> io::Result<bool> {
     Ok(false)
 }
 
-pub fn set_desktop_entry(_exe: &std::path::Path, _enabled: bool) -> io::Result<()> {
+pub fn set_desktop_entry(_exe: &Path, _enabled: bool) -> io::Result<()> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "desktop entries are a Linux and BSD feature; on Windows pin tachyon.exe to Start",
@@ -504,17 +505,51 @@ pub fn autostart_enabled() -> io::Result<bool> {
     })
 }
 
-/// Turning it on also clears a Task Manager "disabled" mark (absent means enabled); turning it off
-/// removes both values.
-pub fn set_autostart(exe: &std::path::Path, enabled: bool) -> io::Result<()> {
+/// The App Execution Alias Tachyon's manifest registers (`packaging/msix/AppxManifest.xml`),
+/// relative to `%LOCALAPPDATA%`: stable across MSIX updates, unlike
+/// `GetCurrentPackageFullName`'s versioned `C:\Program Files\WindowsApps\...` install folder.
+const PACKAGED_ALIAS: &str = r"Microsoft\WindowsApps\tachyon.exe";
+
+/// Whether this process runs from an installed MSIX package: asking `GetCurrentPackageFullName`
+/// for its required buffer length reports the package is too small a buffer
+/// (`ERROR_INSUFFICIENT_BUFFER`) rather than `APPMODEL_ERROR_NO_PACKAGE`. Only called from
+/// [`set_autostart`], so the zip build's startup path never pays for it.
+fn running_packaged() -> bool {
+    use windows_sys::Win32::Foundation::ERROR_INSUFFICIENT_BUFFER;
+    use windows_sys::Win32::Storage::Packaging::Appx::GetCurrentPackageFullName;
+    let mut len: u32 = 0;
+    // SAFETY: `&raw mut len` is a valid, live `u32` for the call to write its required buffer
+    // length to; a null buffer pointer with that length asks only for the length.
+    let status = unsafe { GetCurrentPackageFullName(&raw mut len, ptr::null_mut()) };
+    status == ERROR_INSUFFICIENT_BUFFER
+}
+
+/// The path the `Run` key should launch: `exe` unless this process is `packaged`, in which case
+/// `exe` is the versioned MSIX install path that changes on every update, and
+/// `local_app_data`'s [`PACKAGED_ALIAS`] (stable across updates) is used instead, when known.
+fn autostart_target(exe: &Path, packaged: bool, local_app_data: Option<&Path>) -> PathBuf {
+    match local_app_data {
+        Some(dir) if packaged => dir.join(PACKAGED_ALIAS),
+        _ => exe.to_path_buf(),
+    }
+}
+
+/// Turning it on also clears a Task Manager "disabled" mark (absent means enabled); turning it
+/// off removes both values. Points the `Run` key at `exe`, unless this is an MSIX install, in
+/// which case it points at the App Execution Alias instead (see [`autostart_target`]): an MSIX
+/// package's real path is versioned and would otherwise silently break autostart on the next
+/// update.
+pub fn set_autostart(exe: &Path, enabled: bool) -> io::Result<()> {
     use windows_sys::Win32::Foundation::ERROR_SUCCESS;
     use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, REG_SZ, RegSetKeyValueW};
     reg_delete(APPROVED_KEY)?;
     if !enabled {
         return reg_delete(RUN_KEY);
     }
+    let local_app_data = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
+    let target = autostart_target(exe, running_packaged(), local_app_data.as_deref());
     let (key, value) = (wide(RUN_KEY), wide(RUN_VALUE));
-    let command = wide(&format!("\"{}\" --background", exe.display()));
+    let command = wide(&format!("\"{}\" --background", target.display()));
     let bytes = u32::try_from(command.len() * 2)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "path too long"))?;
     // SAFETY: all strings are NUL-terminated UTF-16 that outlive the call, and `bytes` is the
@@ -537,7 +572,8 @@ pub fn set_autostart(exe: &std::path::Path, enabled: bool) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::cf_html;
+    use super::{PACKAGED_ALIAS, autostart_target, cf_html};
+    use std::path::Path;
 
     #[test]
     fn cf_html_offsets_point_at_the_document_and_the_fragment() {
@@ -549,5 +585,30 @@ mod tests {
         assert_eq!(&payload[offset("StartFragment:")..offset("EndFragment:")], "<p>h\u{e9}llo</p>");
         assert!(payload[offset("StartHTML:")..].starts_with("<html>"));
         assert_eq!(offset("EndHTML:"), payload.len());
+    }
+
+    #[test]
+    fn autostart_target_prefers_the_execution_alias_when_packaged() {
+        let exe =
+            Path::new(r"C:\Program Files\WindowsApps\Tachyon_0.1.0.0_x64__abc123\tachyon.exe");
+        let local_app_data = Path::new(r"C:\Users\Dailen\AppData\Local");
+        assert_eq!(
+            autostart_target(exe, true, Some(local_app_data)),
+            local_app_data.join(PACKAGED_ALIAS)
+        );
+    }
+
+    #[test]
+    fn autostart_target_keeps_the_given_exe_when_not_packaged() {
+        let exe = Path::new(r"C:\Users\Dailen\Tachyon\tachyon.exe");
+        let local_app_data = Path::new(r"C:\Users\Dailen\AppData\Local");
+        assert_eq!(autostart_target(exe, false, Some(local_app_data)), exe);
+    }
+
+    #[test]
+    fn autostart_target_falls_back_to_the_given_exe_without_local_app_data() {
+        let exe =
+            Path::new(r"C:\Program Files\WindowsApps\Tachyon_0.1.0.0_x64__abc123\tachyon.exe");
+        assert_eq!(autostart_target(exe, true, None), exe);
     }
 }

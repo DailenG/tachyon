@@ -238,3 +238,47 @@ context menu is kept in step the same way (see above).
 `TACHYON_FRAME_LOG=<path>` makes the editor append one line per frame to `<path>`: its busy time,
 render time, editor work by kind (edit, clipboard, paste, parse), and each key's time from arrival
 to the end of that frame's paint. Windows measurement runs use it to attribute slow frames.
+
+## Packaging
+
+`cargo xtask dist` packs the release binary with the README, changelog and licenses into a
+`.zip` (Windows) or `.tar.gz` (elsewhere); `cargo xtask icons` renders `assets/brand`'s SVGs into
+`crates/tachyon-platform/assets/tachyon.ico` and, for Windows, the MSIX tile and taskbar PNGs
+under `packaging/msix/Assets` (both committed, like the `.ico`: no brand artwork is decoded at
+runtime or build time from anything but these pre-rendered files).
+
+**MSIX.** `packaging/msix/AppxManifest.xml` is a template (`{{VERSION}}` is the only
+placeholder; `cargo xtask msix` fills in the workspace version as four parts, e.g. `0.1.0` →
+`0.1.0.0`) that registers Tachyon as `Windows.FullTrustApplication`: an App Execution Alias
+(`tachyon` works from any terminal, at a path stable across updates, unlike the versioned
+`C:\Program Files\WindowsApps\...` install folder), file type associations for `.md` and
+`.markdown`, and disabled file-system and registry write virtualization (the
+`unvirtualizedResources` restricted capability) so settings (`%APPDATA%\Tachyon`), backups
+(`%LOCALAPPDATA%\Tachyon`) and the autostart `Run` key land in the same real, global locations the
+`.zip` build uses instead of a private per-package store. The manifest's `Publisher` must match
+the Azure Trusted Signing certificate's subject exactly, or the package will not install.
+`cargo xtask msix` (Windows only, needs `makeappx.exe` from the Windows 10/11 SDK) stages the
+manifest, the signed `tachyon.exe` and `packaging/msix/Assets`, packs them, and writes
+`Tachyon.appinstaller` pointing App Installer at the built MSIX. Because an MSIX install's real
+path is versioned, `tachyon_platform::set_autostart` on Windows checks whether it is running
+packaged (`GetCurrentPackageFullName`, only when `--autostart on` runs, never on the startup
+path) and points the `Run` key at the execution alias instead of the exe it was given, so
+autostart survives an update (`autostart_target` in `crates/tachyon-platform/src/windows.rs`,
+unit-tested without touching the registry).
+
+**Auto-update.** `Tachyon.appinstaller` uses App Installer's 2021 schema with
+`HoursBetweenUpdateChecks="0"` and `AutomaticBackgroundTask`, so an install from a GitHub Release
+checks for a newer MSIX on every launch and in the background. App Installer stages an update
+but cannot swap a package whose process is still running; Windows has no supported way to force a
+clean full-trust app to restart mid-update (`RegisterApplicationRestart` is for crashes and
+reboots, not a voluntary exit), so a resident Tachyon's update applies the next time it fully
+quits (tray icon "Quit Tachyon", or `tachyon --quit`) or at the next sign-in. Nothing in Tachyon
+polls for this; it is documented behavior, not code, to keep the startup and resident paths
+exactly as fast as they are today.
+
+The release workflow (`.github/workflows/release.yml`) signs `tachyon.exe` and the MSIX with
+Azure Trusted Signing (`Azure/trusted-signing-action`, pinned to a commit SHA) on the same
+`windows-latest` leg that builds them, verifies both with `Get-AuthenticodeSignature`
+(`.github/scripts/verify-signature.ps1`), and uploads the archives, the MSIX and the
+`.appinstaller` to the GitHub Release alongside a `SHA256SUMS.txt`.
+

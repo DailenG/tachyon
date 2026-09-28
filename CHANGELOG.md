@@ -25,6 +25,14 @@ All notable user-visible changes are recorded here. The format follows
   archives, a `SHA256SUMS.txt`, and notes from the matching changelog section. `workflow_dispatch`
   runs the same build as a dry run that uploads the archives as workflow artifacts without
   creating a release; signing is skipped with a warning when the Azure secrets are not configured.
+- Windows: a signed MSIX installer (`cargo xtask msix`) and a `Tachyon.appinstaller` published
+  with each GitHub Release, so `Add-AppxPackage -AppInstallerFile` (or just opening the
+  `.appinstaller`) installs Tachyon and checks for updates on every launch. The package registers
+  an App Execution Alias (`tachyon` from any terminal), `.md`/`.markdown` file associations, and
+  disables MSIX's write virtualization so settings, backups and autostart use the same real
+  locations as the `.zip` build; `--autostart on` targets the execution alias instead of the
+  versioned install path when run from an MSIX install, so it survives updates. The release
+  workflow signs and verifies the MSIX the same way as `tachyon.exe`.
 - Local images are shown in rendered text (paths relative to the document, absolute or `file:`);
   remote images still show their alt text.
 - Settings (`Ctrl+,` opens `settings.toml`): theme (system, dark or light), zoom of new windows,
