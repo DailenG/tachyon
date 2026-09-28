@@ -191,12 +191,14 @@ fn dist(args: Vec<String>) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Icon sizes and the art drawn at each: the simplified mark stays legible up to 32 px.
+/// Icon sizes and the art drawn at each. Up to 32 px (the tray, title bar and taskbar at 100 %)
+/// the full mark's orbit arcs read as a digit, so those sizes use a dedicated few-stroke arrow
+/// (`app-icon-16.svg`); 40 px and up show the full mark.
 const ICON_SIZES: [(u32, &str); 7] = [
-    (16, "app-icon-small.svg"),
-    (20, "app-icon-small.svg"),
-    (24, "app-icon-small.svg"),
-    (32, "app-icon-small.svg"),
+    (16, "app-icon-16.svg"),
+    (20, "app-icon-16.svg"),
+    (24, "app-icon-16.svg"),
+    (32, "app-icon-16.svg"),
     (40, "app-icon.svg"),
     (48, "app-icon.svg"),
     (64, "app-icon.svg"),
