@@ -528,12 +528,10 @@ fn running_packaged() -> bool {
 /// `exe` is the versioned MSIX install path that changes on every update, and
 /// `local_app_data`'s [`PACKAGED_ALIAS`] (stable across updates) is used instead, when known.
 fn autostart_target(exe: &Path, packaged: bool, local_app_data: Option<&Path>) -> PathBuf {
-    if packaged {
-        if let Some(dir) = local_app_data {
-            return dir.join(PACKAGED_ALIAS);
-        }
+    match local_app_data {
+        Some(dir) if packaged => dir.join(PACKAGED_ALIAS),
+        _ => exe.to_path_buf(),
     }
-    exe.to_path_buf()
 }
 
 /// Turning it on also clears a Task Manager "disabled" mark (absent means enabled); turning it
