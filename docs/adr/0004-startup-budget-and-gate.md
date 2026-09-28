@@ -145,7 +145,8 @@ rest delays the next input, not the first frame. Direct launch: p95 392 ms.
   same run, warm p95 spawn -> first frame / receipt -> first_frame): baseline 32.3 / 15.6 ms,
   DWM transitions off 22.8 / 5.4 ms, placed while hidden 27.8 / 12.1 ms, both 19.3 / 0.66 ms.
   Transitions are now off for ready windows (`tachyon_platform::disable_window_transitions`);
-  placing the window while hidden needs a GPUI change and is to be proposed upstream. Showing the
+  placing the window while hidden needs a GPUI change, proposed upstream in
+  [zed-industries/zed#64853](https://github.com/zed-industries/zed/discussions/64853). Showing the
   window still takes 14-26 ms after its first frame (activation); input is handled ≈ 19-24 ms after
   showing starts.
 - A ready window costs one window's memory and GPU buffers while idle.
