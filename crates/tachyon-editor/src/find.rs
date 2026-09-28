@@ -315,7 +315,7 @@ impl Editor {
     /// against matches `replace_current` has not caught up to yet.
     pub(crate) fn find_enter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.picker.is_some() {
-            return self.picker_pick(None, cx);
+            return self.picker_pick(None, window, cx);
         }
         let replacing = self.find.as_ref().is_some_and(|f| f.editing_replacement);
         if replacing && !self.replace_current(cx) {

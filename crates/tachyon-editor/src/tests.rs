@@ -1580,6 +1580,121 @@ fn open_recent_lists_opened_files_newest_first_and_opens_the_pick(cx: &mut TestA
 }
 
 #[gpui::test]
+fn command_palette_filters_and_runs_a_command(cx: &mut TestAppContext) {
+    let (editor, cx) = open("# Title\n\npara\n", cx);
+    cx.simulate_keystrokes("secondary-shift-p");
+    cx.simulate_input("toggle plain");
+    let labels = editor.read_with(cx, |e, _| {
+        let picker = e.picker.as_ref().expect("open");
+        picker.matches.iter().map(|&i| picker.items[i].label.clone()).collect::<Vec<_>>()
+    });
+    assert_eq!(labels, ["Toggle plain-text mode"], "fuzzy filter narrows to one command");
+
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert!(editor.read_with(cx, |e, _| e.picker.is_none()), "the palette closed");
+    assert_eq!(
+        editor.read_with(cx, |e, _| e.document().mode()),
+        tachyon_doc::DocMode::Plain,
+        "Enter ran the command"
+    );
+}
+
+#[gpui::test]
+fn command_palette_shows_shortcuts_from_the_keymap(cx: &mut TestAppContext) {
+    let (editor, cx) = open("text\n", cx);
+    cx.simulate_keystrokes("secondary-shift-p");
+    let shortcut = editor.read_with(cx, |e, _| {
+        let picker = e.picker.as_ref().expect("open");
+        picker
+            .matches
+            .iter()
+            .map(|&i| &picker.items[i])
+            .find(|item| item.label == "Go to heading")
+            .and_then(|item| item.shortcut.clone())
+    });
+    // `secondary-shift-o` in `key_bindings()`, written like the README (`Ctrl+Shift+O`; `Cmd` on
+    // macOS), not GPUI's `ctrl-shift-O`.
+    let expected = if cfg!(target_os = "macos") { "Cmd+Shift+O" } else { "Ctrl+Shift+O" };
+    assert_eq!(shortcut.as_deref(), Some(expected), "read from the actual key_bindings()");
+}
+
+#[gpui::test]
+fn command_palette_escape_closes_without_running_anything(cx: &mut TestAppContext) {
+    let (editor, cx) = open("# Title\n\npara\n", cx);
+    cx.simulate_keystrokes("secondary-shift-p");
+    cx.simulate_input("toggle plain");
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    assert!(editor.read_with(cx, |e, _| e.picker.is_none()));
+    assert_eq!(
+        editor.read_with(cx, |e, _| e.document().mode()),
+        tachyon_doc::DocMode::Markdown,
+        "nothing ran"
+    );
+}
+
+#[gpui::test]
+fn command_palette_theme_light_applies_at_once_and_persists_keeping_a_comment(
+    cx: &mut TestAppContext,
+) {
+    let dir = backup_dir("command-palette-theme");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let file = dir.join("settings.toml");
+    std::fs::write(&file, crate::DEFAULT_SETTINGS).expect("write");
+    cx.update(|cx| {
+        cx.set_global(crate::Settings {
+            theme: crate::ThemeChoice::Dark,
+            zoom: 1.,
+            hot_exit: true,
+        });
+        cx.set_global(crate::SettingsFile(file.clone()));
+    });
+    let (editor, cx) = open("text\n", cx);
+
+    cx.simulate_keystrokes("secondary-shift-p");
+    cx.simulate_input("Theme: Light");
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+
+    assert!(editor.read_with(cx, |e, _| e.picker.is_none()));
+    let settings = cx.update(|_, cx| cx.global::<crate::Settings>().clone());
+    assert_eq!(settings.theme, crate::ThemeChoice::Light, "applied at once, not only on save");
+
+    let written = std::fs::read_to_string(&file).expect("read");
+    assert!(written.contains("theme = \"light\""), "persisted: {written:?}");
+    assert!(
+        written.contains("# Tachyon settings. Saving this file applies them to open windows."),
+        "kept the file's comments: {written:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[gpui::test]
+fn quick_open_lists_the_same_recent_files_as_open_recent(cx: &mut TestAppContext) {
+    let dir = backup_dir("quick-open");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let (a, b, current) = (dir.join("alpha.md"), dir.join("beta.md"), dir.join("gamma.md"));
+    for file in [&a, &b, &current] {
+        std::fs::write(file, "text\n").expect("write");
+    }
+    cx.update(|cx| cx.set_global(crate::RecentFiles::new(dir.join("recent.txt"))));
+    let (editor, cx) = open("", cx);
+    for file in [&a, &b, &current] {
+        editor.update(cx, |e, cx| e.set_file(file.clone(), cx));
+        cx.run_until_parked();
+    }
+
+    cx.simulate_keystrokes("secondary-p");
+    let labels = editor.read_with(cx, |e, _| {
+        let picker = e.picker.as_ref().expect("open");
+        picker.matches.iter().map(|&i| picker.items[i].label.clone()).collect::<Vec<_>>()
+    });
+    assert_eq!(labels, ["beta.md", "alpha.md"], "same list Open recent shows, newest first");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[gpui::test]
 fn settings_choose_theme_and_zoom_and_saving_them_applies_at_once(cx: &mut TestAppContext) {
     let dir = backup_dir("settings");
     std::fs::create_dir_all(&dir).expect("temp dir");

@@ -4,6 +4,7 @@
 
 mod about;
 mod backup;
+mod command_palette;
 mod disk;
 mod editor;
 mod find;

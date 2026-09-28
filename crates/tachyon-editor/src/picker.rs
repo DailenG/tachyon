@@ -1,7 +1,9 @@
 //! Pickers: a bar with a filter and a list to choose from. Go to heading (`Ctrl+Shift+O`) lists
-//! the document's headings; Open recent (`Ctrl+R`) lists recently opened files. Typing filters
-//! (case-insensitive substring), Up / Down choose, Enter or a click picks, Escape closes. Input is
-//! routed here through the find bar's entry points while a picker is open.
+//! the document's headings; Open recent (`Ctrl+R`/`Ctrl+P`) lists recently opened files; the
+//! command palette (`Ctrl+Shift+P`, see `command_palette.rs`) lists every user-facing command.
+//! Typing filters (case-insensitive substring or, failing that, subsequence, closest matches
+//! first), Up / Down choose, Enter or a click picks, Escape closes. Input is routed here through
+//! the find bar's entry points while a picker is open.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -9,6 +11,7 @@ use std::sync::{Arc, Mutex};
 use gpui::{App, Context, Global, Window};
 use tachyon_md::BlockKind;
 
+use crate::command_palette::CommandEffect;
 use crate::editor::{Editor, GoToHeading, OpenPaths, OpenRecent};
 
 /// Rows shown at once; the list scrolls to keep the chosen one in view.
@@ -20,6 +23,8 @@ pub(crate) enum Pick {
     Offset(usize),
     /// Opens this file (in a new window, through [`OpenPaths`]).
     File(PathBuf),
+    /// Runs a command palette entry.
+    Command(CommandEffect),
 }
 
 pub(crate) struct Item {
@@ -28,7 +33,9 @@ pub(crate) struct Item {
     pub(crate) detail: Option<String>,
     /// Indent level (a heading's level).
     pub(crate) indent: u8,
-    pick: Pick,
+    /// Shown right-aligned after `detail` (a command's current keyboard shortcut).
+    pub(crate) shortcut: Option<String>,
+    pub(crate) pick: Pick,
 }
 
 pub(crate) struct Picker {
@@ -46,7 +53,12 @@ pub(crate) struct Picker {
 }
 
 impl Picker {
-    fn new(title: &'static str, empty: &'static str, items: Vec<Item>, selected: usize) -> Self {
+    pub(crate) fn new(
+        title: &'static str,
+        empty: &'static str,
+        items: Vec<Item>,
+        selected: usize,
+    ) -> Self {
         let mut picker = Picker {
             title,
             empty,
@@ -62,14 +74,18 @@ impl Picker {
 
     fn filter(&mut self) {
         let query = self.query.to_lowercase();
-        self.matches = (0..self.items.len())
-            .filter(|&i| {
+        let mut ranked: Vec<(usize, (u8, usize, usize))> = (0..self.items.len())
+            .filter_map(|i| {
                 let item = &self.items[i];
-                query.is_empty()
-                    || item.label.to_lowercase().contains(&query)
-                    || item.detail.as_ref().is_some_and(|d| d.to_lowercase().contains(&query))
+                let haystack = match &item.detail {
+                    Some(detail) => format!("{} {detail}", item.label),
+                    None => item.label.clone(),
+                };
+                fuzzy_rank(&haystack, &query).map(|rank| (i, rank))
             })
             .collect();
+        ranked.sort_by_key(|&(_, rank)| rank);
+        self.matches = ranked.into_iter().map(|(i, _)| i).collect();
         self.selected = self.selected.min(self.matches.len().saturating_sub(1));
     }
 
@@ -79,6 +95,37 @@ impl Picker {
         let first = self.selected.saturating_sub(rows - 1);
         first..(first + rows).min(self.matches.len())
     }
+}
+
+/// Ranks `query_lower` (already lowercased) against `haystack` for the picker's filter: `None`
+/// if it does not match at all. Lower sorts first. A case-insensitive substring match beats a
+/// subsequence match (every query character appears in order, not necessarily contiguous, so
+/// abbreviations like "tpm" still find "Toggle plain-text mode"); within each kind, a match
+/// starting right at a word boundary beats one in the middle of a word, then an earlier or
+/// tighter match beats a later or looser one, then a shorter haystack beats a longer one (a more
+/// specific match). An empty query matches everything, tied, so a stable sort keeps the
+/// original order (document order for headings, most-recent-first for files).
+fn fuzzy_rank(haystack: &str, query_lower: &str) -> Option<(u8, usize, usize)> {
+    if query_lower.is_empty() {
+        return Some((0, 0, 0));
+    }
+    let hay_lower = haystack.to_lowercase();
+    if let Some(pos) = hay_lower.find(query_lower) {
+        let at_word_start = pos == 0 || !hay_lower.as_bytes()[pos - 1].is_ascii_alphanumeric();
+        return Some((if at_word_start { 0 } else { 1 }, pos, hay_lower.len()));
+    }
+    let mut rest = hay_lower.chars();
+    let mut skipped = 0usize;
+    for q in query_lower.chars() {
+        loop {
+            match rest.next() {
+                Some(c) if c == q => break,
+                Some(_) => skipped += 1,
+                None => return None,
+            }
+        }
+    }
+    Some((2, skipped, hay_lower.len()))
 }
 
 /// Recently opened files, most recent first, kept in a file (one path per line). Set by the
@@ -158,6 +205,7 @@ impl Editor {
                 label: ir.text.lines().next().unwrap_or("").trim().to_owned(),
                 detail: None,
                 indent: level.saturating_sub(1),
+                shortcut: None,
                 pick: Pick::Offset(start + ir.visible_to_source(0)),
             });
         }
@@ -182,13 +230,14 @@ impl Editor {
                 ),
                 detail: file.parent().map(|dir| dir.display().to_string()),
                 indent: 0,
+                shortcut: None,
                 pick: Pick::File(file),
             })
             .collect();
         self.open_picker(Picker::new("Open recent", "no recent files", items, 0), cx);
     }
 
-    fn open_picker(&mut self, picker: Picker, cx: &mut Context<Self>) {
+    pub(crate) fn open_picker(&mut self, picker: Picker, cx: &mut Context<Self>) {
         self.find = None;
         self.picker = Some(picker);
         cx.notify();
@@ -231,7 +280,12 @@ impl Editor {
     }
 
     /// Picks the chosen row (or match `row`) and closes the picker.
-    pub(crate) fn picker_pick(&mut self, row: Option<usize>, cx: &mut Context<Self>) {
+    pub(crate) fn picker_pick(
+        &mut self,
+        row: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(picker) = self.picker.take() else { return };
         let row = row.unwrap_or(picker.selected);
         let Some(&index) = picker.matches.get(row) else {
@@ -248,6 +302,7 @@ impl Editor {
                     }
                 });
             }
+            Pick::Command(effect) => self.run_command(effect, window, cx),
         }
         cx.notify();
     }
