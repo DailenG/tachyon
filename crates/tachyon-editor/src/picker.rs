@@ -136,10 +136,23 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let caret = self.selection.start;
-        let mut items = Vec::new();
-        for (index, block) in self.doc.blocks().iter().enumerate() {
-            let BlockKind::Heading(level) = block.parsed().kind else { continue };
-            let ir = &block.parsed().ir;
+        let heading_indices: Vec<(usize, u8)> = self
+            .doc
+            .blocks()
+            .iter()
+            .enumerate()
+            .filter_map(|(index, block)| match block.parsed().kind {
+                BlockKind::Heading(level) => Some((index, level)),
+                _ => None,
+            })
+            .collect();
+        let mut items = Vec::with_capacity(heading_indices.len());
+        for (index, level) in heading_indices {
+            // A heading's own `ir` may have been dropped if it was far from the viewport
+            // (`Document::evict`, report fix 6); restore it here, since the picker needs every
+            // heading's text document-wide, regardless of scroll position.
+            self.doc.ensure_ir(index);
+            let ir = &self.doc.blocks()[index].parsed().ir;
             let start = self.doc.block_range(index).start;
             items.push(Item {
                 label: ir.text.lines().next().unwrap_or("").trim().to_owned(),

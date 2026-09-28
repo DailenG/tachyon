@@ -810,6 +810,44 @@ impl<'a> Builder<'a> {
         }
     }
 
+    /// Appends `span` to the block's source map, extending the previous entry instead of adding
+    /// a new one when the two describe one unbroken verbatim run: either directly adjacent in
+    /// both visible and source text (several events covering literally consecutive bytes), or
+    /// separated by exactly the single `\n` [`Builder::open_line`] inserts between visible
+    /// lines, when the source byte at that same position is also `\n` (true whenever a line's
+    /// content is copied byte-for-byte from consecutive source lines, as verbatim code/HTML
+    /// block content is). Both cases merge only `verbatim` spans, so `visible_to_source`/
+    /// `source_to_visible`'s linear, byte-for-byte mapping stays exactly as accurate afterwards:
+    /// merging never changes what either function computes, only how many `SourceSpan`s it
+    /// takes to say the same thing. A run of plain text split into many small parser events (a
+    /// long fenced code block is one event per line) collapses from one span per event to one
+    /// span per unbroken run, the dominant cost the diagnosis measured (490 MB of spans for a
+    /// verbatim-heavy 200 MB file).
+    fn push_span(&mut self, visible: Range<usize>, source: Range<usize>, verbatim: bool) {
+        if verbatim && let Some(last) = self.ir.map.last_mut() {
+            if last.verbatim && last.visible.end == visible.start && last.source.end == source.start
+            {
+                last.visible.end = visible.end;
+                last.source.end = source.end;
+                return;
+            }
+            let gap_visible = last.visible.end + 1 == visible.start;
+            let gap_source = last.source.end + 1 == source.start;
+            if last.verbatim
+                && gap_visible
+                && gap_source
+                && self.ir.text.as_bytes()[last.visible.end] == b'\n'
+                && self.origin + last.source.end < self.src.len()
+                && self.src.as_bytes()[self.origin + last.source.end] == b'\n'
+            {
+                last.visible.end = visible.end;
+                last.source.end = source.end;
+                return;
+            }
+        }
+        self.ir.map.push(SourceSpan { visible, source, verbatim });
+    }
+
     /// Appends visible text taken from `source` (absolute range).
     fn push(&mut self, visible: &str, source: Range<usize>, extra: Style) {
         self.ensure_line();
@@ -835,7 +873,7 @@ impl<'a> Builder<'a> {
             // the map monotonic by recording only the visible text.
             return;
         }
-        self.ir.map.push(SourceSpan { visible: start..end, source, verbatim });
+        self.push_span(start..end, source, verbatim);
     }
 
     fn push_synthetic(&mut self, text: &str, extra: Style) {

@@ -11,12 +11,42 @@ use gpui::{
     StyledImage as _, StyledText, TextLayout, UnderlineStyle, Window, canvas, div, fill, img, list,
     prelude::*, px, relative, size,
 };
+use tachyon_doc::plain_chunk_lens;
 use tachyon_md::{BlockKind, LineInfo, LineKind, Marker, ParsedBlock};
 
 use crate::editor::{Editor, KEY_CONTEXT, TextTarget};
 use crate::theme::Theme;
 
 const INDENT: f32 = 22.;
+
+/// A raw (active) block's source, or a rendered block's line list, is shown as one piece up to
+/// this many bytes/lines. Above it, [`Editor::render_raw`] splits the source with
+/// [`plain_chunk_lens`] (the same chunking `DocMode::Plain` uses) and [`Editor::render_rendered`]
+/// windows `ir.lines`, so a Markdown block that collapses into one enormous unit - a huge fenced
+/// code block, or a whole paragraph with no blank lines - never hands GPUI megabytes of text or
+/// tens of thousands of child elements to shape and lay out at once, active or not. Below this,
+/// both behave exactly as before (one `StyledText`/one child per line): the split only changes
+/// anything for a block this large.
+pub(crate) const RAW_SPLIT_THRESHOLD: usize = tachyon_doc::PLAIN_CHUNK_BYTES * 2;
+
+/// Same idea as [`RAW_SPLIT_THRESHOLD`] for [`Editor::render_rendered`]'s per-line loop: below
+/// this many lines, every line still gets a real element, as before.
+const LINE_SPLIT_THRESHOLD: usize = 2_000;
+
+/// How many viewport-heights of a large block's own segments/lines get a real element built and
+/// laid out, on each side of the one estimated nearest the viewport (see
+/// [`Editor::render_window`]) - generous enough that ordinary scrolling never has to wait a
+/// frame for a segment to appear, while still bounding a frame's work to a small, fixed multiple
+/// of the viewport instead of the whole block, regardless of how tall one segment/line is (a
+/// forced-cut segment of one huge unwrapped line can itself be many rows tall).
+const RENDER_WINDOW_OVERDRAW_VIEWPORTS: f32 = 2.;
+
+/// How many blocks on each side of the previous frame's drawn range ([`Editor::rendered`])
+/// [`Document::evict`] leaves resident, in addition to the drawn range itself and the caret's
+/// own block: generous enough that ordinary scrolling never evicts a block only to need it back
+/// a frame or two later, while still bounding steady-state memory to a small, fixed multiple of
+/// what is on screen instead of the whole document (report fix 6).
+const EVICT_MARGIN_BLOCKS: usize = 200;
 
 impl Render for Editor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -34,6 +64,33 @@ impl Render for Editor {
         // Spacing given in rems (padding, gaps) follows the zoom.
         window.set_rem_size(self.theme.scaled(BASE_REM_SIZE));
         let viewport = window.viewport_size();
+        // Snapshotted here, before `list(...)` below borrows `self.list`'s `ListState` for its
+        // own layout pass: `render_window` (called from inside that pass, through `render_block`)
+        // must not call back into `ListState` itself (it already holds the same `RefCell`
+        // mutably for the whole pass), so it reads this cache instead. One frame stale, exactly
+        // like `active_layout`'s own reliance on the previous frame's paint - self-correcting,
+        // since a wrong window this frame only redraws slightly more or less than ideal, and the
+        // caret's own segment/line is always included regardless (`render_window`'s `keep`).
+        // Drop `ir` for blocks well outside the previous frame's drawn range
+        // (`self.rendered`, still holding last frame's value here): keeps memory proportional
+        // to what is shown, not the whole document (`Document::evict`, report fix 6). One frame
+        // stale like `window_item_bounds` below - self-correcting, since `render_block`'s
+        // `ensure_ir` restores a block synchronously the moment it is actually drawn, even if
+        // this window turns out to have been wrong (a jump, not a smooth scroll).
+        let keep_start = self.rendered.start.saturating_sub(EVICT_MARGIN_BLOCKS);
+        let keep_end =
+            (self.rendered.end + EVICT_MARGIN_BLOCKS).min(self.doc.blocks().len()).max(keep_start);
+        let mut keep = keep_start..keep_end;
+        if let Some(active) = self.active_block() {
+            keep = keep.start.min(active)..keep.end.max(active + 1);
+        }
+        self.doc.evict(keep);
+        self.window_viewport = self.list.viewport_bounds();
+        self.window_item_bounds = self
+            .rendered
+            .clone()
+            .filter_map(|i| self.list.bounds_for_item(i).map(|b| (i, b)))
+            .collect();
         div()
             .id("editor")
             .key_context(KEY_CONTEXT)
@@ -443,6 +500,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        // Restore `ir` first if `Document::evict` had dropped it (report fix 6): every block
+        // this function goes on to read `parsed()`/`parsed_shared()` for must have real ir.
+        self.doc.ensure_ir(index);
         let Some(block) = self.doc.blocks().get(index) else {
             return div().into_any_element();
         };
@@ -455,16 +515,16 @@ impl Editor {
             // No block-swap distinction in plain text: every chunk is always shown this way, the
             // same "raw" path Markdown uses for the block under the caret, just without its
             // editing-card styling (see `render_raw`'s own `DocMode::Plain` checks).
-            self.render_raw(range, true, window, cx)
+            self.render_raw(index, range, true, window, cx)
         } else {
             let parsed = block.parsed_shared();
             let active = self.active_block() == Some(index);
             let leaf = if active { self.active_leaf() } else { None };
             if block.is_stale() || (active && leaf.is_none()) {
                 let code = matches!(parsed.kind, BlockKind::CodeBlock { .. } | BlockKind::Html);
-                self.render_raw(range, code, window, cx)
+                self.render_raw(index, range, code, window, cx)
             } else {
-                self.render_rendered(range.start, parsed, leaf, window, cx)
+                self.render_rendered(index, range.start, parsed, leaf, window, cx)
             }
         };
         // The list cannot scroll above its first item, so `reveal_caret_at`'s inset (which
@@ -481,8 +541,155 @@ impl Editor {
             .into_any_element()
     }
 
-    /// The active block: its source, caret and selection.
+    /// The active block's (or, in `DocMode::Plain`, any block's) source, caret and selection.
+    /// Above [`RAW_SPLIT_THRESHOLD`], splits it into several stacked [`render_raw_segment`]
+    /// pieces with [`plain_chunk_lens`] instead of one - the same reason `DocMode::Plain` itself
+    /// never shows more than that much of one pathological line at once, just reached through
+    /// the active-block view of a huge Markdown block. Hit testing, the caret and highlights all
+    /// stay correct across the split: `TextTarget::Raw { base }` already carries whichever
+    /// range's own start, unchanged by how many pieces one block is drawn in, and `marks`/
+    /// `code_tokens` already clip to whatever range they are asked about.
     fn render_raw(
+        &mut self,
+        index: usize,
+        range: Range<usize>,
+        code: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        if range.len() <= RAW_SPLIT_THRESHOLD {
+            return self.render_raw_segment(range, code, window, cx);
+        }
+        let rope = self.doc.buffer().rope().clone();
+        let version = self.doc.buffer().version();
+        let lens = match &self.raw_chunk_cache {
+            Some((cached_range, cached_version, cached_lens))
+                if *cached_range == range && *cached_version == version =>
+            {
+                cached_lens.clone()
+            }
+            _ => {
+                let lens = plain_chunk_lens(&rope, range.clone());
+                self.raw_chunk_cache = Some((range.clone(), version, lens.clone()));
+                lens
+            }
+        };
+        if lens.len() <= 1 {
+            return self.render_raw_segment(range, code, window, cx);
+        }
+        let mut starts = Vec::with_capacity(lens.len() + 1);
+        let mut at = range.start;
+        starts.push(at);
+        for &len in &lens {
+            at += len;
+            starts.push(at);
+        }
+        let row_height =
+            if code { self.theme.code_size * 1.45 } else { self.theme.text_size * 1.6 };
+        // A coarse estimate for windowing only, not real layout: bytes/60, a rough characters-
+        // per-wrapped-row guess. Deliberately not `rope.byte_to_line` (a real per-segment line
+        // count would be more accurate for a segment cut at real newlines): querying it for
+        // every segment, every frame, costs more on a rope with many real lines - like this
+        // file's own content - than the whole rest of building the window.
+        let heights: Vec<Pixels> = starts
+            .windows(2)
+            .map(|w| row_height * ((w[1] - w[0]) as f32 / 60.).ceil().max(1.))
+            .collect();
+        let head = self.head();
+        let keep = (head >= range.start && head <= range.end)
+            .then(|| starts.partition_point(|&s| s <= head).saturating_sub(1).min(lens.len() - 1));
+        let (win, keep_outside, before, after) = self.render_window(index, &heights, keep);
+        let mut column = div().flex().flex_col().w_full();
+        if before > px(0.) {
+            column = column.child(div().h(before).w_full());
+        }
+        for i in win {
+            column =
+                column.child(self.render_raw_segment(starts[i]..starts[i + 1], code, window, cx));
+        }
+        if let Some(k) = keep_outside {
+            column =
+                column.child(self.render_raw_segment(starts[k]..starts[k + 1], code, window, cx));
+        }
+        if after > px(0.) {
+            column = column.child(div().h(after).w_full());
+        }
+        column.into_any_element()
+    }
+
+    /// Which of `heights` (by index) are worth a real element this frame, plus the pixel height
+    /// to reserve before/after that window: `list` virtualizes whole top-level blocks, so
+    /// without this a single enormous block - one huge fenced code block's lines, or one
+    /// pathologically long line's forced-cut segments - would otherwise be shaped and laid out
+    /// in full every frame regardless of scroll position, the dominant cost the diagnosis
+    /// measured. Estimates which one is nearest the viewport from this block's own bounds *last
+    /// frame* (`ListState::bounds_for_item`/`viewport_bounds`) - the same one-frame-stale
+    /// reliance `active_layout` already has, for the same reason: nothing else exposes a scroll
+    /// position within one list item. `keep` (typically the caret's own segment/line), when
+    /// given, always gets a real element too even if the estimate places it outside the window,
+    /// so typing, clicking or a far jump always has something live to paint a caret into or
+    /// scroll from; it may paint one frame out of place until the next frame's estimate catches
+    /// up, exactly like `reveal_caret_at`'s own "scrolled: draw again" correction.
+    fn render_window(
+        &self,
+        index: usize,
+        heights: &[Pixels],
+        keep: Option<usize>,
+    ) -> (Range<usize>, Option<usize>, Pixels, Pixels) {
+        let n = heights.len();
+        if n == 0 {
+            return (0..0, None, px(0.), px(0.));
+        }
+        let mut first_visible = 0;
+        if let Some(bounds) = self.window_item_bounds.get(&index) {
+            let visible_top = (self.window_viewport.top() - bounds.top()).max(px(0.));
+            let mut consumed = px(0.);
+            first_visible = n - 1;
+            for (i, &h) in heights.iter().enumerate() {
+                if consumed + h > visible_top {
+                    first_visible = i;
+                    break;
+                }
+                consumed += h;
+            }
+        }
+        // Overdraw is a pixel budget, not a segment/line count: one segment/line can be a
+        // fraction of a row (an ordinary heading) or, for a forced-cut segment of one huge
+        // unwrapped line, tens of rows on its own, so a flat count either wastes a frame's worth
+        // of shaping on tiny lines or (worse) stops short of a real viewport's worth of tall
+        // ones. `RENDER_WINDOW_OVERDRAW_VIEWPORTS` viewport-heights each side, falling back to a
+        // fixed minimum before the first real layout (`window_viewport` still zeroed).
+        let overdraw =
+            (self.window_viewport.size.height * RENDER_WINDOW_OVERDRAW_VIEWPORTS).max(px(600.));
+        let mut start = first_visible;
+        let mut back = px(0.);
+        while start > 0 && back < overdraw {
+            start -= 1;
+            back += heights[start];
+        }
+        let mut end = (first_visible + 1).min(n);
+        let mut forward = px(0.);
+        while end < n && forward < overdraw {
+            forward += heights[end];
+            end += 1;
+        }
+        let keep_outside = keep.filter(|k| *k >= n || !(start..end).contains(k));
+        let mut before = heights[..start].iter().copied().fold(px(0.), |a, b| a + b);
+        let mut after = heights[end..].iter().copied().fold(px(0.), |a, b| a + b);
+        if let Some(k) = keep_outside.filter(|&k| k < n) {
+            if k < start {
+                before -= heights[k];
+            } else if k >= end {
+                after -= heights[k];
+            }
+        }
+        (start..end, keep_outside, before, after)
+    }
+
+    /// One piece of the active block's (or, in `DocMode::Plain`, any block's) source: its own
+    /// caret, highlights and mouse handling, exactly as [`Editor::render_raw`] drew the whole
+    /// block before it could be split into several of these.
+    fn render_raw_segment(
         &mut self,
         range: Range<usize>,
         code: bool,
@@ -612,6 +819,7 @@ impl Editor {
     /// holding the caret, with its absolute source range) are shown raw.
     fn render_rendered(
         &mut self,
+        index: usize,
         block_start: usize,
         parsed: Arc<ParsedBlock>,
         raw_leaf: Option<(usize, Range<usize>)>,
@@ -646,9 +854,39 @@ impl Editor {
             .into_any_element();
         }
 
+        // Above `LINE_SPLIT_THRESHOLD`, only a window of lines around the one estimated nearest
+        // the viewport gets a real element (see `render_window`) - a non-active block (this
+        // function only ever draws one) never holds the caret, so nothing here needs a `keep`
+        // line the way `render_raw`'s active-block segments do. Skipped when a leaf is being
+        // shown raw (`raw_leaf`, inside a list/quote/footnote): that combination - editing one
+        // leaf of a container with many thousands of lines - is rare enough not to be worth the
+        // extra bookkeeping of keeping the swapped leaf's lines live across a window.
+        let windowed = raw_leaf.is_none() && ir.lines.len() > LINE_SPLIT_THRESHOLD;
+        let (win, before, after) = if windowed {
+            let heights: Vec<Pixels> = match &self.rendered_heights_cache {
+                Some((cached_parsed, cached_heights)) if Arc::ptr_eq(cached_parsed, &parsed) => {
+                    cached_heights.clone()
+                }
+                _ => {
+                    let heights: Vec<Pixels> =
+                        ir.lines.iter().map(|line| self.line_height_estimate(line.kind)).collect();
+                    self.rendered_heights_cache = Some((Arc::clone(&parsed), heights.clone()));
+                    heights
+                }
+            };
+            let (win, _, before, after) = self.render_window(index, &heights, None);
+            (win, before, after)
+        } else {
+            (0..ir.lines.len(), px(0.), px(0.))
+        };
+
         let mut column = div().flex().flex_col().my_2();
+        if before > px(0.) {
+            column = column.child(div().h(before).w_full());
+        }
         let mut raw_shown = false;
-        for (i, line) in ir.lines.iter().enumerate() {
+        for i in win {
+            let line = &ir.lines[i];
             if let Some((leaf, range)) = &raw_leaf
                 && line.leaf == *leaf
             {
@@ -656,7 +894,7 @@ impl Editor {
                     let code = ir.lines.iter().any(|l| {
                         l.leaf == *leaf && matches!(l.kind, LineKind::Code | LineKind::Html)
                     });
-                    column = column.child(self.render_raw(range.clone(), code, window, cx));
+                    column = column.child(self.render_raw(index, range.clone(), code, window, cx));
                 }
                 continue;
             }
@@ -678,10 +916,26 @@ impl Editor {
                 column = column.child(self.render_image(path, offset, cx));
             }
         }
+        if after > px(0.) {
+            column = column.child(div().h(after).w_full());
+        }
         if let BlockKind::Heading(1 | 2) = parsed.kind {
             column = column.pb_1().border_b_1().border_color(self.theme.border.subtle);
         }
         column.into_any_element()
+    }
+
+    /// A coarse per-`LineKind` row-height estimate, for [`Editor::render_window`]'s windowing
+    /// only (never real layout): matches the `.line_height(relative(N))` each `render_line` arm
+    /// actually uses closely enough that the window rarely needs its overdraw margin to cover
+    /// the difference.
+    fn line_height_estimate(&self, kind: LineKind) -> Pixels {
+        let theme = &self.theme;
+        match kind {
+            LineKind::Heading(level) => theme.heading_sizes[(level.clamp(1, 6) - 1) as usize] * 1.3,
+            LineKind::Code | LineKind::Html => theme.code_size * 1.45,
+            _ => theme.text_size * 1.6,
+        }
     }
 
     /// Local images in `line` (visible range) of a rendered block: their file, the source offset
