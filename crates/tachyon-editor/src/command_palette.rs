@@ -94,22 +94,27 @@ fn shortcut_for(keymap: &gpui::Keymap, action_name: &str) -> Option<String> {
     })
 }
 
-/// One keystroke as `Ctrl+Alt+Shift+Key` (`Cmd` for the platform key on macOS, `Win` elsewhere).
+/// One keystroke as `Ctrl+Alt+Shift+Key`, the README's form: `Cmd` leads on macOS
+/// (`Cmd+Shift+P`), and elsewhere the platform key is `Win`, after the others.
 pub(crate) fn format_keystroke(keystroke: &gpui::KeybindingKeystroke) -> String {
     let keystroke = keystroke.inner();
     let m = keystroke.modifiers;
+    let mac = cfg!(target_os = "macos");
     let mut parts: Vec<&str> = Vec::new();
+    if m.platform && mac {
+        parts.push("Cmd");
+    }
     if m.control {
         parts.push("Ctrl");
     }
     if m.alt {
-        parts.push(if cfg!(target_os = "macos") { "Option" } else { "Alt" });
+        parts.push(if mac { "Option" } else { "Alt" });
     }
     if m.shift {
         parts.push("Shift");
     }
-    if m.platform {
-        parts.push(if cfg!(target_os = "macos") { "Cmd" } else { "Win" });
+    if m.platform && !mac {
+        parts.push("Win");
     }
     if m.function {
         parts.push("Fn");
