@@ -20,8 +20,9 @@ crates are needed whichever way the startup gate goes).
 - [x] Cut showing the ready window: DWM transitions off for ready windows (run 4: p95 22.8 ms,
       content drawn ≤ 5.4 ms p95 after the launch arrives, window appears without a fade); input
       handled ≈ 19-24 ms after showing starts
-- [ ] Propose to GPUI upstream: apply a hidden window's placement when it is created (run 4, with
-      transitions off: p95 19.3 ms, first frame ≤ 0.7 ms p95 after the launch arrives)
+- [x] Propose to GPUI upstream: apply a hidden window's placement when it is created (run 4, with
+      transitions off: p95 19.3 ms, first frame ≤ 0.7 ms p95 after the launch arrives): proposed in
+      [zed-industries/zed#64853](https://github.com/zed-industries/zed/discussions/64853)
 - [x] Resident by default on Windows (`--no-resident` opts out; opt-in on Linux and macOS, where a
       shell would stay busy), `--background`, `--autostart on|off`, `--status`, `--quit`
 - [x] A tray icon (or equivalent) that shows the resident process and quits it: Windows tray
