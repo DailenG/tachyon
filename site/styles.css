@@ -412,15 +412,7 @@ input:focus-visible,
   margin-bottom: 1.1rem;
 }
 
-.hero-note {
-  font-size: 0.86rem;
-  color: var(--text-dim);
-  max-width: 48ch;
-}
 
-.hero-note strong {
-  color: var(--text-muted);
-}
 
 .live-timing {
   margin-top: 0.9rem;
@@ -676,7 +668,7 @@ section:last-of-type {
 
 .shot-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, 1fr);
   gap: var(--gap);
   margin-top: 2.2rem;
 }
@@ -969,19 +961,7 @@ kbd {
   color: var(--text);
 }
 
-.install-note {
-  border: 1px dashed var(--border);
-  border-radius: var(--radius-sm);
-  padding: 1rem 1.1rem;
-  font-size: 0.88rem;
-  color: var(--text-muted);
-  margin-bottom: 1.8rem;
-  background: rgba(102, 69, 232, 0.06);
-}
 
-.install-note strong {
-  color: var(--text);
-}
 
 pre.code-block {
   background: var(--panel-2);
