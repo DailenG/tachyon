@@ -11,9 +11,32 @@
 //! (`status` shows "searching…"); `FindState::generation` is bumped by every dispatch, so a
 //! result overtaken by a newer one (another keystroke, or a document edit) before it lands is
 //! dropped instead of clobbering fresher matches (`apply_search_result`). Callers that would act
-//! on `matches` while stale - `step_match`, `replace_current`, `replace_all` - queue in
-//! `FindState::pending` instead and run once fresh matches land, so replace-all in particular
-//! never replaces byte ranges computed against an out-of-date version of the text.
+//! on `matches` while stale - `step_match`, `replace_current` - queue in `FindState::pending`
+//! instead and run once fresh matches land.
+//!
+//! Ctrl+Enter (`replace_all`/`dispatch_replace_all`) never reads `find.matches`: that list is
+//! capped at `MAX_FIND_MATCHES` for the display count and highlighting, and Replace All must
+//! replace every match past that cap regardless (a 200 MB log with ~530k matches of
+//! `status=200` silently replacing only the first 10,000, with no notice, was the bug this
+//! exists to fix). It runs its own uncapped scan instead
+//! (`tachyon_doc::replace_all_in_rope`/`Document::replace_all`, off the UI thread above the same
+//! `FIND_BACKGROUND_THRESHOLD`), which also builds the replaced text for the span from the first
+//! match to the last in the same pass, so applying it is one `Document::edit` - one undo step,
+//! never one edit per match. `FindState::replacing` shows "replacing…" meanwhile;
+//! `FindState::replaced` shows "Replaced <count>" once it lands, until the query changes
+//! (`dispatch_search` clears it).
+//!
+//! An edit that arrives while a background Replace All is in flight is never queued or lost: it
+//! applies immediately, in place, like any other edit would. Instead, when the scan lands,
+//! `dispatch_replace_all` checks the buffer's version against the one it captured before
+//! dispatching; if the version moved, the scan (and the replacement text built from it) is stale,
+//! computed against text an edit already changed underneath it, and is discarded and rerun
+//! from scratch against the now-current text, rather than applied or queued. That keeps the
+//! typed edit's own place in the document (never reordered behind a stale replacement), at the
+//! cost of redoing the scan; it was chosen over holding input (like the pending paste queue
+//! does) because Replace All has no small, bounded "flush the pending thing now" fallback the
+//! way a paste's clipboard read does - its own work *is* the `O(document size)` scan, so blocking
+//! on it on the rare edit-mid-scan would defeat the point of running it in the background.
 
 use std::ops::Range;
 
@@ -45,12 +68,19 @@ pub(crate) struct FindState {
     /// with, and is dropped if that no longer matches by the time it lands (`apply_search_result`).
     generation: u64,
     /// A background search is in flight for the current `generation`: `status` shows
-    /// "searching…", and `step_match`/`replace_current`/`replace_all` queue into `pending`
-    /// instead of acting on the stale `matches` they would otherwise see.
+    /// "searching…", and `step_match`/`replace_current` queue into `pending` instead of acting
+    /// on the stale `matches` they would otherwise see. Independent of Replace All's own
+    /// `replacing`/`replaced` below, which never read `matches` (see the module doc comment).
     pub(crate) searching: bool,
     /// An action deferred because it was requested while `searching`; run once the search lands
     /// (`Editor::apply_search_result`).
     pending: Option<PendingFindAction>,
+    /// A background Replace All scan (`Editor::dispatch_replace_all`) is in flight: `status`
+    /// shows "replacing…".
+    pub(crate) replacing: bool,
+    /// The match count Replace All last replaced, shown as "Replaced <count>" until the query
+    /// changes (`dispatch_search` clears it back to `None`).
+    pub(crate) replaced: Option<usize>,
 }
 
 /// An action that needs matches for the *current* text and so cannot run against a stale scan
@@ -61,7 +91,6 @@ enum PendingFindAction {
     },
     /// Enter in the replacement field: replace the selected match, then select the next one.
     ReplaceCurrentThenStep,
-    ReplaceAll,
 }
 
 impl FindState {
@@ -73,10 +102,18 @@ impl FindState {
     }
 
     /// Status shown in the find bar: `3/17`, `no matches`, `searching…` while a background scan
-    /// of a huge document is still running, or nothing for an empty query.
+    /// of a huge document is still running, `replacing…` while a background Replace All is
+    /// running, `Replaced 530,012` once one lands (kept until the query changes), or nothing for
+    /// an empty query.
     pub(crate) fn status(&self) -> String {
         if self.query.is_empty() {
             return String::new();
+        }
+        if self.replacing {
+            return "replacing…".to_owned();
+        }
+        if let Some(count) = self.replaced {
+            return format!("Replaced {}", format_count(count));
         }
         if self.searching {
             return "searching…".to_owned();
@@ -105,6 +142,28 @@ impl FindState {
             .take_while(move |(_, m)| m.start < range.end)
             .map(move |(i, m)| (m.clone(), self.current == Some(first + i)))
     }
+}
+
+/// `530012` -> `"530,012"`: thousands separators for `FindState::status`'s "Replaced <count>".
+fn format_count(n: usize) -> String {
+    let digits = n.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, ch) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out
+}
+
+/// The replaced text a Replace All result carries: built on the UI thread for a small document
+/// (`dispatch_replace_all`'s inline path), or off it as a [`tachyon_doc::PreparedInsert`] for a
+/// large one, so applying it (`Editor::replace_selection_with_prepared`) never has to build a
+/// new rope from a `&str` on the UI thread.
+enum ReplaceAllText {
+    Plain(String),
+    Prepared(tachyon_doc::PreparedInsert),
 }
 
 impl Editor {
@@ -144,6 +203,8 @@ impl Editor {
             generation: 0,
             searching: false,
             pending: None,
+            replacing: false,
+            replaced: None,
         });
         self.research(cx);
         cx.notify();
@@ -240,36 +301,87 @@ impl Editor {
     }
 
     pub(crate) fn replace_all(&mut self, _: &ReplaceAll, _: &mut Window, cx: &mut Context<Self>) {
-        if self.refresh_find(cx) {
-            if let Some(find) = &mut self.find {
-                find.pending = Some(PendingFindAction::ReplaceAll);
-            }
-            return;
+        let Some(find) = &self.find else { return };
+        if find.replacing {
+            return; // already running; Ctrl+Enter again while it is in flight is a no-op
         }
-        self.replace_all_now(cx);
+        let Some(replacement) = find.replacement.clone() else { return };
+        let query = find.query.clone();
+        self.dispatch_replace_all(query, replacement, cx);
     }
 
-    /// One edit over the span of all matches: one undo step, one reparse. Only ever called once
-    /// `find.matches` is known current (`replace_all`, or `apply_search_result` running a queued
-    /// `PendingFindAction::ReplaceAll`): never against a stale scan from before an edit.
-    fn replace_all_now(&mut self, cx: &mut Context<Self>) {
-        let Some(find) = &self.find else { return };
-        let Some(replacement) = find.replacement.clone() else { return };
-        let (Some(first), Some(last)) = (find.matches.first(), find.matches.last()) else {
+    /// Runs Replace All's own uncapped scan (`tachyon_doc::replace_all_in_rope`): inline below
+    /// [`tachyon_doc::FIND_BACKGROUND_THRESHOLD`] like `dispatch_search`, else on the background
+    /// executor from a cloned rope snapshot, which also builds a `PreparedInsert` from the
+    /// replaced text there (`ReplaceAllText::Prepared`): splicing that in on the UI thread is
+    /// O(log n) even for megabytes, instead of building a new rope from a `&str` there (measured
+    /// at roughly half the UI-thread cost on a 200 MB log). See the module doc comment for why a
+    /// stale result (the buffer's version moved since `version` was captured here) is discarded
+    /// and rerun rather than applied or queued.
+    fn dispatch_replace_all(&mut self, query: String, replacement: String, cx: &mut Context<Self>) {
+        let version = self.doc.buffer().version();
+        if (self.doc.len() as u64) < tachyon_doc::FIND_BACKGROUND_THRESHOLD {
+            let result = self
+                .doc
+                .replace_all(&query, &replacement)
+                .map(|(span, text, count)| (span, ReplaceAllText::Plain(text), count));
+            return self.finish_replace_all(result, cx);
+        }
+        if let Some(find) = &mut self.find {
+            find.replacing = true;
+            find.replaced = None;
+        }
+        cx.notify();
+        let rope = self.doc.buffer().rope().clone();
+        let scan_query = query.clone();
+        let scan_replacement = replacement.clone();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let (span, text, count) =
+                        tachyon_doc::replace_all_in_rope(&rope, &scan_query, &scan_replacement)?;
+                    let prepared = tachyon_doc::PreparedInsert::new(&text);
+                    Some((span, ReplaceAllText::Prepared(prepared), count))
+                })
+                .await;
+            let _ = this.update(cx, |editor, cx| {
+                if editor.doc.buffer().version() != version {
+                    return editor.dispatch_replace_all(query, replacement, cx);
+                }
+                editor.finish_replace_all(result, cx);
+            });
+        })
+        .detach();
+    }
+
+    /// Applies a Replace All result as one edit over the whole span (one undo step), or, if
+    /// `query` had no matches, just clears `replacing`. Shows "Replaced <count>" until the query
+    /// changes (`dispatch_search` clears it).
+    fn finish_replace_all(
+        &mut self,
+        result: Option<(Range<usize>, ReplaceAllText, usize)>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(find) = &mut self.find {
+            find.replacing = false;
+        }
+        let Some((span, text, count)) = result else {
+            cx.notify();
             return;
         };
-        let span = first.start..last.end;
-        let text = self.doc.buffer().rope().byte_slice(span.clone()).to_string();
-        let mut replaced = String::with_capacity(text.len());
-        let mut at = span.start;
-        for m in &find.matches {
-            replaced.push_str(&text[at - span.start..m.start - span.start]);
-            replaced.push_str(&replacement);
-            at = m.end;
-        }
         let start = span.start;
-        self.replace_selection_with(span, &replaced, cx);
+        match text {
+            ReplaceAllText::Plain(text) => self.replace_selection_with(span, &text, cx),
+            ReplaceAllText::Prepared(insert) => {
+                self.replace_selection_with_prepared(span, insert, cx);
+            }
+        }
         self.move_to(start, false, cx);
+        if let Some(find) = &mut self.find {
+            find.replaced = Some(count);
+        }
+        cx.notify();
     }
 
     /// Replaces the selection if it is exactly a match. Returns whether it ran now: `false` means
@@ -340,6 +452,7 @@ impl Editor {
         find.generation = find.generation.wrapping_add(1);
         find.version = version;
         find.searching = background;
+        find.replaced = None;
         let generation = find.generation;
         if !background {
             let matches = self.doc.find_all(&query);
@@ -400,7 +513,6 @@ impl Editor {
                 self.replace_current_now(cx);
                 self.step_match_now(true, cx);
             }
-            Some(PendingFindAction::ReplaceAll) => self.replace_all_now(cx),
             None => {}
         }
     }

@@ -189,6 +189,11 @@ All notable user-visible changes are recorded here. The format follows
   an edit now re-chunks only the block(s) it touched, splitting one that grew past the maximum
   and merging one that fell under the minimum with its next neighbour, so the cost and the number
   of blocks touched no longer depend on the document's size.
+- Replace All on a document large enough for background find (over 5 MiB) silently replaced only
+  the first 10,000 matches - the display highlight cap - with no notice, instead of every match
+  (up to ~530,000 on a 200 MB log, or 2.7 million on a 1 GB one). It now scans and replaces every
+  match, off the UI thread, as one undo step; the find bar shows "replacing…" while it runs and
+  "Replaced <count>" once it lands.
 - Forwarded launches are acknowledged by the running instance; a launch is no longer lost when the
   secondary process exits before the primary has read it (seen as a flaky test on Windows CI), and
   a secondary whose primary does not reply starts standalone.

@@ -662,7 +662,7 @@ fn replace_one_then_all_with_one_undo_step_each(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert_eq!(text(&editor, cx), "dog and dog\n\nthe dog sat\n");
     let status = editor.read_with(cx, |e, _| e.find.as_ref().map(|f| f.status()));
-    assert_eq!(status.as_deref(), Some("no matches"));
+    assert_eq!(status.as_deref(), Some("Replaced 2"));
 
     cx.simulate_keystrokes("escape secondary-z");
     cx.run_until_parked();
@@ -670,6 +670,133 @@ fn replace_one_then_all_with_one_undo_step_each(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("secondary-z");
     cx.run_until_parked();
     assert_eq!(text(&editor, cx), doc);
+}
+
+#[gpui::test]
+fn replace_all_replaces_every_match_past_the_display_cap_in_one_undo_step(cx: &mut TestAppContext) {
+    // Comfortably over `MAX_FIND_MATCHES` (10,000) and over `FIND_BACKGROUND_THRESHOLD` (5 MiB),
+    // so this exercises both the display cap and the background-scan path: the bug this is a
+    // regression test for silently replaced only the first 10,000 matches of a much larger set,
+    // with no notice at all.
+    let line = "127.0.0.1 - - [10/Oct] \"GET /x\" status=200 1234\n";
+    let count = 150_000;
+    let doc = line.repeat(count);
+    assert!(
+        doc.len() as u64 >= tachyon_doc::FIND_BACKGROUND_THRESHOLD,
+        "fixture must exceed the background threshold"
+    );
+    let (editor, cx) = open(&doc, cx);
+    cx.simulate_keystrokes("ctrl-h");
+    cx.simulate_input("status=200");
+    cx.simulate_keystrokes("tab");
+    cx.simulate_input("status=500");
+    cx.run_until_parked();
+
+    // Dispatched directly (not `simulate_keystrokes`, which runs until parked and so would hide
+    // whether the scan itself is synchronous): the frame right after Ctrl+Enter must show
+    // "replacing…", not have already blocked on the whole scan.
+    let window = cx.window_handle();
+    cx.dispatch_keystroke(window, gpui::Keystroke::parse("secondary-enter").unwrap());
+    let status = editor.read_with(cx, |e, _| e.find.as_ref().map(|f| f.status()));
+    assert_eq!(status.as_deref(), Some("replacing…"), "the scan runs off the UI thread first");
+    cx.run_until_parked();
+
+    let (replaced_text, status) =
+        editor.read_with(cx, |e, _| (e.text(), e.find.as_ref().map(|f| f.status())));
+    assert!(!replaced_text.contains("status=200"), "every match was replaced, not just 10,000");
+    assert_eq!(replaced_text.matches("status=500").count(), count);
+    assert_eq!(status.as_deref(), Some("Replaced 150,000"));
+
+    cx.simulate_keystrokes("escape secondary-z");
+    cx.run_until_parked();
+    assert_eq!(text(&editor, cx), doc, "replace all undoes at once, restoring every match");
+}
+
+#[gpui::test]
+fn replace_all_past_the_display_cap_works_in_plain_mode(cx: &mut TestAppContext) {
+    let line = "status=200 filler filler filler words to pad the line out a bit\n";
+    let count = 150_000;
+    let doc = line.repeat(count);
+    assert!(
+        doc.len() as u64 >= tachyon_doc::FIND_BACKGROUND_THRESHOLD,
+        "fixture must exceed the background threshold"
+    );
+    let (editor, cx) = open("", cx);
+    editor.update(cx, |e, cx| e.set_document(tachyon_doc::Document::new_plain(&doc), cx));
+    cx.run_until_parked();
+    assert_eq!(editor.read_with(cx, |e, _| e.document().mode()), tachyon_doc::DocMode::Plain);
+
+    cx.simulate_keystrokes("ctrl-h");
+    cx.simulate_input("status=200");
+    cx.simulate_keystrokes("tab");
+    cx.simulate_input("status=500");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("secondary-enter");
+    cx.run_until_parked();
+
+    let (replaced_text, status) =
+        editor.read_with(cx, |e, _| (e.text(), e.find.as_ref().map(|f| f.status())));
+    assert!(!replaced_text.contains("status=200"));
+    assert_eq!(replaced_text.matches("status=500").count(), count);
+    assert_eq!(status.as_deref(), Some("Replaced 150,000"));
+
+    cx.simulate_keystrokes("secondary-z");
+    cx.run_until_parked();
+    assert_eq!(text(&editor, cx), doc, "one undo restores every match, in plain mode too");
+}
+
+#[gpui::test]
+fn a_typed_edit_during_a_background_replace_all_keeps_its_place(cx: &mut TestAppContext) {
+    let line = "status=200 filler filler filler words to pad the line out a bit\n";
+    let count = 150_000;
+    let doc = line.repeat(count);
+    assert!(
+        doc.len() as u64 >= tachyon_doc::FIND_BACKGROUND_THRESHOLD,
+        "fixture must exceed the background threshold"
+    );
+    let (editor, cx) = open(&doc, cx);
+    cx.simulate_keystrokes("ctrl-h");
+    cx.simulate_input("status=200");
+    cx.simulate_keystrokes("tab");
+    cx.simulate_input("status=500");
+    cx.run_until_parked();
+
+    // Starts the background scan, then - before it lands - closes the bar (typing while it is
+    // open would edit the query/replacement fields, not the document) and types at the very
+    // start of the document: a position the scan already committed to as its span's start,
+    // so applying its stale result unchanged would either lose this edit or place it on the
+    // wrong side of the (now shifted) first match.
+    let window = cx.window_handle();
+    cx.dispatch_keystroke(window, gpui::Keystroke::parse("secondary-enter").unwrap());
+    assert_eq!(
+        editor.read_with(cx, |e, _| e.find.as_ref().map(|f| f.status())).as_deref(),
+        Some("replacing…")
+    );
+
+    // `dispatch_keystroke` (not `simulate_keystrokes`/`simulate_input`, which both run until
+    // parked and so would let the background scan land before "X" is even typed): the typed
+    // edit must land while the scan is genuinely still in flight.
+    cx.dispatch_keystroke(window, gpui::Keystroke::parse("escape").unwrap());
+    editor.update(cx, |e, cx| e.move_to(0, false, cx));
+    cx.dispatch_keystroke(window, gpui::Keystroke::parse("X").unwrap());
+    cx.run_until_parked();
+
+    let final_text = editor.read_with(cx, |e, _| e.text());
+    assert!(
+        final_text.starts_with("Xstatus=500"),
+        "the typed edit kept its place ahead of the first replacement"
+    );
+    assert!(!final_text.contains("status=200"), "Replace All reran against the post-edit text");
+    assert_eq!(final_text.matches("status=500").count(), count);
+
+    // One undo removes only Replace All's own edit, leaving the typed "X" - the two were never
+    // merged into a single step, and neither was lost or reordered relative to the other.
+    cx.simulate_keystrokes("secondary-z");
+    cx.run_until_parked();
+    assert_eq!(editor.read_with(cx, |e, _| e.text()), format!("X{doc}"));
+    cx.simulate_keystrokes("secondary-z");
+    cx.run_until_parked();
+    assert_eq!(editor.read_with(cx, |e, _| e.text()), doc);
 }
 
 #[gpui::test]

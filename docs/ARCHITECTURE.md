@@ -170,8 +170,30 @@ shared via `Arc`), not on the UI thread before handing it off. Find
 on the background executor at or above it, with a generation counter so a result overtaken by a
 newer search or an edit before it lands is dropped instead of clobbering fresher matches
 (`find.rs`'s module doc comment has the full scheme); `FindState::searching` shows "searching…"
-meanwhile, and actions that need current matches (`step_match`, `replace_current`, `replace_all`)
-queue until a fresh scan lands rather than acting on a stale one.
+meanwhile, and actions that need current matches (`step_match`, `replace_current`) queue until a
+fresh scan lands rather than acting on a stale one.
+
+Replace All never uses `find_all`'s capped matches (that cap is only for the display count and
+highlighting): it runs its own uncapped scan (`find_all_in_rope_unbounded`/`replace_all_in_rope`),
+which also builds the replaced text for the span from the first match to the last in the same
+pass, off the UI thread above the same threshold - one `Document::edit`, one undo step, one
+allocation for the span and one for its replacement, regardless of match count (a 200 MB log with
+~530k matches, replacing only the first 10,000 with no notice at all, was the bug this exists to
+fix). That background path also builds a `PreparedInsert` from the replaced text there, so
+applying it (`Editor::replace_selection_with_prepared`) splices an already-built rope in instead
+of building one from a `&str` on the UI thread: measured on a 200 MB plain-text log (~1.08 million
+matches, the whole file rewritten in one edit), that halved the single worst frame (223 ms to
+72 ms) versus the plain `&str` path; the same query against a 5 MB Markdown file (44k matches)
+never exceeds about 15 ms, since Markdown's edit only creates one stale block up front and
+reparses it in the background same as any other large edit - `Plain`'s chunking has no such
+background path (it "always runs inline", see above), so a Replace All spanning nearly all of a
+huge plain document is the one case that still costs a single frame well past the usual budget;
+narrowing that further would mean streaming the chunking itself in the background, which no
+`Plain` edit does today. An edit that arrives mid-scan is never queued or held: it applies
+immediately, and Replace All instead checks its buffer version when the scan lands, discarding
+and rerunning a stale result rather than applying or queuing it - chosen over holding input (like
+the paste queue below) because Replace All's own work is the `O(document size)` scan itself, so
+blocking on it would defeat running it in the background at all.
 
 ## Concurrency
 

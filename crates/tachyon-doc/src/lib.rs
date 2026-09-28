@@ -357,6 +357,18 @@ impl Document {
         find_all_in_rope(self.buffer.rope(), query)
     }
 
+    /// Everything [`Document::find_all`] leaves out for `Replace All`: every match, not just up
+    /// to [`MAX_FIND_MATCHES`], and the replaced span ready to splice in with one
+    /// [`Document::edit`] - one undo step regardless of the match count. See
+    /// [`replace_all_in_rope`], which does the work.
+    pub fn replace_all(
+        &self,
+        query: &str,
+        replacement: &str,
+    ) -> Option<(Range<usize>, String, usize)> {
+        replace_all_in_rope(self.buffer.rope(), query, replacement)
+    }
+
     pub fn is_dirty(&self) -> bool {
         !self.dirty.is_empty() || self.outstanding.is_some()
     }
@@ -1134,9 +1146,10 @@ impl ParseResult {
     }
 }
 
-/// Byte ranges of `query` in `rope`, in order, not overlapping, at most [`MAX_FIND_MATCHES`].
-/// Smart case: case-insensitive (ASCII letters) unless `query` contains an uppercase letter. An
-/// empty query matches nothing.
+/// Byte ranges of `query` in `rope`, in order, not overlapping, at most [`MAX_FIND_MATCHES`] (see
+/// [`find_all_in_rope_unbounded`] for the same scan without that cap, for `Replace All`). Smart
+/// case: case-insensitive (ASCII letters) unless `query` contains an uppercase letter. An empty
+/// query matches nothing.
 ///
 /// Scans the rope's own chunks instead of copying the whole text into a `String` first (the
 /// previous implementation, `O(document size)` in extra memory): the only allocation is a
@@ -1148,6 +1161,20 @@ impl ParseResult {
 /// for a document above [`FIND_BACKGROUND_THRESHOLD`]: a `Document` borrow cannot cross an
 /// `.await` onto another thread the way an owned `Rope` can.
 pub fn find_all_in_rope(rope: &Rope, query: &str) -> Vec<Range<usize>> {
+    find_all_in_rope_bounded(rope, query, Some(MAX_FIND_MATCHES))
+}
+
+/// Like [`find_all_in_rope`], but never stops at [`MAX_FIND_MATCHES`]: that cap exists only for
+/// the display count and highlighting, and `Replace All` must still replace every match past it
+/// (a 200 MB log with ~530k matches of `status=200` silently replacing only the first 10,000,
+/// with no notice, was the bug this exists to fix). Same scan, same bounded extra memory; only
+/// the stopping condition differs. See [`replace_all_in_rope`], which is what `Replace All`
+/// actually calls.
+pub fn find_all_in_rope_unbounded(rope: &Rope, query: &str) -> Vec<Range<usize>> {
+    find_all_in_rope_bounded(rope, query, None)
+}
+
+fn find_all_in_rope_bounded(rope: &Rope, query: &str, limit: Option<usize>) -> Vec<Range<usize>> {
     if query.is_empty() {
         return Vec::new();
     }
@@ -1171,7 +1198,7 @@ pub fn find_all_in_rope(rope: &Rope, query: &str) -> Vec<Range<usize>> {
         while let Some(found) = find_bytes(&window[at..], &needle) {
             let start = window_start + at + found;
             matches.push(start..start + needle.len());
-            if matches.len() >= MAX_FIND_MATCHES {
+            if limit.is_some_and(|limit| matches.len() >= limit) {
                 break 'chunks;
             }
             at += found + needle.len();
@@ -1181,6 +1208,34 @@ pub fn find_all_in_rope(rope: &Rope, query: &str) -> Vec<Range<usize>> {
         window.drain(..keep_from);
     }
     matches
+}
+
+/// The span from the first match of `query` in `rope` to the last, `replacement` spliced in at
+/// each one, and how many matches it covers: everything `Replace All` needs to apply as one
+/// [`Document::edit`] (one undo step), computed in a single pass so it can run entirely off the
+/// UI thread. `None` if `query` is empty or has no matches.
+///
+/// Two allocations scale with the span, not with the match count: the matched span extracted
+/// from `rope` once (`text`) and the replaced text built from it (`replaced`). Building
+/// `replaced` directly from `matches` (rather than, say, one document edit per match) is what
+/// keeps a multi-million-match Replace All to roughly one extra copy of the span instead of
+/// millions of tiny ones.
+pub fn replace_all_in_rope(
+    rope: &Rope,
+    query: &str,
+    replacement: &str,
+) -> Option<(Range<usize>, String, usize)> {
+    let matches = find_all_in_rope_unbounded(rope, query);
+    let span = matches.first()?.start..matches.last()?.end;
+    let text = rope.byte_slice(span.clone()).to_string();
+    let mut replaced = String::with_capacity(text.len());
+    let mut at = span.start;
+    for m in &matches {
+        replaced.push_str(&text[at - span.start..m.start - span.start]);
+        replaced.push_str(replacement);
+        at = m.end;
+    }
+    Some((span, replaced, matches.len()))
 }
 
 /// First offset in `hay` where `needle` occurs, or `None`. Naive (`O(hay.len() * needle.len())`)

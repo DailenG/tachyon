@@ -733,6 +733,27 @@ impl Editor {
         self.doc.seal_undo_group();
     }
 
+    /// Like [`Editor::replace_selection_with`], but for text prepared off the UI thread
+    /// ([`PreparedInsert`]): splicing it in is O(log n) even for megabytes of text, instead of
+    /// building a new rope from a `&str` on this thread (see [`tachyon_doc::Document::edit_prepared`]'s
+    /// doc comment). Used by Replace All's background path (`find::dispatch_replace_all`), which
+    /// already has to build the replaced text off thread and so builds the `PreparedInsert` from
+    /// it there too - measured (a 200 MB plain-text log, ~1.08 million matches, the whole file
+    /// rewritten in one edit) at roughly a third the UI-thread cost of
+    /// [`Editor::replace_selection_with`] on the same edit (223 ms -> 72 ms worst frame).
+    pub(crate) fn replace_selection_with_prepared(
+        &mut self,
+        range: Range<usize>,
+        insert: PreparedInsert,
+        cx: &mut Context<Self>,
+    ) {
+        self.moved_since_edit = true;
+        let now = Instant::now();
+        self.replace_at(now, range, Insert::Prepared(insert), cx);
+        self.charge_work("edit", now);
+        self.doc.seal_undo_group();
+    }
+
     pub(crate) fn replace(&mut self, range: Range<usize>, text: &str, cx: &mut Context<Self>) {
         let now = Instant::now();
         self.replace_at(now, range, Insert::Text(text), cx);
