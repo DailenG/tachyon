@@ -23,6 +23,7 @@ Options:
                        starts at login
       --quit           Ask the running instance to quit (unsaved documents are
                        kept and reopen at the next start)
+      --about          Show the About window
       --desktop-entry <on|off>
                        Add Tachyon to the application launcher and \"Open with\"
                        menus, or remove it (Linux)
@@ -55,6 +56,8 @@ pub struct Cli {
     pub background: bool,
     /// Ask the running instance to quit.
     pub quit: bool,
+    /// Show the About window instead of opening a document.
+    pub about: bool,
     /// Primary prints one `tachyon-launch` line per forwarded launch once its
     /// window has drawn, then closes it (`cargo xtask bench-startup --warm`).
     pub report_launches: bool,
@@ -79,6 +82,7 @@ pub fn parse(
             Long("no-resident") => cli.resident = Some(false),
             Long("background") => cli.background = true,
             Long("quit") => cli.quit = true,
+            Long("about") => cli.about = true,
             Long("status") => return Ok(Command::Status),
             Long("desktop-entry") => {
                 return match parser.value()?.to_str() {
@@ -126,6 +130,9 @@ impl Cli {
         if self.quit {
             args.push("--quit".to_owned());
         }
+        if self.about {
+            args.push("--about".to_owned());
+        }
         if self.paste {
             args.push("--paste".to_owned());
         }
@@ -169,6 +176,17 @@ mod tests {
         assert_eq!(args, vec!["--quit", "--"]);
         match parse(args) {
             Ok(Command::Run(cli)) => assert!(cli.quit && cli.opens_nothing()),
+            _ => panic!("forwarded arguments must parse"),
+        }
+    }
+
+    #[test]
+    fn about_is_forwarded_to_the_running_instance() {
+        assert!(run(&["--about"]).about);
+        let args = run(&["--about"]).forward_args().expect("no paths");
+        assert_eq!(args, vec!["--about", "--"]);
+        match parse(args) {
+            Ok(Command::Run(cli)) => assert!(cli.about),
             _ => panic!("forwarded arguments must parse"),
         }
     }

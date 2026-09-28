@@ -14,10 +14,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex, mpsc};
 use std::thread::JoinHandle;
 
-use windows_sys::Wdk::System::SystemServices::RtlGetVersion;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress, LoadLibraryW};
-use windows_sys::Win32::System::SystemInformation::OSVERSIONINFOW;
 use windows_sys::Win32::UI::HiDpi::{GetDpiForSystem, GetDpiForWindow, GetSystemMetricsForDpi};
 use windows_sys::Win32::UI::Shell::{
     NIF_ICON, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_SETVERSION, NIN_SELECT,
@@ -44,7 +42,8 @@ const WM_TRAY: u32 = WM_APP + 1;
 const NIN_KEYSELECT: u32 = NIN_SELECT | NINF_KEY;
 /// Context menu commands.
 const CMD_NEW_WINDOW: usize = 1;
-const CMD_QUIT: usize = 2;
+const CMD_ABOUT: usize = 2;
+const CMD_QUIT: usize = 3;
 
 /// The image in [`ICO`] best suited to `size` pixels: the smallest at least that large, else the
 /// largest. Returns its bytes (a DIB, as `CreateIconFromResourceEx` takes it).
@@ -274,20 +273,6 @@ const FORCE_LIGHT: i32 = 3;
 type SetPreferredAppMode = unsafe extern "system" fn(i32) -> i32;
 type FlushMenuThemes = unsafe extern "system" fn();
 
-/// The real Windows build number. `GetVersionExW` (and `GetVersion`) report an older, shimmed
-/// version once an executable has no manifest asserting support for the running Windows release,
-/// so `SetPreferredAppMode`'s availability (Windows 10 1903, build 18362) is checked with
-/// `RtlGetVersion` instead: ntdll.dll always exports it and never shims it.
-fn windows_build_number() -> u32 {
-    // SAFETY: every all-zero bit pattern is a valid OSVERSIONINFOW.
-    let mut info: OSVERSIONINFOW = unsafe { std::mem::zeroed() };
-    info.dwOSVersionInfoSize = size_of::<OSVERSIONINFOW>() as u32;
-    // SAFETY: `info` is a plain struct `RtlGetVersion` fills in place; `dwOSVersionInfoSize` was
-    // just set, as the call needs it to know which version of the struct was passed.
-    unsafe { RtlGetVersion(&mut info) };
-    info.dwBuildNumber
-}
-
 /// Resolves [`ORD_SET_PREFERRED_APP_MODE`] and [`ORD_FLUSH_MENU_THEMES`], the first time a menu
 /// needs to be dark or light rather than at process start: only [`apply_dark_menu_theme`] calls
 /// this, and only [`context_menu`] calls that, right before a menu is ever shown. `None` before
@@ -298,7 +283,7 @@ fn windows_build_number() -> u32 {
 /// impl`; `module` is never freed, so they stay valid for the rest of the process.
 fn dark_menu_api() -> Option<(SetPreferredAppMode, FlushMenuThemes)> {
     static API: LazyLock<Option<(usize, usize)>> = LazyLock::new(|| {
-        if windows_build_number() < 18362 {
+        if super::windows_build_number() < 18362 {
             return None;
         }
         let name = wide("uxtheme.dll");
@@ -372,9 +357,14 @@ fn context_menu(hwnd: HWND, x: i32, y: i32) -> usize {
     if menu.is_null() {
         return 0;
     }
-    let (new_window, quit) = (wide("New window"), wide("Quit Tachyon"));
+    let (new_window, about, quit) =
+        (wide("New window"), wide("About Tachyon"), wide("Quit Tachyon"));
     // SAFETY: `menu` is ours; the item strings outlive the calls (the menu copies them).
     unsafe { AppendMenuW(menu, MF_STRING, CMD_NEW_WINDOW, new_window.as_ptr()) };
+    // SAFETY: as above; a separator has no string.
+    unsafe { AppendMenuW(menu, MF_SEPARATOR, 0, ptr::null()) };
+    // SAFETY: as above.
+    unsafe { AppendMenuW(menu, MF_STRING, CMD_ABOUT, about.as_ptr()) };
     // SAFETY: as above; a separator has no string.
     unsafe { AppendMenuW(menu, MF_SEPARATOR, 0, ptr::null()) };
     // SAFETY: as above.
@@ -419,6 +409,7 @@ unsafe extern "system" fn window_proc(
                     let (x, y) = words(wparam);
                     match context_menu(hwnd, x, y) {
                         CMD_NEW_WINDOW => (state.on_event)(TrayEvent::Open),
+                        CMD_ABOUT => (state.on_event)(TrayEvent::About),
                         CMD_QUIT => (state.on_event)(TrayEvent::Quit),
                         _ => {}
                     }
@@ -467,14 +458,5 @@ mod tests {
         assert_eq!(ico_image(18).map(width), Some(20), "the next size up, scaled down");
         assert_eq!(ico_image(30).map(width), Some(32));
         assert_eq!(ico_image(128).map(width), Some(64), "the largest when none is large enough");
-    }
-
-    #[test]
-    fn windows_build_number_is_plausible() {
-        // The reference and CI machines are Windows 10 or 11; both report a build number well
-        // past `SetPreferredAppMode`'s (18362), and well short of a value that would suggest the
-        // struct was filled in wrong.
-        let build = windows_build_number();
-        assert!((10000..100_000).contains(&build), "implausible build number {build}");
     }
 }

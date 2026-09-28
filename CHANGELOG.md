@@ -8,6 +8,16 @@ All notable user-visible changes are recorded here. The format follows
 
 ### Added
 
+- An About window: the owner's signature artwork (a light-ink variant for the dark theme),
+  version (and the full MSIX package version, for a packaged install), and an Environment table
+  (platform, install kind, resident or standalone, update channel derived from the packaged
+  version, and clickable Settings/Backups paths and project website). Opens from the `About`
+  action (a command-palette row will follow), the Windows tray's "About Tachyon" item above
+  "Quit Tachyon", or `tachyon --about` on the command line (forwarded to a running instance like
+  other launches). Reused if already open; `Escape` or its Close button closes it. The signature
+  is embedded in the binary (`assets/brand/signature.png`, `signature-light.png`) and decoded
+  only when the window opens, never on the startup path.
+
 - Markdown mode no longer costs memory and frame time proportional to a whole oversized block:
   a fresh open streams the parse back in 4 MiB windows instead of copying the whole file into one
   `String` first; a run of verbatim text split across parser events (a long fenced code block,

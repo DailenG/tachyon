@@ -465,10 +465,26 @@ unsaved changes: the primary keeps a backup of every unsaved document and reopen
 next start (hot exit, [ADR 0006](adr/0006-hot-exit.md); `tachyon_editor::Backups`).
 On Windows a resident primary shows a tray icon (`tachyon_platform::Tray`: a hidden window with
 its own message loop on a `tray` thread, events forwarded to GPUI over a channel); clicking it
-opens a window, and its context menu ("New window", "Quit Tachyon") is built from plain
-`MF_STRING` items with real text, so screen readers and other UI Automation clients can read it
-like any other menu (`SetForegroundWindow` before `TrackPopupMenuEx`, `PostMessage(WM_NULL)`
-after: the documented pattern for a tray menu that keeps working, and closes, on repeated shows).
+opens a window, and its context menu ("New window", "About Tachyon", "Quit Tachyon") is built
+from plain `MF_STRING` items with real text, so screen readers and other UI Automation clients
+can read it like any other menu (`SetForegroundWindow` before `TrackPopupMenuEx`,
+`PostMessage(WM_NULL)` after: the documented pattern for a tray menu that keeps working, and
+closes, on repeated shows).
+
+**About window** (`crates/tachyon-editor/src/about.rs`). A separate GPUI window, opened on
+demand by the `About` action (tray, `tachyon --about` forwarded like other launches, and a
+future command-palette row), never at start-up: a singleton `WindowHandle` global focuses the
+existing window instead of opening a second one. Shows the crate version (and, packaged, the
+MSIX `X.Y.Z.B` identity version), the owner's signature artwork - the sole approved exception to
+"no brand imagery in the app" (`docs/design/DESIGN_DIRECTION.md`), embedded with
+`include_bytes!` and decoded only when this window's view is built, never on the startup path -
+and an Environment table (OS name/version, installed-package vs. portable, resident vs.
+standalone, the update channel derived from the packaged build number, and the settings and
+backups paths, both clickable via `App::reveal_path`). `tachyon_platform::os_version` and
+`packaged_version` supply the platform facts (Linux: `/etc/os-release`'s `PRETTY_NAME`; Windows:
+`RtlGetVersion`'s build number and `GetCurrentPackageFullName`'s version segment); the binary
+sets `tachyon_editor::AppInfo` (its own crate version, and whether this launch is resident) once
+at start-up, since neither is available to `tachyon-editor` otherwise.
 It also follows Tachyon's resolved theme, like the title bar below: `set_popup_menu_dark` records
 the choice cheaply wherever a window or the settings resolve it, and the tray thread applies it
 (`SetPreferredAppMode` / `FlushMenuThemes`, undocumented `uxtheme.dll` ordinals with no supported

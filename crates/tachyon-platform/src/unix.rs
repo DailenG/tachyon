@@ -402,6 +402,39 @@ pub fn set_desktop_entry(_exe: &std::path::Path, _enabled: bool) -> io::Result<(
     Err(io::Error::new(io::ErrorKind::Unsupported, "desktop entries are a Linux and BSD feature"))
 }
 
+/// `/etc/os-release`'s `PRETTY_NAME`, for the About window's Environment table ("Platform"):
+/// present on every systemd-based distribution and read by every other tool that reports the
+/// running distribution, so it needs no per-distribution special-casing. "Linux" if the file is
+/// missing or has no such line (a non-systemd distribution, or a minimal container image).
+#[cfg(not(target_os = "macos"))]
+pub fn os_version() -> String {
+    fs::read_to_string("/etc/os-release")
+        .ok()
+        .as_deref()
+        .and_then(pretty_name)
+        .unwrap_or_else(|| "Linux".to_owned())
+}
+
+/// The unquoted value of an `/etc/os-release` `PRETTY_NAME=` line, split out so the quoting rule
+/// is unit-tested without a real `/etc/os-release`.
+#[cfg(not(target_os = "macos"))]
+fn pretty_name(os_release: &str) -> Option<String> {
+    let value = os_release.lines().find_map(|line| line.strip_prefix("PRETTY_NAME="))?;
+    Some(value.trim_matches('"').to_owned())
+}
+
+/// macOS has no `/etc/os-release`; nothing else here reads a system version file yet.
+#[cfg(target_os = "macos")]
+pub fn os_version() -> String {
+    "macOS".to_owned()
+}
+
+/// MSIX packaging is Windows-only (see `packaging/msix/AppxManifest.xml`); Linux, BSD and macOS
+/// builds are always the plain `.tar.gz` archive.
+pub fn packaged_version() -> Option<String> {
+    None
+}
+
 #[cfg(all(test, not(target_os = "macos")))]
 mod autostart_tests {
     use super::*;
@@ -429,5 +462,14 @@ mod autostart_tests {
         assert!(plain.contains("\nExec=\"/opt/tachyon/tachyon\" --background\n"), "{plain}");
         let odd = autostart_desktop_file(std::path::Path::new("/home/a b/100%/$x\"y"));
         assert!(odd.contains("Exec=\"/home/a b/100%%/\\\\$x\\\\\"y\" --background"), "{odd}");
+    }
+
+    #[test]
+    fn pretty_name_is_read_and_unquoted_or_absent() {
+        assert_eq!(
+            pretty_name("NAME=Ubuntu\nPRETTY_NAME=\"Ubuntu 24.04.1 LTS\"\nID=ubuntu\n"),
+            Some("Ubuntu 24.04.1 LTS".to_owned())
+        );
+        assert_eq!(pretty_name("NAME=Ubuntu\nID=ubuntu\n"), None);
     }
 }

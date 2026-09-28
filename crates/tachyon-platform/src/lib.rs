@@ -84,12 +84,14 @@ pub fn set_window_icon(window: &impl raw_window_handle::HasWindowHandle) {
 pub enum TrayEvent {
     /// Clicking the icon, or its "New window" menu item.
     Open,
+    /// The "About Tachyon" menu item.
+    About,
     /// The "Quit Tachyon" menu item.
     Quit,
 }
 
 /// A resident instance's notification-area icon (Windows): clicking it opens a window, its menu
-/// opens a window or quits. Removed when dropped.
+/// opens a window, shows the About window, or quits. Removed when dropped.
 pub struct Tray {
     _inner: imp::Tray,
 }
@@ -173,6 +175,21 @@ pub fn autostart_enabled() -> io::Result<bool> {
 /// current user; Linux and BSD: an XDG autostart entry. Not supported on macOS yet.
 pub fn set_autostart(exe: &std::path::Path, enabled: bool) -> io::Result<()> {
     imp::set_autostart(exe, enabled)
+}
+
+/// A human-readable OS name and version for the About window's Environment table ("Platform").
+/// Windows: the name plus build number (`RtlGetVersion`, unaffected by the executable's
+/// manifest). Linux and BSD: `/etc/os-release`'s `PRETTY_NAME`, or "Linux" if it cannot be read.
+/// A fixed string on macOS, where nothing else here reads a system version file yet.
+pub fn os_version() -> String {
+    imp::os_version()
+}
+
+/// The installed MSIX package's full version ("X.Y.Z.B"), for the About window's Environment
+/// table, if this process runs packaged (Windows only; see `packaging/msix/AppxManifest.xml`
+/// and ADR 0007). `None` elsewhere, or when unpackaged (the `.zip`/`.tar.gz` builds).
+pub fn packaged_version() -> Option<String> {
+    imp::packaged_version()
 }
 
 /// Monospace font families to try for code, most preferred first. The first

@@ -27,10 +27,15 @@ These are not planned for the application. Proposing one needs benchmark evidenc
 - **Gradients in the editor chrome.** The cyan → blue → violet gradient belongs to brand assets (icons, README, website, release artwork), not to UI surfaces, text, controls, or states.
 - **Shadows, blur, translucency, and backdrop effects** (for example acrylic or mica materials) on editor surfaces.
 - **Animation and transitions**: splash screens, fades, hover or focus transitions, animated or blinking carets, animated logos. Window open and close animations are deliberately turned off (ADR 0004).
-- **Brand imagery inside the app**: logos or artwork on the editing canvas, empty states, or overlays; raster images loaded at startup.
+- **Brand imagery inside the app**: logos or artwork on the editing canvas, empty states, or
+  overlays; raster images loaded at startup. (The About window's signature artwork is an
+  approved exception - see below - decoded only when that window opens, never on the startup
+  path.)
 - **Anything added before the first frame for branding**: reading theme or asset files, decoding images, or rasterizing vector artwork at startup. Icons are prepared at build time.
 - **Custom-drawn window chrome** replacing the native title bar.
-- **New screens justified only by branding**, such as an About screen, onboarding, or a splash. These would also be new features, which need a separate product decision.
+- **New screens justified only by branding**, such as onboarding or a splash. These would also
+  be new features, which need a separate product decision. (An About window is approved for
+  1.0 - see the Brand intensity table below - not as a precedent for other branding-only screens.)
 
 ## Concept references
 
@@ -56,7 +61,8 @@ Any production logo, icon, or other brand asset needs a separate implementation 
 | GitHub and documentation | Recognizable, restrained identity |
 | App icons (window, taskbar, tray, launcher, executable) | The mark, with a simplified version for 16–32 px; prepared at build time |
 | Working editor | Quiet chrome; solid colors only; the document remains the focal point |
-| About screen and onboarding | Not planned (see the deprioritized list) |
+| About window | Approved for 1.0: the owner's personal signature artwork (`assets/brand/signature.png`, `signature-light.png`), theme-appropriate, decoded only when the window opens |
+| Onboarding | Not planned (see the deprioritized list) |
 
 Do not infer a sidebar, preview pane, toolbar, navigation model, settings flow, splash screen, or new feature from concept artwork. Preserve Tachyon's existing single-pane block-swap editing model unless a separate product decision changes it.
 

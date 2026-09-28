@@ -105,6 +105,10 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
         startup.mark("platform_ready");
         cx.set_global(startup);
         cx.set_global(Lifecycle { resident, quitting: false, report_launches });
+        cx.set_global(tachyon_editor::AppInfo {
+            version: env!("CARGO_PKG_VERSION").into(),
+            resident,
+        });
 
         cx.bind_keys([
             KeyBinding::new("secondary-q", Quit, None),
@@ -228,6 +232,7 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
         }
         // A background start with nothing to open (login autostart) stays
         // windowless until the first launch arrives, which brings the restored documents along.
+        let about = cli.about;
         let sources = if resident && cli.background && cli.opens_nothing() {
             cx.set_global(PendingRestore(restored));
             // No window will open to carry the theme to the tray's context menu (Windows) the
@@ -235,6 +240,10 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
             // the one time this path is windowless.
             tachyon_platform::set_popup_menu_dark(resolved_dark(cx));
             Vec::new()
+        } else if about {
+            // `--about` shows the About window, not a document window; restored documents (hot
+            // exit) still come back, the same as any other launch.
+            restored
         } else if !restored.is_empty() && cli.opens_nothing() {
             restored
         } else {
@@ -253,6 +262,9 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
                     });
                 });
             }
+        }
+        if about {
+            tachyon_editor::open_about(cx);
         }
         cx.activate(true);
     });
@@ -533,6 +545,10 @@ fn show_tray(cx: &mut App) {
                     }
                     cx.activate(true);
                 }
+                TrayEvent::About => {
+                    tachyon_editor::open_about(cx);
+                    cx.activate(true);
+                }
                 TrayEvent::Quit => cx.dispatch_action(&Quit),
             });
         }
@@ -552,6 +568,13 @@ fn serve_forwarded_launches(listener: Listener, cx: &mut App) {
             let received = Instant::now();
             if cli.quit {
                 cx.update(|cx| cx.dispatch_action(&Quit));
+                continue;
+            }
+            if cli.about {
+                cx.update(|cx| {
+                    tachyon_editor::open_about(cx);
+                    cx.activate(true);
+                });
                 continue;
             }
             cx.update(|cx| {
