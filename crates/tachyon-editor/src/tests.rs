@@ -1728,6 +1728,7 @@ fn command_palette_theme_light_applies_at_once_and_persists_keeping_a_comment(
             zoom: 1.,
             hot_exit: true,
             tips: true,
+            whats_new: true,
         });
         cx.set_global(crate::SettingsFile(file.clone()));
     });
@@ -1748,6 +1749,41 @@ fn command_palette_theme_light_applies_at_once_and_persists_keeping_a_comment(
         written.contains("# Tachyon settings. Saving this file applies them to open windows."),
         "kept the file's comments: {written:?}"
     );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[gpui::test]
+fn command_palette_whats_new_toggle_turns_it_off_and_persists_keeping_other_lines(
+    cx: &mut TestAppContext,
+) {
+    let dir = backup_dir("command-palette-whats-new");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let file = dir.join("settings.toml");
+    std::fs::write(&file, crate::DEFAULT_SETTINGS).expect("write");
+    cx.update(|cx| {
+        cx.set_global(crate::Settings {
+            theme: crate::ThemeChoice::Dark,
+            zoom: 1.,
+            hot_exit: true,
+            tips: true,
+            whats_new: true,
+        });
+        cx.set_global(crate::SettingsFile(file.clone()));
+    });
+    let (editor, cx) = open("text\n", cx);
+
+    cx.simulate_keystrokes("secondary-shift-p");
+    cx.simulate_input("what's new after");
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+
+    assert!(editor.read_with(cx, |e, _| e.picker.is_none()));
+    let settings = cx.update(|_, cx| cx.global::<crate::Settings>().clone());
+    assert!(!settings.whats_new, "applied at once, not only on save");
+
+    let written = std::fs::read_to_string(&file).expect("read");
+    assert!(written.contains("whats_new = false"), "persisted: {written:?}");
+    assert!(written.contains("hot_exit = true"), "kept the file's other lines: {written:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1787,6 +1823,7 @@ fn settings_choose_theme_and_zoom_and_saving_them_applies_at_once(cx: &mut TestA
             zoom: 1.25,
             hot_exit: true,
             tips: true,
+            whats_new: true,
         });
         cx.set_global(crate::SettingsFile(file.clone()));
     });
@@ -1863,6 +1900,7 @@ fn prompts_use_the_theme_the_settings_choose(cx: &mut TestAppContext) {
             zoom: 1.,
             hot_exit: true,
             tips: true,
+            whats_new: true,
         })
     });
     let (_editor, cx) = open("", cx);
@@ -2237,6 +2275,7 @@ fn tips_false_in_settings_keeps_the_tip_hidden(cx: &mut TestAppContext) {
             zoom: 1.,
             hot_exit: true,
             tips: false,
+            whats_new: true,
         })
     });
     let (editor, cx) = open("", cx);
@@ -2266,6 +2305,7 @@ fn saving_tips_false_hides_an_already_shown_tip(cx: &mut TestAppContext) {
             zoom: 1.,
             hot_exit: true,
             tips: true,
+            whats_new: true,
         });
         cx.set_global(crate::SettingsFile(file.clone()));
     });

@@ -24,6 +24,9 @@ pub(crate) enum CommandEffect {
     Theme(ThemeChoice),
     /// Flips hot exit, in memory and in the settings file.
     ToggleHotExit,
+    /// Flips whether the What's new window shows itself after an update, in memory and in the
+    /// settings file.
+    ToggleWhatsNew,
 }
 
 /// One row's name and what it does.
@@ -66,10 +69,12 @@ const COMMANDS: &[Command] = &[
     },
     Command { name: "Open settings file", effect: CommandEffect::Action("tachyon::OpenSettings") },
     Command { name: "About Tachyon", effect: CommandEffect::Action("about::About") },
+    Command { name: "What's new", effect: CommandEffect::Action("tachyon::WhatsNew") },
     Command { name: "Theme: System", effect: CommandEffect::Theme(ThemeChoice::System) },
     Command { name: "Theme: Light", effect: CommandEffect::Theme(ThemeChoice::Light) },
     Command { name: "Theme: Dark", effect: CommandEffect::Theme(ThemeChoice::Dark) },
     Command { name: "Hot exit", effect: CommandEffect::ToggleHotExit },
+    Command { name: "Show what's new after updates", effect: CommandEffect::ToggleWhatsNew },
 ];
 
 /// The settings file's value syntax for a theme choice (quoted, matching `Settings::parse`).
@@ -164,6 +169,10 @@ fn command_items(cx: &App) -> Vec<Item> {
                     false,
                     None,
                 ),
+                CommandEffect::ToggleWhatsNew => (
+                    format!("{}: {}", command.name, if settings.whats_new { "On" } else { "Off" }),
+                    None,
+                ),
             };
             Item {
                 label,
@@ -217,6 +226,14 @@ impl Editor {
                 let value = if next { "true" } else { "false" };
                 crate::settings::apply_setting(cx, "hot_exit", value, move |settings| {
                     settings.hot_exit = next;
+                });
+            }
+            CommandEffect::ToggleWhatsNew => {
+                let current = cx.try_global::<Settings>().is_none_or(|s| s.whats_new);
+                let next = !current;
+                let value = if next { "true" } else { "false" };
+                crate::settings::apply_setting(cx, "whats_new", value, move |settings| {
+                    settings.whats_new = next;
                 });
             }
         }
