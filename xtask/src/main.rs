@@ -202,21 +202,21 @@ fn dist(args: Vec<String>) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Icon sizes and the art drawn at each. Up to 32 px (the tray, title bar and taskbar at 100 %)
-/// the full mark's orbit arcs read as a digit, so those sizes use a dedicated few-stroke arrow
-/// (`app-icon-16.svg`); 40 px and up show the full mark.
+/// Icon sizes and the art drawn at each: up to 32 px (the tray, title bar and taskbar at 100 %)
+/// the simplified mark (`app-icon-small.svg`, the same art as the website's favicon); 40 px and
+/// up the full mark.
 const ICON_SIZES: [(u32, &str); 7] = [
-    (16, "app-icon-16.svg"),
-    (20, "app-icon-16.svg"),
-    (24, "app-icon-16.svg"),
-    (32, "app-icon-16.svg"),
+    (16, "app-icon-small.svg"),
+    (20, "app-icon-small.svg"),
+    (24, "app-icon-small.svg"),
+    (32, "app-icon-small.svg"),
     (40, "app-icon.svg"),
     (48, "app-icon.svg"),
     (64, "app-icon.svg"),
 ];
 
 /// Sizes rendered into `packaging/msix/Assets` for the MSIX manifest's `Square44x44Logo` slot,
-/// plus the tile and store logos. Same art selection as `ICON_SIZES` (`app-icon-16.svg` up to
+/// plus the tile and store logos. Same art selection as `ICON_SIZES` (`app-icon-small.svg` up to
 /// 32 px, `app-icon.svg` above). Windows discovers the `targetsize-<n>` and
 /// `_altform-unplated`-qualified siblings of the file the manifest names by filename convention
 /// alone, so nothing else in the manifest changes when these are added; Tachyon's art is
@@ -224,12 +224,12 @@ const ICON_SIZES: [(u32, &str); 7] = [
 /// "unplated" forms are the same image.
 const MSIX_ASSETS: [(&str, u32, &str); 13] = [
     ("Square44x44Logo.png", 44, "app-icon.svg"),
-    ("Square44x44Logo.targetsize-16.png", 16, "app-icon-16.svg"),
-    ("Square44x44Logo.targetsize-16_altform-unplated.png", 16, "app-icon-16.svg"),
-    ("Square44x44Logo.targetsize-24.png", 24, "app-icon-16.svg"),
-    ("Square44x44Logo.targetsize-24_altform-unplated.png", 24, "app-icon-16.svg"),
-    ("Square44x44Logo.targetsize-32.png", 32, "app-icon-16.svg"),
-    ("Square44x44Logo.targetsize-32_altform-unplated.png", 32, "app-icon-16.svg"),
+    ("Square44x44Logo.targetsize-16.png", 16, "app-icon-small.svg"),
+    ("Square44x44Logo.targetsize-16_altform-unplated.png", 16, "app-icon-small.svg"),
+    ("Square44x44Logo.targetsize-24.png", 24, "app-icon-small.svg"),
+    ("Square44x44Logo.targetsize-24_altform-unplated.png", 24, "app-icon-small.svg"),
+    ("Square44x44Logo.targetsize-32.png", 32, "app-icon-small.svg"),
+    ("Square44x44Logo.targetsize-32_altform-unplated.png", 32, "app-icon-small.svg"),
     ("Square44x44Logo.targetsize-48.png", 48, "app-icon.svg"),
     ("Square44x44Logo.targetsize-48_altform-unplated.png", 48, "app-icon.svg"),
     ("Square44x44Logo.targetsize-256.png", 256, "app-icon.svg"),
