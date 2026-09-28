@@ -1663,6 +1663,7 @@ fn command_palette_theme_light_applies_at_once_and_persists_keeping_a_comment(
             theme: crate::ThemeChoice::Dark,
             zoom: 1.,
             hot_exit: true,
+            tips: true,
         });
         cx.set_global(crate::SettingsFile(file.clone()));
     });

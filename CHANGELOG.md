@@ -96,11 +96,11 @@ All notable user-visible changes are recorded here. The format follows
   hot exit on or off, and whether the rotating tip (below) shows. Saving the file applies the
   theme and the tip setting to open windows.
 - A faint "Pro Tip" line (`tips = true`, on by default) behind the document, near the bottom of
-  the window: one tip per window, naming a real bound key (`Ctrl+Shift+M` switches Markdown and
-  plain text, `Escape` leaves editing, `Ctrl+R` opens a recent file, `Ctrl+F` finds text,
-  `Ctrl+Shift+O` jumps to a heading) or `Ctrl+click` to open a link, rotating through the list as
-  windows open. It sits behind the document (typed text paints over it) and never captures
-  clicks or becomes selectable.
+  the window: one tip per window, naming a real bound key (`Ctrl+Shift+P` opens the command
+  palette, `Ctrl+Shift+M` switches Markdown and plain text, `Escape` leaves editing, `Ctrl+R`
+  opens a recent file, `Ctrl+F` finds text, `Ctrl+Shift+O` jumps to a heading) or `Ctrl+click`
+  to open a link, rotating through the list as windows open. It sits behind the document (typed
+  text paints over it) and never captures clicks or becomes selectable.
 - Open recent (`Ctrl+R`): pick one of the last 30 files you opened or saved; type to filter by
   name or folder.
 - Recent files reach two OS-native surfaces, not just `Open recent`: on Windows, right-clicking
