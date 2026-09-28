@@ -317,18 +317,24 @@ proportional to the whole block. `Document::boundaries` now bounds that work ins
 large enough to reach this path parses identically alone (ADR 0005's segmenter invariant), so it
 had *no* interior boundary before the edit, or it would already have been split then. Which of
 "can never gain one" (a fence: closing it for real would end the block, so nothing inside is ever
-outside it) or "can only gain one very close to the edit" (anything else without a container that
-could wrap a nested fence at a raw column a top-level line never could - a list item or a block
-quote) a block is can be told from its own first line alone (`block_shape`), without scanning the
-rest. A fenced block gets no boundaries at all; anything else is presegmented in just a window
-around the edit (`BOUNDARY_SCAN_MARGIN`, 64 KiB each side) instead of the whole block - and that
-scan, like `boundaries`' other calls, now walks the rope's own chunks (`tachyon_md::presegment_chunks`/
-`ends_in_fence_chunks`) instead of copying the range into a `String` first, the same treatment
-`plain_chunk_len_capped` got above. A container, or an edit spanning more than one pre-existing
-block, falls back to the old full scan - rarer, and still correct, just not fast; property tests
-(`incremental`/`corpus`, ADR 0005's arbiter) are unaffected by any of this, since it only changes
-which boundaries a *provisional* placeholder split finds, never the real parse a background job
-settles it against. Second, `Editor::render_raw` split an oversized active block into segments
+outside it) or "can only gain one very close to the edit, from state a bounded window can start
+fresh" (anything else without a container that could wrap a nested fence at a raw column a
+top-level line never could - a list item or a block quote - and without an HTML block, which,
+unlike a fence, ends at the next blank line rather than swallowing everything: a bounded window
+elsewhere in the block cannot know it is still "inside" one opened at the block's own start, and
+could misread a fence-marker-shaped line the edit adds there the same way an HTML-swallowed one
+once desynced the streamed-paste presegmenter, below) a block is can be told from its own first
+line alone (`block_shape`), without scanning the rest. A fenced block gets no boundaries at all;
+a block that opens neither a fence, a container nor an HTML block is presegmented in just a
+window around the edit (`BOUNDARY_SCAN_MARGIN`, 64 KiB each side) instead of the whole block - and
+that scan, like `boundaries`' other calls, now walks the rope's own chunks
+(`tachyon_md::presegment_chunks`/`ends_in_fence_chunks`) instead of copying the range into a
+`String` first, the same treatment `plain_chunk_len_capped` got above. A container, an HTML
+block, or an edit spanning more than one pre-existing block, falls back to the old full scan -
+rarer, and still correct, just not fast; property tests (`incremental`/`corpus`, ADR 0005's
+arbiter) are unaffected by any of this, since it only changes which boundaries a *provisional*
+placeholder split finds, never the real parse a background job settles it against.
+Second, `Editor::render_raw` split an oversized active block into segments
 sized like `DocMode::Plain`'s own chunks (`PLAIN_CHUNK_BYTES`, 16 KiB): shaping that much
 monospace text fresh on every keystroke - GPUI's line layout cache keys by text, so the one
 segment actually edited always misses it - was the larger of the two costs at the middle of a

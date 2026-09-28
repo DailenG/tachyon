@@ -59,6 +59,26 @@ dirty text after it is parsed by a later job whose look-behind reaches back into
 block, which may have been cut short. Dirty text left before the window is parsed by a job that
 converges against the window's blocks, as for any edit.
 
+Before any of this runs, a paste large enough to need streaming is first tiled into placeholder
+blocks so it can be shown before the real parse finishes; their boundaries come from
+`tachyon_md::presegment`, a cheap line scan (blank lines outside fenced code), not the real
+parser. Look-behind's "no construct continues across a blank line" only holds if presegment's own
+notion of "outside fenced code" agrees with the real parser's, since `follows_blank_line` trusts a
+placeholder boundary on nothing but the raw line before it - it does not re-derive fence state
+itself. A line that only *looks* like a fence marker but is really swallowed as literal content
+by an open HTML block (`<div>\n[^1]: note\n~~~\n...`, none of it real Markdown) used to desync
+presegment's fence tracking from the real parser's, so it could later place a
+boundary right after what looked like a blank line outside any fence when a fence opened there was
+genuinely still open; a window starting there then read the swallowed content as fresh top-level
+Markdown. For most constructs a block reparsed that way is caught and corrected once definitions
+are rechecked against the document-wide `DefTable` (rule 4); footnotes are the exception, since
+pulldown-cmark resolves a `[^label]` reference against any `[^label]:` definition anywhere in the
+same parse call natively, not through the table, so a reference resolved that way inside one
+mis-windowed parse was never rechecked once that window's start was reparsed correctly and the
+phantom definition was gone. The presegmenter now tracks open HTML blocks (blank-line-terminated,
+like fences with blank lines inside them) the same way it tracks fences, so it never proposes a
+cut inside either.
+
 ## Consequences
 
 - Measured on a 1 MB document (`cargo bench -p tachyon-doc`): keystroke-to-clean p99 ≈ 45 µs, full
