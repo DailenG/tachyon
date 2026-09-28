@@ -12,7 +12,7 @@ use gpui::{App, Context, Window};
 
 use crate::editor::{Editor, OpenCommandPalette};
 use crate::picker::{Item, Pick, Picker};
-use crate::settings::{Settings, ThemeChoice};
+use crate::settings::{ContentWidth, Settings, ThemeChoice};
 
 /// What picking a command does.
 #[derive(Clone, Copy)]
@@ -27,6 +27,8 @@ pub(crate) enum CommandEffect {
     /// Flips whether the What's new window shows itself after an update, in memory and in the
     /// settings file.
     ToggleWhatsNew,
+    /// Sets the text column width, in memory and in the settings file.
+    ContentWidth(ContentWidth),
 }
 
 /// One row's name and what it does.
@@ -75,6 +77,13 @@ const COMMANDS: &[Command] = &[
     Command { name: "Theme: Dark", effect: CommandEffect::Theme(ThemeChoice::Dark) },
     Command { name: "Hot exit", effect: CommandEffect::ToggleHotExit },
     Command { name: "Show what's new after updates", effect: CommandEffect::ToggleWhatsNew },
+    Command { name: "Width: 680px", effect: CommandEffect::ContentWidth(ContentWidth::Px(680.)) },
+    Command { name: "Width: 820px", effect: CommandEffect::ContentWidth(ContentWidth::Px(820.)) },
+    Command { name: "Width: 1100px", effect: CommandEffect::ContentWidth(ContentWidth::Px(1100.)) },
+    Command {
+        name: "Width: 100%",
+        effect: CommandEffect::ContentWidth(ContentWidth::Percent(100.)),
+    },
 ];
 
 /// The settings file's value syntax for a theme choice (quoted, matching `Settings::parse`).
@@ -83,6 +92,17 @@ fn theme_value(choice: ThemeChoice) -> &'static str {
         ThemeChoice::System => "\"system\"",
         ThemeChoice::Light => "\"light\"",
         ThemeChoice::Dark => "\"dark\"",
+    }
+}
+
+/// The settings file's value syntax for one of `COMMANDS`' own content-width presets (quoted,
+/// matching `Settings::parse`). Exact float patterns are safe: both sides are the same literals.
+fn content_width_value(width: ContentWidth) -> &'static str {
+    match width {
+        ContentWidth::Px(680.) => "\"680px\"",
+        ContentWidth::Px(1100.) => "\"1100px\"",
+        ContentWidth::Percent(100.) => "\"100%\"",
+        _ => "\"820px\"",
     }
 }
 
@@ -174,6 +194,9 @@ fn command_items(cx: &App) -> Vec<Item> {
                     false,
                     None,
                 ),
+                CommandEffect::ContentWidth(width) => {
+                    (command.name.to_owned(), settings.content_width == width, None)
+                }
             };
             Item {
                 label,
@@ -236,6 +259,16 @@ impl Editor {
                 crate::settings::apply_setting(cx, "whats_new", value, move |settings| {
                     settings.whats_new = next;
                 });
+            }
+            CommandEffect::ContentWidth(width) => {
+                crate::settings::apply_setting(
+                    cx,
+                    "content_width",
+                    content_width_value(width),
+                    move |settings| {
+                        settings.content_width = width;
+                    },
+                );
             }
         }
     }

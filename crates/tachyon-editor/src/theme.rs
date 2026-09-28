@@ -137,6 +137,10 @@ pub struct Theme {
     /// Replaced by the first installed candidate once the window is up
     /// (see `Editor::resolve_code_font`).
     pub code_font: SharedString,
+    /// The text column's width for the current frame: overwritten every `Editor::render` from
+    /// `Settings::content_width`, the window's current size and `zoom`
+    /// (`ContentWidth::resolve`), not carried across zoom changes here the way the other sizes
+    /// below are, since a percentage's resolved width depends on the window too.
     pub content_width: Pixels,
     /// Body text family. Resolved when a window is available (`Theme::for_window`).
     pub text_font: SharedString,
@@ -261,7 +265,10 @@ impl Theme {
         }
     }
 
-    /// This theme with its sizes scaled for `zoom` instead of its current zoom.
+    /// This theme with its sizes scaled for `zoom` instead of its current zoom. `content_width`
+    /// is untouched: `Editor::render` resolves it fresh every frame from the window's current
+    /// size (see its own doc comment), so scaling a stale value here would only be overwritten
+    /// regardless, incorrectly for a percentage width (window-relative, not a zoom-scaled size).
     pub fn zoomed(mut self, zoom: f32) -> Self {
         let factor = zoom / self.zoom;
         self.text_size *= factor;
@@ -269,7 +276,6 @@ impl Theme {
         for size in &mut self.heading_sizes {
             *size *= factor;
         }
-        self.content_width *= factor;
         self.zoom = zoom;
         self
     }

@@ -29,7 +29,7 @@ pub use crate::editor::{
 };
 pub use crate::picker::{RecentFiles, RecentFilesOs};
 pub use crate::prompt::keyboard_prompt;
-pub use crate::settings::{DEFAULT_SETTINGS, Settings, SettingsFile, ThemeChoice};
+pub use crate::settings::{ContentWidth, DEFAULT_SETTINGS, Settings, SettingsFile, ThemeChoice};
 pub use crate::theme::{AppearanceHint, Theme};
 
 /// Registers the editor's key bindings, and applies a large paste still being prepared before

@@ -108,6 +108,27 @@ the very top can clear the bar. The document caret is not painted while the find
 takes typing; the field there paints its own.
 Selections are drawn as highlight backgrounds, so they span raw and rendered blocks alike.
 
+**Content width (`tachyon-editor`).** `Settings::content_width` (`settings::ContentWidth`,
+`"820px"`/a bare number, or a percentage like `"80%"`, parsed by `ContentWidth::parse`; an
+invalid value falls back to the 820 px default without failing the settings file) is resolved
+into `Theme::content_width` fresh every `Editor::render`, from the current window width and zoom
+(`ContentWidth::resolve`): a pixel value scales with zoom like other sizes, a percentage is a
+share of the window's own width and is not scaled again. The result is capped to the window width
+less a real gap on each side (`CONTENT_WIDTH_GAP_REMS`, 3 rems - scaled by zoom, wider than the
+one-rem text inset `render_block`'s centred column separately pads its own text with), so text
+keeps a felt gap from the window frame at every width and zoom, including `100%`. Resolution is
+pure arithmetic against the viewport GPUI already reports each frame - no allocation - so a
+resize's only extra cost is `list`'s own re-wrap of the blocks whose measured height changes.
+`ListState` caches each item's own measured size, so `Editor::render` also remeasures the list
+itself whenever the resolved width actually changed since the last frame it drew, whatever the
+cause - a plain window resize changing a percentage width, not only a settings save or zoom step
+- comparing against a field it keeps for exactly this; without it, a resized item's reserved
+height could stay keyed to its previous width, and its whole rendered content (caret included,
+painted at the item's own resolved bounds) would land wherever that stale height put it. The
+find bar and pickers keep their own, independent width caps (compact toolbars, not the
+running-text column); the tip line and every block's centred column follow `content_width` as
+before.
+
 An explicit `Editor::editing` flag, not the caret's mere presence, decides whether a block is
 active. `Escape` (`Editor::cancel`) turns it off without moving the caret, unless a find bar,
 picker or prompt is open (closed instead, keeping precedence), an IME composition is in

@@ -158,8 +158,9 @@ tachyon --desktop-entry on   # Linux: add it to the launcher and "Open with" men
 
 `cargo xtask dist` builds a release archive in `target/dist/`. `tachyon --help` lists all options. Settings live in `settings.toml` (`Ctrl+,` opens it): theme,
 zoom of new windows, whether Quit keeps unsaved documents, whether a faint rotating tip shows
-behind the document, and whether an update opens a "What's new" window (the command palette's
-"What's new" row opens it any time regardless).
+behind the document, whether an update opens a "What's new" window (the command palette's
+"What's new" row opens it any time regardless), and the text column width (a pixel size like
+`820px` or a percentage like `80%`, always leaving a minimum gap to the window frame).
 
 ## Development
 
