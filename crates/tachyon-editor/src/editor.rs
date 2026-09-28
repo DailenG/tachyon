@@ -216,6 +216,29 @@ pub struct Editor {
     /// ones it is rendering in the current one.
     pub(crate) rendered: Range<usize>,
     pub(crate) rendering: Option<Range<usize>>,
+    /// This frame's viewport bounds and each of `rendered`'s blocks' own on-screen bounds,
+    /// snapshotted from `self.list` (see `Render::render`) before the list element's own layout
+    /// pass borrows its `ListState` for the frame: `render_window` reads these instead of
+    /// calling `ListState::viewport_bounds`/`bounds_for_item` directly, which would re-enter
+    /// that same borrow from inside the list's own `render_item` callback and panic.
+    pub(crate) window_viewport: Bounds<Pixels>,
+    pub(crate) window_item_bounds: std::collections::HashMap<usize, Bounds<Pixels>>,
+    /// Cache of [`tachyon_doc::plain_chunk_lens`]'s split of the last oversized raw block
+    /// [`crate::render::Editor::render_raw`] handled: recomputing it (a byte/line scan of the
+    /// whole block) on every repaint that touches this block - a font-swap
+    /// `ListState::remeasure`, the caret blinking, or any other frame with no edit in between -
+    /// cost as much as the whole block regardless of how few of its chunks a window actually
+    /// draws (the cause of a measured ~79 ms frame on a 15 MiB block with no blank lines).
+    /// Keyed by the range and the buffer's version (an edit always changes the version); one
+    /// slot, since only one block ever needs this at a time (`DocMode::Plain`'s own blocks are
+    /// already small enough never to reach `RAW_SPLIT_THRESHOLD`).
+    pub(crate) raw_chunk_cache: Option<(Range<usize>, u64, Vec<usize>)>,
+    /// Cache of the per-line height estimate `render_rendered` builds for a windowed
+    /// (`ir.lines.len() > LINE_SPLIT_THRESHOLD`) non-active block, for the same reason as
+    /// `raw_chunk_cache`. Keyed by the block's own `Arc<ParsedBlock>` (kept alive here so a
+    /// pointer comparison can never alias a dropped-and-reallocated one), unchanged across
+    /// frames unless the block is actually reparsed.
+    pub(crate) rendered_heights_cache: Option<(Arc<ParsedBlock>, Vec<Pixels>)>,
     /// Window-coordinate y of the bottom edge of the open find bar overlay, refreshed every
     /// frame it renders (see `render::find_bar`); `reveal_caret_at` keeps revealed content below
     /// it so the bar (which floats over the document without reflowing it) never hides the
@@ -307,6 +330,10 @@ impl Editor {
             reveal: false,
             rendered: 0..0,
             rendering: None,
+            window_viewport: Bounds::default(),
+            window_item_bounds: std::collections::HashMap::new(),
+            raw_chunk_cache: None,
+            rendered_heights_cache: None,
             find_bar_bottom: px(0.),
             caret_painted: false,
             file: None,

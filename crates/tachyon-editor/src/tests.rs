@@ -1693,3 +1693,88 @@ fn background_find_on_a_huge_document_matches_a_synchronous_scan(cx: &mut TestAp
     // scan would select (`research`'s `select_first`, independent of which path found it).
     assert_eq!(status, "1/2");
 }
+
+#[gpui::test]
+fn typing_across_an_oversized_raw_block_stays_correct(cx: &mut TestAppContext) {
+    // Well over `RAW_SPLIT_THRESHOLD` so `render_raw` splits this one CodeBlock (no blank lines
+    // inside a fence, the shape the memory-fix diagnosis measured) into several stacked
+    // segments instead of one `StyledText` for the whole thing.
+    let mut lines = String::new();
+    while lines.len() <= crate::render::RAW_SPLIT_THRESHOLD * 3 {
+        lines.push_str(&format!("line {:04}\n", lines.matches('\n').count()));
+    }
+    let doc_text = format!("```\n{lines}```\n");
+    assert_eq!(
+        doc_text.len().saturating_sub(8),
+        lines.len(),
+        "fixture sanity: only the fence markers surround the counted lines"
+    );
+    let (editor, cx) = open(&doc_text, cx);
+    assert_eq!(kinds(&editor, cx).len(), 1, "one oversized block, not split into several");
+
+    // A caret placed well inside a later segment reads and edits at the right source offset:
+    // each segment's own `TextTarget::Raw { base }` must be its own start, not the whole
+    // block's, and hit testing/typing must not leak into a neighboring segment.
+    let deep = doc_text.find("line 0200").unwrap();
+    editor.update(cx, |e, cx| e.move_to(deep, false, cx));
+    cx.run_until_parked();
+    assert_eq!(selection(&editor, cx), deep..deep);
+    cx.simulate_input("X");
+    cx.run_until_parked();
+    assert_eq!(&text(&editor, cx)[deep..deep + 1], "X");
+    cx.simulate_keystrokes("secondary-z");
+    cx.run_until_parked();
+    assert_eq!(text(&editor, cx), doc_text, "undo restores the exact source");
+
+    // The very last line of the block, in its own (last) segment.
+    let last_line = format!("line {:04}", lines.matches('\n').count() - 1);
+    let near_end = doc_text.rfind(&last_line).unwrap();
+    editor.update(cx, |e, cx| e.move_to(near_end, false, cx));
+    cx.run_until_parked();
+    assert_eq!(selection(&editor, cx), near_end..near_end);
+    cx.simulate_input("Y");
+    cx.run_until_parked();
+    assert_eq!(&text(&editor, cx)[near_end..near_end + 1], "Y");
+
+    // Home/End still land on the real source line's boundaries, not a segment boundary.
+    cx.simulate_keystrokes("secondary-z home");
+    cx.run_until_parked();
+    let start_of_line = doc_text[..near_end].rfind('\n').map_or(0, |nl| nl + 1);
+    assert_eq!(selection(&editor, cx), start_of_line..start_of_line);
+}
+
+#[gpui::test]
+fn editing_a_large_non_active_list_does_not_use_a_stale_rendered_height_cache(
+    cx: &mut TestAppContext,
+) {
+    // A list well over `render::LINE_SPLIT_THRESHOLD` (2,000) lines, as a non-active block (the
+    // caret stays in the paragraph before it), exercises `render_rendered`'s windowed path and
+    // its cached per-line height estimate. The cache is keyed by the block's `Arc<ParsedBlock>`
+    // pointer, so a reparse (a new `Arc`) must miss it, not hand `render_window` a heights list
+    // sized for the old (longer) line count against the new, shorter `ir.lines`.
+    let items = 2_500;
+    let list: String = (0..items).map(|i| format!("- item {i}\n")).collect();
+    let doc = format!("para\n\n{list}\nafter\n");
+    let (editor, cx) = open(&doc, cx);
+    assert_eq!(
+        kinds(&editor, cx)[1],
+        BlockKind::List { ordered: false },
+        "sanity: the big block is a list"
+    );
+
+    // Delete most of the list items in one edit: a reparse producing far fewer `ir.lines`,
+    // while the caret (and so "active") stays in block 0 throughout.
+    let at = doc.find("- item 2000\n").unwrap();
+    let end = doc.rfind("- item 2499\n").unwrap() + "- item 2499\n".len();
+    editor.update(cx, |e, cx| e.replace(at..end, "", cx));
+    cx.run_until_parked();
+
+    assert_eq!(
+        kinds(&editor, cx)[1],
+        BlockKind::List { ordered: false },
+        "still one list block, just shorter"
+    );
+    assert!(!text(&editor, cx).contains("item 2000"), "the removed items are really gone");
+    assert!(text(&editor, cx).contains("item 1999"), "items before the cut remain");
+    assert!(text(&editor, cx).contains("after\n"), "the trailing paragraph still parses");
+}

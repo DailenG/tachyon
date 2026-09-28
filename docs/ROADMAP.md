@@ -314,3 +314,105 @@ opening such a file the way Markdown mode does.
 **Exit:** every item above covered by a `gpui::test`; the live measurements run and recorded, with
 no frame over budget on a 200 MB/1 GB document and the crash-triggering scenario (a 20+ MB single
 line) confirmed fixed on real hardware.
+
+## Phase 9: Markdown-mode memory efficiency (in progress)
+
+A Markdown file that tiles into one or few enormous top-level blocks (a huge fenced code block,
+or a whole paragraph with no blank lines) hit the same memory/freeze pathology Phase 8 fixed for
+plain text, just in Markdown mode, because virtualization is by top-level block and one giant
+block is virtualization's whole unit. See `docs/ARCHITECTURE.md`'s "Markdown memory efficiency".
+
+- [x] Fresh Markdown loads stream the parse back in 4 MiB windows (`Document::load_markdown`)
+      instead of copying the whole file into one `String` for `pulldown-cmark`, falling back to
+      one direct parse for a file with no blank lines (windowing cannot bound that shape; ADR
+      0005's look-behind rule)
+- [x] Run-length source maps: adjacent verbatim `SourceSpan`s merge in `Builder::push_span`
+      instead of one per parser event. A 15 MiB single-fence file: 221,531 map spans to 2
+- [x] `Editor::render_raw`/`render_rendered` split an oversized block's source/lines with
+      `plain_chunk_lens` and window them to a couple of viewport-heights around the estimate
+      nearest the viewport (`Editor::render_window`). `gpui::test`-covered
+      (`typing_across_an_oversized_raw_block_stays_correct`): caret, typing, undo and Home/End
+      stay correct across the introduced splits
+- [x] `Document::evict`/`Document::ensure_ir` (fix 6): a clean, ≤256 KiB block outside the drawn
+      range plus a 200-block margin has its `ir` dropped, restored synchronously the moment
+      `render_block` visits it again; `kind`/`len`/`source_hash`/`defs`/`refs`/`footnotes` are
+      untouched, so document-wide definitions keep resolving correctly (`gpui::test`- and
+      property-covered: `evicting_blocks_drops_ir_and_ensure_ir_restores_it_exactly`,
+      `ensure_ir_re_resolves_a_forward_reference_correctly`,
+      `evict_leaves_stale_and_oversized_blocks_alone`)
+- [x] Two live-measurement regressions found and fixed in this pass, both invisible to headless
+      `Document::new` timing since they only fire from `Editor::render`'s per-frame calls:
+      `plain_chunk_len_capped` re-descended the rope tree once per *line* (`find_newline`'s
+      `rope.byte_slice`), turning a 15 MiB file with real line breaks (a fenced block, log-shaped
+      prose) into a single ~80-300 ms frame the first time it became the active block or a raw
+      segment was recomputed; rewritten to walk the rope's own chunk iterator once and scan
+      forward with `str::find`. `Document::evict` built its replacement as
+      `(*block.parsed).clone()` with `ir` then overwritten - a full deep clone of `ir` immediately
+      discarded - and `Editor::render` calls it unconditionally every frame, so evicting a
+      well-structured document's entire off-screen majority in one call right after a fresh load
+      (162,834 blocks measured) cost one frame tens of milliseconds even fixing the wasted clone;
+      `evict` now builds field-by-field without touching `ir`'s own `Vec`s and stops after 4096
+      blocks per call, spreading the rest over the next several frames
+- [x] `cargo bench -p tachyon-doc` unaffected: full parse 1 MiB 22.8 → 19.1 ms, 10 MiB
+      265 → 231 ms (both faster - fewer/no whole-file copies); keystroke p99 55.9 → 48.6 µs
+      (budget 500 µs); 5 MiB paste UI-thread part 5.5 → 6.1 ms (within noise)
+- [x] `cargo test --workspace --locked` and `PROPTEST_CASES=20000` on `tachyon-doc`'s
+      `incremental`/`corpus` suites pass
+- [x] GUI live measurements (`TACHYON_FRAME_LOG`, peak RSS via `VmHWM`), baseline
+      (`origin/feat/plain-text` @ `46e946a`) vs fixed, 2 runs each, `systemd-run --user --scope
+      -p MemoryMax=6G -p MemorySwapMax=0`:
+
+      | File | Peak RSS: before → after | Worst frame on open: before → after | Steady RSS after scroll-to-end-and-back + 10 s idle: before → after |
+      |---|---|---|---|
+      | `md-1mb.md` (well-structured) | 144-145 → 138-140 MB | 8.3-9.2 → 11.4-13.6 ms | 147.6-147.8 → 141.6-142.0 MB |
+      | `md-15mb.md` (well-structured, 162,834 blocks) | 412-437 → 374-378 MB | 8.3-8.4 → 7.8-9.6 ms | 415.3-415.4 → 377.3-377.9 MB |
+      | `fence-15mb.md` (one giant fenced block) | 5,608-5,872 → 296-335 MB | 22.2-28.8 ms → 8.0-9.5 ms | 3,736-3,928 → 185-187 MB |
+      | `oneline-15mb.md` (one unwrapped line) | 4,259 → 271-478 MB | 5,420-5,524 **ms** → 11.0-11.5 ms | 657-727 → 198-202 MB |
+      | `log-15mb.md` (one no-blank-line paragraph) | 2,149-2,224 → 336-394 MB | 4,535-4,723 **ms** → 15.3-15.9 ms | 2,149-2,151 → 184-186 MB |
+
+      Every "worst frame on open" number above is under the 16.7 ms budget after the fix (the
+      baseline column for `fence`/`oneline`/`log` is seconds, not milliseconds, for the open
+      frame alone - `oneline`/`log` additionally produced *no frames at all* during
+      `fence`/`oneline`/`log`'s Ctrl+End/PageUp×5/Ctrl+Home sequence on baseline: the window was
+      unresponsive for several seconds, not merely slow). The ~79 ms frame on `log-15mb.md`
+      reported at the end of the previous pass is confirmed gone (now 15.3-15.9 ms), traced to
+      the `plain_chunk_len_capped` per-line rope-descent cost above, not the font-swap remeasure
+      originally suspected
+- [x] Fix 6's steady-state RSS win, measured the same way as the table above (open, Ctrl+End,
+      Ctrl+Home, idle 10 s, `VmRSS`): `md-1mb.md` 147.6-147.8 → 141.6-142.0 MB (small - few enough
+      blocks that eviction has little to do); `md-15mb.md` 415.3-415.4 → 377.3-377.9 MB, tracking
+      the same reduction seen at load, i.e. scrolling back to the top does not accumulate memory
+      for everything that was ever visible
+- [x] Eviction smoke test on `md-15mb.md` (fixed binary, `TACHYON_FRAME_LOG`, `grim`
+      screenshot): `Page Down` held 5 s from the top (`wtype -P Next -s 5000 -p Next`, relying on
+      the client's own key-repeat the same as a physical hold) generated 192 frames, worst
+      5.10 ms, 0 over 16.7 ms; jumping back to the top afterward (forcing `ensure_ir` to restore
+      every block scrolled past, now evicted) cost 2.51 ms; the screenshot shows the restored
+      top-of-document content (headings, lists, a fenced block, a table, a block quote, links)
+      rendered correctly, not blank or stale
+- [ ] Two smaller, pre-existing costs remain, flagged rather than silently left out (see
+      `docs/ARCHITECTURE.md`'s "Not done, and why"): typing into the active block of
+      `fence-15mb.md` or `log-15mb.md` (one ~15 MiB block) occasionally costs 20-58 ms - shaping a
+      freshly-built `StyledText` for the touched ~16-32 KiB raw segment on every keystroke, and
+      (for a giant block with no interior blank line) `Document::stale_block` re-deriving
+      pre-segmenter boundaries with a fresh copy-and-scan of the whole stale block each keystroke.
+      Both are bounded by segment/chunk size rather than file size and are strictly better than
+      before this phase (baseline never produced a typing frame at all for these files - true
+      unresponsiveness, not merely slow - and log-15mb.md's typing cost there, on the rare frame
+      it did produce between other operations, was 267-344 ms), but are not yet under budget on
+      every frame; a follow-up should look at caching `render_raw_segment`'s shaped output per
+      segment (keyed like `raw_chunk_cache`/`rendered_heights_cache`) and giving
+      `Document::stale_block`'s `boundaries()` the same rope-chunk-walking treatment
+      `plain_chunk_len_capped` got above, rather than its current full copy-and-scan
+- [ ] Fix 4 (share `BlockIr::text` with the rope for verbatim regions) not attempted this phase:
+      a real API change to `BlockIr`/`ParsedBlock`, a pervasive, already-widely-consumed type,
+      rather than a contained one; design recorded in `docs/ARCHITECTURE.md` for a follow-up
+
+**Exit:** every item above covered by a `gpui::test`, a property test or a live measurement; a
+15-20 MiB Markdown file shaped like the pathological cases (one fenced block, one no-blank-line
+paragraph, one unwrapped line) opens with no frame over 16.7 ms and peak RSS proportional to the
+file, not a multi-GB/multi-second outlier (baseline: up to 5.9 GB peak and a 5.5-second single
+frame on open; fixed: 271-478 MB peak, every open frame under 16.7 ms); `cargo bench -p
+tachyon-doc` budgets unchanged. Typing into an already-15 MiB single block remains above budget on
+some frames, flagged above for a follow-up rather than claimed fixed.
+

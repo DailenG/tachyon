@@ -195,6 +195,129 @@ and rerunning a stale result rather than applying or queuing it - chosen over ho
 the paste queue below) because Replace All's own work is the `O(document size)` scan itself, so
 blocking on it would defeat running it in the background at all.
 
+## Markdown memory efficiency
+
+A Markdown file that tiles into few, large top-level blocks - one huge fenced code block, or a
+whole paragraph with no blank lines to end it - used to cost memory and frame time proportional
+to the file, not to what is on screen, because virtualization is by top-level block
+(`ListState::new(doc.blocks().len(), …)`) and one enormous block is virtualization's whole unit.
+Four independent fixes narrow that gap without changing a block's parsed content or Markdown
+rendering:
+
+**Loading (`tachyon-doc`).** `Document::load_markdown` replaces one `md::parse_document` call
+over the whole text (which needed `Buffer::text()`, a full `rope.to_string()` copy, just so
+`pulldown-cmark` had a contiguous `&str`) with the same machinery a large paste already streams
+back in chunks (ADR 0005): the buffer tiles into placeholder blocks sized by plain byte count (no
+content scan), the whole range is marked dirty, and `LOAD_CHUNK`-sized (4 MiB) reparse windows
+apply in order until nothing is left dirty. Each window copies only its own bytes out of the
+rope, so a fresh open's peak transient memory is bounded by the window size for a well-structured
+file. A file with no blank lines needs look-behind reaching back to the start of its one block to
+parse correctly (no construct crosses a blank line, so nothing else bounds how far back a window
+must reach): windowing cannot help that shape, so `load_markdown` walks the rope's own chunks
+(`has_blank_line`, no copy) before paying for a presegment scan's copy, and falls back to one
+direct parse of what is left the moment no blank line exists at all within reach - the same
+single copy that shape always needed, without a reactive circuit breaker discovering it one
+doomed window at a time.
+
+**Source maps (`tachyon-md`).** `Builder::push_span` merges a new verbatim `SourceSpan` into the
+previous one instead of appending a new entry when the two are contiguous - either directly (a
+parser event boundary with nothing between) or separated by exactly the one `\n` `open_line`
+inserts between visible lines, when the source byte there is also `\n` (true of code/HTML block
+content, which reproduces its source line by line). Both cases only ever merge `verbatim` spans,
+so `visible_to_source`/`source_to_visible`'s linear mapping is exactly as accurate afterwards -
+merging changes how many spans it takes to say the same thing, never what they say. A long fenced
+code block, one `SourceSpan` per source line before, collapses to one span for the whole block
+(measured: 221,531 spans to 2 for a 15 MiB single-fence file). Inline syntax that is stripped
+mid-run (an emphasis marker inside otherwise-verbatim prose) still breaks a span, since a
+verbatim span's byte-for-byte contract cannot skip a source byte with no visible counterpart.
+
+**Rendering (`tachyon-editor`).** Above `RAW_SPLIT_THRESHOLD`, `Editor::render_raw` splits a raw
+(active, or `DocMode::Plain`) block's source with `plain_chunk_lens` - the same chunking
+`DocMode::Plain` itself uses - into several stacked segments instead of one `StyledText`;
+`Editor::render_rendered` does the same for a non-active block's `ir.lines` above
+`LINE_SPLIT_THRESHOLD`. Above either threshold, `Editor::render_window` then keeps only a window
+of segments/lines within a couple of viewport-heights of the one estimated nearest the viewport,
+replacing the rest with two plain, height-only placeholder elements: `list` virtualizes whole
+blocks, so without this a single enormous block would still be shaped and laid out in full every
+frame regardless of scroll position, the dominant cost the original diagnosis measured (a taffy
+intrinsic-size pass over the whole unwrapped text, then the wrap-constrained pass again). The
+estimate comes from this block's own bounds *last frame* (`ListState::bounds_for_item`,
+`viewport_bounds`), snapshotted once per frame before `list`'s own layout pass borrows the same
+`ListState` (calling back into it from inside a `render_item` callback panics on the re-borrow) -
+the same one-frame-stale reliance `Editor::active_layout` already has, for the same reason.
+`render_window`'s `keep` (the caret's own segment/line, when given) always gets a real element
+too even if the estimate places it outside the window, so typing, clicking or a far jump always
+has something live to paint a caret into or scroll from. Hit testing, the caret and highlights
+all stay correct across a split: `TextTarget::Raw { base }`/`Rendered { visible_base, .. }`
+already carry whichever range's own start, and `Editor::marks`/`code_tokens` already clip to
+whatever range they are asked about - none of that depends on how many pieces one block is drawn
+in.
+
+`plain_chunk_len_capped` (shared by this windowing and `DocMode::Plain`'s own chunking) walks the
+rope's own chunk iterator once per call (one `O(log n)` descent) and scans forward through it
+with `str::find`, rather than the byte-offset `find_newline` helper's `rope.byte_slice(pos..)` -
+one `O(log n)` tree descent *per line*. For a block with many short real lines (a fenced code
+block or log-shaped prose, not the single-pathologically-long-line shape the forced cut defends
+against), the per-line version turned a 15 MiB, ~200,000-line scan into a single ~300 ms frame the
+first time a huge block like that became active - proportional to line count times tree depth,
+not to bytes scanned. `floor_char_boundary` (also `O(log n)`) now only runs when a forced cut is
+actually about to happen, not on every line.
+
+**IR eviction (`tachyon-doc`, `tachyon-editor`).** `Document::evict(keep)` replaces a clean,
+non-evicted, at-most-`EVICT_MAX_LEN` (256 KiB) block's `ir` with `BlockIr::default()` for every
+block outside `keep`; `kind`/`len`/`source_hash`/`defs`/`refs`/`footnotes`/`footnotes_seen` are
+left untouched, so `DefTable` and every staleness check keep working exactly as before (they only
+ever read those fields, never `ir`). `Document::ensure_ir(index)` re-derives a dropped block's
+`ir` alone, synchronously, by reparsing its own byte range against the current `DefTable` (ADR
+0005's "every block parses identically alone" invariant needs no look-behind or convergence for
+this). `Editor::render` calls `evict` every frame with `keep` set to the drawn range plus
+`EVICT_MARGIN_BLOCKS` (200) on each side, unioned with the active block, from `ListState`'s own
+bounds the previous frame - the same one-frame-stale reliance `render_window`'s estimate above
+already relies on, self-correcting since `render_block` calls `ensure_ir` the moment a block is
+actually drawn, evicted or not. This is what bounds a well-structured multi-megabyte document's
+resident memory to a small, fixed multiple of what is on screen instead of the whole file: a 15
+MiB Markdown file with no oversized blocks tiles into many small ones (162,834 for the measured
+one), and steady-state RSS after scrolling stays close to what it was right after loading, not
+growing with how much of the document has ever been visible.
+
+Two costs need bounding here, both found live rather than in a headless benchmark. First,
+`Document::evict` built its cheap-looking replacement as `(*block.parsed).clone()` with `ir`
+then overwritten - a full deep clone of `ir` (its `text` and five `Vec`s) immediately thrown
+away. Second, `Editor::render` calls `evict` unconditionally every frame: the first time a
+well-structured document's whole off-screen majority leaves `keep` at once - right after a fresh
+load, before any scrolling - is also the first time *dropping* all of it (the real `String`/`Vec`
+deallocations, not just building the cheap replacement) has ever run, and doing so for tens or
+hundreds of thousands of blocks in one synchronous call cost a single frame tens of milliseconds
+even once the wasted clone above was fixed. `Document::evict` now builds the replacement
+field-by-field (never cloning `ir`) and stops after `EVICT_BATCH_LIMIT` (4096) blocks per call;
+`Editor::render`'s unconditional per-frame call means the rest evicts over the next several
+frames instead of one, which only matters once, right after a large load, and costs nothing once
+converged (an `any()` scan bails before touching `Arc::make_mut` when nothing outside `keep` is
+left to evict).
+
+**Not done, and why.** Sharing `BlockIr::text` with the rope for verbatim regions (rather than a
+second owned copy) would remove more of the remaining "several copies of the same bytes" cost,
+but is a real API change to a pervasive, already-widely-consumed type (`BlockIr`/`ParsedBlock`)
+rather than an internal, contained one, and was left alone rather than risked in the same pass as
+the fixes above. It would need to become a `Cow`-like type borrowing the rope's own chunk storage
+for spans still marked verbatim, falling back to owned bytes wherever a span is not (escapes,
+entities, highlighted runs); every consumer in `tachyon-editor`'s rendering and hit-testing that
+currently indexes `&ir.text[range]` as a plain `&str` would need to go through an accessor that
+may or may not borrow the rope, and the source map merge above would need to track *why* a span
+stopped being contiguous with the rope's own layout, not just that it is verbatim.
+
+A separate, smaller cost remains open: typing into the active block of a document shaped like
+`fence-15mb.md` (one ~15 MiB fenced code block) or `log-15mb.md` (one ~15 MiB paragraph) shows
+occasional frames in the tens of milliseconds - `render_raw_segment` builds a fresh `StyledText`
+for the whole touched raw segment (up to `RAW_SPLIT_THRESHOLD`, 32 KiB) on every keystroke, and
+shaping that much monospace text is not free; a single-block document's own edit path
+(`Document::stale_block`) also re-derives pre-segmenter boundaries with a fresh copy-and-scan of
+the whole stale block on every keystroke when a giant block has no interior blank line to reuse.
+Both predate this phase (the same cost, worse, existed - unmeasurable, since the file never
+produced a frame at all - before these fixes) and are bounded by segment/chunk size rather than
+file size, so they are flagged in `docs/ROADMAP.md`'s Phase 9 for a follow-up rather than chased
+further here.
+
 ## Concurrency
 
 ```mermaid

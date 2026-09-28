@@ -522,3 +522,128 @@ fn find_all_is_smart_case_and_keeps_byte_offsets() {
     let many = Document::new(&"a".repeat(MAX_FIND_MATCHES + 5));
     assert_eq!(many.find_all("a").len(), MAX_FIND_MATCHES);
 }
+
+/// A fresh load bigger than several [`super::LOAD_CHUNK`]s, well-structured (a blank line every
+/// couple of lines), streams back in windows cut at pre-segmenter boundaries and matches a
+/// direct `md::parse_document` of the same text exactly - the ground truth `load_markdown` is
+/// meant to reproduce, not `Document::new` again (which would just call `load_markdown` too).
+#[test]
+fn a_large_well_structured_load_streams_and_matches_a_full_parse() {
+    let block = "## Heading\n\nA paragraph of ordinary prose to pad out the file.\n\n";
+    let text = block.repeat(LOAD_CHUNK * 3 / block.len() + 1);
+    assert!(text.len() > LOAD_CHUNK * 2, "test needs several load windows");
+    let doc = Document::new(&text);
+    assert!(!doc.is_dirty());
+    assert!(doc.blocks().iter().all(|b| !b.is_stale()));
+    let (want, _) = tachyon_md::parse_document(&text);
+    let got: Vec<&ParsedBlock> = doc.blocks().iter().map(Block::parsed).collect();
+    assert_eq!(got, want.iter().collect::<Vec<_>>());
+}
+
+/// A fresh load that is one enormous block with no blank line anywhere (the pathological shape:
+/// a huge fenced block, or - as here - one paragraph of soft-wrapped prose) has nowhere for
+/// [`super::LOAD_CHUNK`]-sized windows to cut safely. `load_markdown` must fall back to one
+/// direct parse of the whole thing rather than loop, and the result must still match a full
+/// parse exactly.
+#[test]
+fn a_pathological_no_blank_line_load_falls_back_to_one_direct_parse() {
+    let line = "Some prose that keeps going without a blank line anywhere in the file.\n";
+    let text = line.repeat(LOAD_CHUNK * 3 / line.len() + 1);
+    assert!(text.len() > LOAD_CHUNK * 2, "test needs to exceed the streaming margin");
+    let doc = Document::new(&text);
+    assert!(!doc.is_dirty());
+    assert!(doc.blocks().iter().all(|b| !b.is_stale()));
+    assert_eq!(doc.blocks().len(), 1, "no blank line anywhere collapses to one block");
+    let (want, _) = tachyon_md::parse_document(&text);
+    let got: Vec<&ParsedBlock> = doc.blocks().iter().map(Block::parsed).collect();
+    assert_eq!(got, want.iter().collect::<Vec<_>>());
+}
+
+/// A well-structured prefix, one pathological no-blank-line stretch in the middle, then a
+/// well-structured suffix again: `load_markdown` streams the prefix, falls back to one direct
+/// parse for the rest once it hits the pathological stretch (rather than looping forever
+/// re-widening a window that can never converge), and the result still matches a full parse -
+/// including the suffix, which the fallback's one remaining window covers too.
+#[test]
+fn a_pathological_stretch_after_a_normal_prefix_still_parses_correctly() {
+    let normal = "## Heading\n\nA short paragraph.\n\n".repeat(50);
+    let line = "No blank line in this stretch at all, just prose that keeps going.\n";
+    let pathological = line.repeat(LOAD_CHUNK * 3 / line.len() + 1);
+    let suffix = "\n## After\n\nMore ordinary text.\n\n";
+    let text = format!("{normal}{pathological}{suffix}");
+    let doc = Document::new(&text);
+    assert!(!doc.is_dirty());
+    assert!(doc.blocks().iter().all(|b| !b.is_stale()));
+    let (want, _) = tachyon_md::parse_document(&text);
+    let got: Vec<&ParsedBlock> = doc.blocks().iter().map(Block::parsed).collect();
+    assert_eq!(got, want.iter().collect::<Vec<_>>());
+}
+
+#[test]
+fn evicting_blocks_drops_ir_and_ensure_ir_restores_it_exactly() {
+    let text = "# A\n\npara one\n\npara two\n\npara three\n\n# B\n\nend\n";
+    let mut doc = Document::new(text);
+    assert!(!doc.is_dirty());
+    let before: Vec<ParsedBlock> = doc.blocks().iter().map(|b| b.parsed().clone()).collect();
+    assert!(before.len() > 1, "fixture sanity: several blocks to evict");
+
+    // Keep only block 0 - everything else is "far from the viewport".
+    doc.evict(0..1);
+    for (i, block) in doc.blocks().iter().enumerate() {
+        if i == 0 {
+            assert!(!block.is_ir_evicted(), "the kept block keeps its ir");
+            continue;
+        }
+        assert!(block.is_ir_evicted(), "block {i} outside keep should be evicted");
+        assert!(block.parsed().ir.lines.is_empty(), "evicted ir is empty");
+        // Kind, byte length, hash and whatever definitions need all survive untouched.
+        assert_eq!(block.parsed().kind, before[i].kind);
+        assert_eq!(block.parsed().len, before[i].len);
+        assert_eq!(block.parsed().source_hash, before[i].source_hash);
+        assert_eq!(block.parsed().defs, before[i].defs);
+        assert_eq!(block.parsed().refs, before[i].refs);
+        assert_eq!(block.parsed().footnotes, before[i].footnotes);
+    }
+
+    for i in 0..doc.blocks().len() {
+        doc.ensure_ir(i);
+    }
+    let after: Vec<ParsedBlock> = doc.blocks().iter().map(|b| b.parsed().clone()).collect();
+    assert_eq!(after, before, "restoring every evicted block reproduces the original parse");
+    assert!(doc.blocks().iter().all(|b| !b.is_ir_evicted()));
+}
+
+#[test]
+fn ensure_ir_re_resolves_a_forward_reference_correctly() {
+    let text = "See [ref] here.\n\nmiddle\n\n[ref]: https://example.com\n";
+    let mut doc = Document::new(text);
+    assert!(!doc.is_dirty());
+    let original_dest = doc.blocks()[0].parsed().ir.links[0].dest.clone();
+    assert_eq!(original_dest, "https://example.com");
+
+    // Evict the referencing block itself (keep only the definition's own block in view).
+    doc.evict(2..3);
+    assert!(doc.blocks()[0].is_ir_evicted());
+    doc.ensure_ir(0);
+    assert!(!doc.blocks()[0].is_ir_evicted());
+    assert_eq!(doc.blocks()[0].parsed().ir.links[0].dest, original_dest);
+}
+
+#[test]
+fn evict_leaves_stale_and_oversized_blocks_alone() {
+    let text = "intro\n\nbody\n";
+    let mut doc = Document::new(text);
+    doc.edit(0..0, "x").unwrap();
+    // Block 0 is now stale (pending reparse); evicting must not touch it.
+    doc.evict(1..1);
+    assert!(!doc.blocks()[0].is_ir_evicted(), "a stale block is never evicted");
+    assert!(doc.blocks()[0].is_stale());
+
+    let big = "y".repeat(EVICT_MAX_LEN + 1);
+    let mut doc = Document::new(&big);
+    doc.evict(1..1);
+    assert!(
+        !doc.blocks()[0].is_ir_evicted(),
+        "a block over EVICT_MAX_LEN is left resident, even outside keep"
+    );
+}

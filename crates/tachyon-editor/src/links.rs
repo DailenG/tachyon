@@ -2,7 +2,6 @@
 //! handler, links to Markdown and text files in Tachyon. Anything else (other schemes, other local
 //! files, which could be programs) is ignored.
 
-use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
 use gpui::{App, Context};
@@ -128,9 +127,10 @@ impl Editor {
     /// look it up in their parsed IR; plain-text blocks (and Markdown's own IR-less `Unparsed`
     /// placeholders) have none, so a bare URL there is found the same cheap way it is styled at
     /// render time (`render::render_plain_chunk`), scanning just that block's own text.
-    pub(crate) fn link_at(&self, offset: usize) -> Option<Cow<'_, str>> {
+    pub(crate) fn link_at(&mut self, offset: usize) -> Option<String> {
         let index = self.doc.block_at(offset)?;
         let range = self.doc.block_range(index);
+        self.doc.ensure_ir(index);
         let ir = &self.doc.blocks()[index].parsed().ir;
         if !ir.lines.is_empty() {
             let visible = ir.source_to_visible(offset.checked_sub(range.start)?);
@@ -138,13 +138,13 @@ impl Editor {
                 .links
                 .iter()
                 .find(|link| link.visible.contains(&visible))
-                .map(|link| link.dest.as_str())?;
-            return Some(Cow::Borrowed(dest));
+                .map(|link| link.dest.clone())?;
+            return Some(dest);
         }
         let local = offset.checked_sub(range.start)?;
         let text = self.doc.buffer().rope().byte_slice(range).to_string();
         let url = tachyon_md::bare_urls(&text).into_iter().find(|r| r.contains(&local))?;
-        Some(Cow::Owned(text[url].to_owned()))
+        Some(text[url].to_owned())
     }
 
     /// Follows the link at `offset`, if there is one. Returns whether it did.

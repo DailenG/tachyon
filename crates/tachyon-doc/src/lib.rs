@@ -47,6 +47,44 @@ pub const UNPARSED_EDGE_CHUNK: usize = 1024;
 /// near the viewport is formatted within a frame or two of a large paste.
 pub const PARSE_CHUNK: usize = 128 * 1024;
 
+/// Window size [`Document::load_markdown`] streams a fresh Markdown load back in. Larger than
+/// [`PARSE_CHUNK`]: nothing needs to reach the UI a chunk at a time here (the document is not
+/// shown until the whole load finishes), so a bigger window trades a little of the memory bound
+/// for a lot less fixed per-window overhead (definitions bookkeeping, splicing, rebasing) -
+/// `cargo bench -p tachyon-doc`'s "full parse" numbers are the budget this is tuned against.
+/// Still small next to a pathological file: a 200 MB single-block file peaks around this many
+/// bytes of transient buffer, not 200 MB.
+const LOAD_CHUNK: usize = 4 * 1024 * 1024;
+
+/// Extra bytes past [`LOAD_CHUNK`] [`Document::load_markdown`] scans for a pre-segmenter
+/// boundary (`md::presegment`: a cut after a blank line, outside fenced code - the same
+/// fence-aware scan a large paste already uses) before giving up on that placeholder and
+/// treating the rest of the text as one pathological block instead. Ordinary Markdown has a
+/// blank line every few lines at most, so this is found almost immediately; only a file that
+/// tiles into one enormous block (a huge fenced block, or a long run with no blank line at all)
+/// ever reads this far without finding one.
+const LOAD_SCAN_MARGIN: usize = 64 * 1024;
+
+/// [`Document::evict`] leaves a block's `ir` alone above this size: re-deriving it again once
+/// the block scrolls back into view (`Document::ensure_ir`, on the UI thread, synchronously)
+/// must never risk a frame budget on its own. `cargo bench -p tachyon-doc`'s full-parse rate
+/// (~20 ms/MiB) bounds this comfortably under a frame at this size. The common case - one giant
+/// block *is* the whole document - already needs no eviction (it is always the block holding
+/// the caret, so always kept); this only excludes the rarer shape of a few large blocks
+/// scattered through an otherwise well-structured file, where dropping their `ir` would buy
+/// little next to what the file's many small blocks' `ir` already costs.
+pub const EVICT_MAX_LEN: usize = 256 * 1024;
+
+/// [`Document::evict`] drops at most this many blocks' `ir` per call: dropping an evicted
+/// block's *old* `ir` (a real `String` and several `Vec`s, each its own free) is the expensive
+/// part, not building the cheap replacement, so evicting everything outside `keep` in one call -
+/// tens or hundreds of thousands of blocks, the first time a well-structured multi-megabyte
+/// document's whole off-screen majority leaves `keep` at once, right after a fresh load - cost a
+/// single frame tens of milliseconds even with a cheap replacement. `Editor::render` calls
+/// `evict` every frame regardless, so capping one call's work just spreads the same total drop
+/// cost over the next several frames instead of paying it all in the one right after load.
+const EVICT_BATCH_LIMIT: usize = 4096;
+
 /// [`Document::find_all`] stops after this many matches.
 pub const MAX_FIND_MATCHES: usize = 10_000;
 
@@ -146,6 +184,11 @@ pub struct Block {
     len: usize,
     parsed: Arc<ParsedBlock>,
     stale: bool,
+    /// `parsed.ir` was replaced with an empty placeholder because this block was far from the
+    /// viewport (see [`Document::evict`]); `parsed.kind`/`len`/`source_hash`/`defs`/`refs`/
+    /// `footnotes`/`footnotes_seen` are still current and correct - only the bulk rendered form
+    /// is gone. [`Document::ensure_ir`] restores it on demand.
+    ir_evicted: bool,
 }
 
 impl Block {
@@ -180,6 +223,12 @@ impl Block {
     /// The source changed since the last parse; render it raw.
     pub fn is_stale(&self) -> bool {
         self.stale
+    }
+
+    /// Whether [`Document::evict`] replaced this block's `ir` with an empty placeholder;
+    /// [`Document::ensure_ir`] restores it before anything reads `parsed().ir`.
+    pub fn is_ir_evicted(&self) -> bool {
+        self.ir_evicted
     }
 
     fn matches(&self, parsed: &ParsedBlock) -> bool {
@@ -269,23 +318,103 @@ impl Document {
             next_job: 0,
             mode,
         };
-        let blocks: Vec<Block> = match mode {
-            DocMode::Markdown => {
-                let (parsed, defs) = md::parse_document(&doc.buffer.text());
-                doc.defs = Arc::new(defs);
-                parsed.into_iter().map(|p| doc.new_block(p, false)).collect()
-            }
+        match mode {
+            DocMode::Markdown => doc.load_markdown(),
             DocMode::Plain => {
                 let len = doc.buffer.len();
-                plain_chunk_lens(doc.buffer.rope(), 0..len)
+                let blocks = plain_chunk_lens(doc.buffer.rope(), 0..len)
                     .into_iter()
                     .map(|len| doc.new_block(md::plain(len), false))
-                    .collect()
+                    .collect();
+                doc.blocks = Arc::new(blocks);
+                doc.recompute_starts();
             }
-        };
-        doc.blocks = Arc::new(blocks);
-        doc.recompute_starts();
+        }
         doc
+    }
+
+    /// Parses a fresh Markdown load the same way a large paste's dirty range is settled (ADR
+    /// 0005), instead of one `md::parse_document` call over the whole text: tile the buffer into
+    /// placeholder blocks and mark it all dirty, then apply [`LOAD_CHUNK`]-sized reparse windows
+    /// in order until nothing is left dirty. Each window copies only its own bytes out of the
+    /// rope (`ParseJob::run`), never the whole file, so a fresh open's peak extra memory is
+    /// bounded by the window size, not the file size.
+    ///
+    /// Placeholder boundaries are [`md::presegment`] cuts (a blank line outside fenced code),
+    /// not a blind byte count: `parse_job_near`'s look-behind (`follows_blank_line`) only trusts
+    /// a boundary like that on its first check, so a window never needs to walk back into the
+    /// whole of the previous one. A blind byte-count cut can land inside an open fence or
+    /// mid-paragraph, which look-behind cannot trust; it then keeps walking back to the start of
+    /// the file, so *every* later window re-parses everything parsed so far - quadratic in the
+    /// number of windows, and worse than the single copy this was meant to avoid. A file that
+    /// tiles into one enormous CommonMark block (a huge fenced code block, or one paragraph with
+    /// no blank lines) has no such boundary anywhere: once a placeholder's own scan
+    /// ([`LOAD_SCAN_MARGIN`] past [`LOAD_CHUNK`]) finds none, the rest of the text becomes one
+    /// final placeholder and is parsed directly in one window (`in_tail`, below) rather than
+    /// streamed - the same single copy that shape always needed, without paying for doomed
+    /// windows that would otherwise discover it one chunk at a time. Forward references (a
+    /// definition used before it appears) resolve correctly through the same deferred mechanism
+    /// a self-referencing paste already relies on: blocks parsed before the whole file's
+    /// definitions are known are re-marked dirty and reparsed once `Document::apply`'s deferred
+    /// refresh (triggered when nothing else is dirty) finds they rendered against a stale table,
+    /// never by re-scanning the whole text up front.
+    fn load_markdown(&mut self) {
+        let len = self.buffer.len();
+        if len == 0 {
+            self.blocks = Arc::new(Vec::new());
+            self.recompute_starts();
+            return;
+        }
+        let rope = self.buffer.rope().clone();
+        let mut lens = Vec::new();
+        let mut at = 0usize;
+        let mut pathological = false;
+        while len - at > LOAD_CHUNK {
+            let mark = at + LOAD_CHUNK;
+            let scan_limit = floor_char_boundary(&rope, (mark + LOAD_SCAN_MARGIN).min(len));
+            // Zero-allocation pre-check: a safe cut needs a blank line at or past `mark`: if
+            // there is none at all in range, there is certainly no fence-aware presegment
+            // boundary either, so skip that copy entirely - the dominant saving for a file with
+            // no blank line anywhere (a huge fenced block, or a long run of soft-wrapped prose).
+            if !has_blank_line(&rope, mark, scan_limit) {
+                pathological = true;
+                break;
+            }
+            let slice = rope.byte_slice(at..scan_limit).to_string();
+            match md::presegment(&slice).into_iter().find(|&b| b >= LOAD_CHUNK) {
+                Some(cut) => {
+                    lens.push(cut);
+                    at += cut;
+                }
+                None => {
+                    pathological = true;
+                    break;
+                }
+            }
+        }
+        lens.push(len - at);
+        let tail_start = at;
+        let placeholders: Vec<Block> = lens
+            .into_iter()
+            .map(|chunk_len| self.new_block(md::unparsed(chunk_len), true))
+            .collect();
+        self.blocks = Arc::new(placeholders);
+        self.recompute_starts();
+        self.mark_dirty(0..len);
+        let mut jobs = 0usize;
+        loop {
+            let in_tail = pathological && self.dirty.first().is_some_and(|d| d.start >= tail_start);
+            let max_window = if in_tail { usize::MAX } else { LOAD_CHUNK };
+            let Some(job) = self.parse_job_near(0, max_window) else { break };
+            jobs += 1;
+            debug_assert!(
+                jobs <= 16 * self.blocks.len() + 1024,
+                "initial load is not converging; dirty = {:?}",
+                self.dirty
+            );
+            let result = job.run();
+            self.apply(result);
+        }
     }
 
     pub fn mode(&self) -> DocMode {
@@ -348,6 +477,88 @@ impl Document {
     /// Ranges still awaiting a reparse.
     pub fn dirty_ranges(&self) -> &[Range<usize>] {
         &self.dirty
+    }
+
+    /// Drops `ir` (replacing it with an empty placeholder) for every block whose index is
+    /// outside `keep` (typically the visible blocks plus a margin, unioned with the caret's own
+    /// block), is not stale, not already evicted, and at most [`EVICT_MAX_LEN`] bytes.
+    /// `kind`/`len`/`source_hash`/`defs`/`refs`/`footnotes`/`footnotes_seen` stay exactly as
+    /// parsed - the [`DefTable`] and every staleness check only ever read those, never `ir`, so
+    /// definitions keep resolving document-wide exactly as before. [`Document::ensure_ir`]
+    /// re-derives the dropped `ir` alone, when the block is needed again. A no-op in
+    /// [`DocMode::Plain`], which has no IR to drop in the first place.
+    pub fn evict(&mut self, keep: Range<usize>) {
+        if self.mode == DocMode::Plain || self.blocks.is_empty() {
+            return;
+        }
+        let keep = keep.start.min(self.blocks.len())..keep.end.min(self.blocks.len());
+        let evictable = |block: &Block| {
+            !block.stale
+                && !block.ir_evicted
+                && block.len <= EVICT_MAX_LEN
+                && !block.parsed.ir.lines.is_empty()
+        };
+        if !(0..self.blocks.len()).any(|i| !keep.contains(&i) && evictable(&self.blocks[i])) {
+            return;
+        }
+        let blocks = Arc::make_mut(&mut self.blocks);
+        let mut evicted_count = 0usize;
+        for (i, block) in blocks.iter_mut().enumerate() {
+            if evicted_count >= EVICT_BATCH_LIMIT {
+                break;
+            }
+            if keep.contains(&i) || !evictable(block) {
+                continue;
+            }
+            // Built field-by-field instead of `(*block.parsed).clone()` then overwriting `ir`:
+            // that would deep-clone `ir` (its `text`, and every line/run/map/link/leaf `Vec`)
+            // only to immediately throw the clone away. A block's own parse never needs that -
+            // this is exactly the "several thousand blocks evicted in one frame, right after a
+            // large load" case, where the wasted clones alone cost tens of milliseconds.
+            let p = &block.parsed;
+            let evicted = ParsedBlock {
+                kind: p.kind.clone(),
+                len: p.len,
+                content: p.content.clone(),
+                ir: md::BlockIr::default(),
+                defs: p.defs.clone(),
+                refs: p.refs.clone(),
+                footnotes: p.footnotes.clone(),
+                footnotes_seen: p.footnotes_seen,
+                source_hash: p.source_hash,
+            };
+            block.parsed = Arc::new(evicted);
+            block.ir_evicted = true;
+            evicted_count += 1;
+        }
+    }
+
+    /// Restores `ir` for block `index` if [`Document::evict`] dropped it: a plain re-derivation
+    /// of its own bytes against the current [`DefTable`], touching no other block - every block
+    /// parses identically alone or in context (ADR 0005), which is exactly why this is safe
+    /// without any of the look-behind/convergence a real edit needs. Nothing about a merely
+    /// evicted block's source or its place in the document changed while it was evicted: a real
+    /// edit instead marks it (and whatever it affects) stale, which the normal reparse-job path
+    /// already handles - this only ever runs for a *clean* block, so its preserved `refs`/
+    /// `footnotes_seen` are still exactly what the current [`DefTable`] would produce. A no-op
+    /// if the block is not evicted (including every block in [`DocMode::Plain`]).
+    pub fn ensure_ir(&mut self, index: usize) {
+        let Some(block) = self.blocks.get(index) else { return };
+        if !block.ir_evicted {
+            return;
+        }
+        let range = self.block_range(index);
+        let src = self.buffer.rope().byte_slice(range).to_string();
+        let mut fresh = md::parse(&src, &self.defs);
+        debug_assert_eq!(
+            fresh.len(),
+            1,
+            "an evicted block's own bytes must parse alone as exactly one block (ADR 0005)"
+        );
+        let Some(parsed) = fresh.pop() else { return };
+        let blocks = Arc::make_mut(&mut self.blocks);
+        blocks[index].parsed = Arc::new(parsed);
+        blocks[index].ir_evicted = false;
     }
 
     /// Byte ranges of `query` in the text, in order, not overlapping, at most
@@ -590,7 +801,7 @@ impl Document {
             let len = parsed.len;
             offset += len;
             let id = reuse.unwrap_or_else(|| self.fresh_id());
-            new_blocks.push(Block { id, len, parsed, stale: false });
+            new_blocks.push(Block { id, len, parsed, stale: false, ir_evicted: false });
         }
         // The table only changes if the window's definitions did.
         let defs_changed = !same_definitions(
@@ -676,7 +887,7 @@ impl Document {
 
     fn new_block(&mut self, parsed: ParsedBlock, stale: bool) -> Block {
         let id = self.fresh_id();
-        Block { id, len: parsed.len, parsed: Arc::new(parsed), stale }
+        Block { id, len: parsed.len, parsed: Arc::new(parsed), stale, ir_evicted: false }
     }
 
     fn recompute_starts(&mut self) {
@@ -1263,6 +1474,21 @@ fn find_newline(rope: &Rope, from: usize, before: usize) -> Option<usize> {
     None
 }
 
+/// Whether any line in `[from, before)` is blank (all whitespace): walks the rope's own chunks
+/// via [`find_newline`], never copying. `Document::load_markdown` uses this as a cheap
+/// pre-check before a presegment scan's copy - a safe cut needs a blank line, so if there is
+/// none at all in range there is certainly no presegment boundary either.
+fn has_blank_line(rope: &Rope, from: usize, before: usize) -> bool {
+    let mut pos = from;
+    while let Some(nl) = find_newline(rope, pos, before) {
+        if rope.byte_slice(pos..nl).chars().all(char::is_whitespace) {
+            return true;
+        }
+        pos = nl + 1;
+    }
+    false
+}
+
 /// The nearest char boundary at or before `byte_idx` (ropey panics on a slice or byte read that
 /// splits a character). UTF-8 continuation bytes have their top two bits `10`.
 fn floor_char_boundary(rope: &Rope, mut byte_idx: usize) -> usize {
@@ -1280,41 +1506,82 @@ fn floor_char_boundary(rope: &Rope, mut byte_idx: usize) -> usize {
 /// source line) that keeps a single pathologically long line from ever making the virtualized
 /// list lay out or shape more than a bounded amount of text. Scans at most
 /// `min(PLAIN_CHUNK_BYTES, cap - start)` bytes, never the rest of the document, and never copies
-/// `rope`'s text.
+/// `rope`'s text. `cap` is the whole document for most callers; `Editor::render_raw`/
+/// `render_rendered` also call [`plain_chunk_lens`] with `cap` set to one Markdown block's own
+/// end, to bound how much of one oversized block is laid out at once without reading into the
+/// next block's text.
 ///
 /// `cap` needs no precondition (unlike a plain byte offset picked at random, it is always itself
 /// a valid chunk boundary in the caller's own terms: the end of the document, or the start/end of
 /// a block the caller is not touching) - this only ever *shrinks* the chunk that would otherwise
 /// be returned, cutting at `cap` instead of the usual stopping point, and `cap` is exactly as
 /// valid a place to cut as whatever `cap` itself bounds.
+/// Unlike the byte-offset-based `find_newline`, this walks the rope's own chunk iterator once
+/// (`rope.byte_slice(start..cap).chunks()`, one `O(log n)` descent total) and advances through it
+/// sequentially, checking each chunk's own bytes with `str::find` instead of re-descending the
+/// rope tree once per line: a naive per-line `rope.byte_slice(pos..force_at)` (as `find_newline`
+/// does) costs one tree traversal *per line*, which for a file with many short real lines (not
+/// the pathologically-long-single-line shape this forced cut defends against) turned a 15 MiB,
+/// ~200,000-line scan into a 300 ms frame - proportional to line count times tree depth, not to
+/// bytes scanned. `floor_char_boundary` (also `O(log n)`) only runs when a forced cut is actually
+/// about to happen (a line already past `PLAIN_FORCED_CUT_BYTES` with no `\n`), not per line.
 fn plain_chunk_len_capped(rope: &Rope, start: usize, cap: usize) -> usize {
     if start >= cap {
         return 0;
     }
-    let mut pos = start;
     let mut lines = 0usize;
-    loop {
-        let force_at = floor_char_boundary(rope, (pos + PLAIN_FORCED_CUT_BYTES).min(cap));
-        match find_newline(rope, pos, force_at) {
-            Some(nl) => {
-                lines += 1;
-                let len_so_far = nl + 1 - start;
-                if len_so_far >= PLAIN_CHUNK_BYTES || lines >= PLAIN_CHUNK_LINES || nl + 1 >= cap {
-                    return len_so_far;
-                }
-                pos = nl + 1;
+    let mut line_start = start;
+    let mut abs = start;
+    for piece in rope.byte_slice(start..cap).chunks() {
+        let mut offset = 0usize;
+        while offset < piece.len() {
+            let force_at = (line_start + PLAIN_FORCED_CUT_BYTES).min(cap);
+            if abs >= force_at {
+                return floor_char_boundary(rope, force_at) - start;
             }
-            None => return force_at - start,
+            match piece[offset..].find('\n') {
+                Some(rel) => {
+                    let nl = abs + rel;
+                    if nl >= force_at {
+                        return floor_char_boundary(rope, force_at) - start;
+                    }
+                    lines += 1;
+                    let len_so_far = nl + 1 - start;
+                    if len_so_far >= PLAIN_CHUNK_BYTES
+                        || lines >= PLAIN_CHUNK_LINES
+                        || nl + 1 >= cap
+                    {
+                        return len_so_far;
+                    }
+                    offset += rel + 1;
+                    abs = nl + 1;
+                    line_start = abs;
+                }
+                None => {
+                    abs += piece.len() - offset;
+                    offset = piece.len();
+                    if abs >= force_at {
+                        return floor_char_boundary(rope, force_at) - start;
+                    }
+                }
+            }
         }
     }
+    // Reached `cap` with the last line still unterminated: force a cut only if it is itself
+    // already past the threshold, exactly like the loop above; otherwise the whole remainder (at
+    // most `cap - start`, itself always a valid cut point) is one chunk.
+    let force_at = (line_start + PLAIN_FORCED_CUT_BYTES).min(cap);
+    if abs >= force_at { floor_char_boundary(rope, force_at) - start } else { cap - start }
 }
 
 /// Chunk lengths tiling `range` exactly, packed greedily to the maximum:
 /// [`plain_chunk_len_capped`] repeatedly from `range.start`, capped at `range.end`. Used for a
 /// fresh span with nothing past its own end to answer to - the whole document at load, or new
 /// content mid-document before [`Document::on_edit_plain`] decides how much of what surrounds it
-/// to fold in - never for re-chunking an existing span in place (see [`split_evenly`]).
-fn plain_chunk_lens(rope: &Rope, range: Range<usize>) -> Vec<usize> {
+/// to fold in - never for re-chunking an existing span in place (see [`split_evenly`]). Also used
+/// by `tachyon-editor` to bound how much of one oversized Markdown block is laid out at once
+/// (`range` is that block's own byte range, `plain_chunk_len_capped`'s `cap` its end), hence `pub`.
+pub fn plain_chunk_lens(rope: &Rope, range: Range<usize>) -> Vec<usize> {
     let mut lens = Vec::new();
     let mut at = range.start;
     while at < range.end {

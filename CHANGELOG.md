@@ -8,6 +8,19 @@ All notable user-visible changes are recorded here. The format follows
 
 ### Added
 
+- Markdown mode no longer costs memory and frame time proportional to a whole oversized block:
+  a fresh open streams the parse back in 4 MiB windows instead of copying the whole file into one
+  `String` first; a run of verbatim text split across parser events (a long fenced code block,
+  one source-map span per line before) now merges into one span per unbroken run instead of one
+  per line; the active block's raw source, or a rendered block's line list, above a size
+  threshold is drawn as a window of segments/lines near the viewport instead of the whole block,
+  with the rest reserved as plain height so scrolling and the scrollbar stay correct; and an
+  off-screen block's parsed content is dropped and re-derived on demand when it scrolls back into
+  view, so a well-structured multi-megabyte document's memory stays close to what is on screen
+  instead of growing with everything that was ever visible. A 15 MiB Markdown file shaped like a
+  giant fenced code block, one no-blank-line paragraph, or one unwrapped line - which used to risk
+  gigabytes of memory and multi-second, unresponsive frames on open - now peaks at 300-480 MB with
+  no frame over 16.7 ms opening it.
 - Plain-text mode: any file that is not Markdown by extension (`.md`, `.markdown`, `.mdown`,
   `.mkd`, `.mkdn`, `.mdx`; anything else) opens as literal text, syntax hidden nowhere - `#`, `*`
   and the rest stay exactly what you typed. `Ctrl+Shift+M` toggles the current document between
