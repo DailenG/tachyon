@@ -233,12 +233,25 @@ accounts only the project owner has.
 - [x] Windows: icon and version information in the executable (so Explorer, Task Manager and the
       pinned taskbar button show them): `build.rs` writes a `.res` file from the embedded
       `.ico` and the crate version, linked directly (checked on Windows: `VersionInfo` reads
-      back Tachyon 0.1.0, and the executable's associated icon is the comet)
+      back Tachyon 0.1.0, and the executable's associated icon is the brand mark)
 - [x] Linux: a `.desktop` entry and icon, installed per user with `tachyon --desktop-entry on`
       (launcher, "Open with" for Markdown and text; `desktop-file-validate` passes), removed with
       `off`
-- [ ] *(owner)* Code signing for Windows and macOS, and where releases are published (GitHub
-      Releases, winget, a package repository)
+- [x] Publishing: pushing a `vX.Y.Z` tag runs [`.github/workflows/release.yml`](../.github/workflows/release.yml),
+      which verifies the tag against the workspace version, builds `cargo xtask dist` on Windows,
+      Linux and macOS, and creates a GitHub Release with the three archives, a `SHA256SUMS.txt`,
+      and notes taken from the matching `CHANGELOG.md` section. `workflow_dispatch` runs the same
+      build as a dry run (artifacts uploaded, no release)
+- [x] Windows code signing: the release workflow's `windows-latest` leg signs `tachyon.exe` with
+      Azure Trusted Signing (`Azure/trusted-signing-action`, pinned to a commit SHA) before
+      `cargo xtask dist --no-build` packs it, then checks the result with
+      `Get-AuthenticodeSignature` (`.github/scripts/verify-signature.ps1`). Needs the
+      `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`,
+      `AZURE_TRUSTED_SIGNING_ACCOUNT`, `AZURE_TRUSTED_SIGNING_PROFILE` and
+      `AZURE_TRUSTED_SIGNING_ENDPOINT` repository secrets; without them signing is skipped with a
+      workflow warning instead of failing (forks, or a dry run with no secrets configured)
+- [ ] *(owner)* macOS code signing and notarization, and where releases beyond GitHub are
+      published (winget, a package repository)
 
 **Exit:** a fresh machine runs Tachyon from the archive with nothing else installed; startup
 budgets unchanged.

@@ -23,10 +23,11 @@ Tasks:
       the second process until the resident instance has drawn the new window.
       --gap-ms waits between those launches (default 500, like a person; the
       resident instance prepares its next window in between).
-  dist
+  dist [--no-build]
       Builds the release binary and packs it with the README, changelog and
       licenses into target/dist/tachyon-<version>-<arch>-<os>.zip on Windows,
-      .tar.gz elsewhere.
+      .tar.gz elsewhere. --no-build skips the build and packs the binary
+      already at target/release (used after signing it in place).
   icons
       Regenerates the application's icons from assets/brand: tachyon.ico (16-64 px,
       32-bit DIB images; the small icon art up to 32 px) and the launcher SVG, both in
@@ -42,7 +43,7 @@ fn main() -> ExitCode {
     let result = match args.next().as_deref() {
         Some("ci") => ci(args.collect()),
         Some("bench-startup") => bench_startup(args.collect()),
-        Some("dist") => dist(),
+        Some("dist") => dist(args.collect()),
         Some("icons") => icons(),
         _ => {
             eprint!("{USAGE}");
@@ -138,8 +139,19 @@ fn parse_bench_options(args: Vec<String>) -> Result<BenchOptions, String> {
 /// Files shipped next to the binary in a release archive.
 const DIST_FILES: [&str; 4] = ["README.md", "CHANGELOG.md", "LICENSE-MIT", "LICENSE-APACHE"];
 
-fn dist() -> Result<ExitCode, String> {
-    run_cargo(&["build", "--release", "--locked", "--package", "tachyon"])?;
+/// `--no-build` packs whatever is already at `target/release`, so CI can sign the binary (Windows
+/// code signing needs the plain executable, not an archive) between the build and the pack step.
+fn dist(args: Vec<String>) -> Result<ExitCode, String> {
+    let mut no_build = false;
+    for arg in args {
+        match arg.as_str() {
+            "--no-build" => no_build = true,
+            other => return Err(format!("dist: unknown argument {other}")),
+        }
+    }
+    if !no_build {
+        run_cargo(&["build", "--release", "--locked", "--package", "tachyon"])?;
+    }
     let root = workspace_root();
     let version = workspace_version(&root)?;
     let name = format!("tachyon-{version}-{}-{}", std::env::consts::ARCH, std::env::consts::OS);

@@ -92,4 +92,13 @@ marked, never deleted.
 
 Versions follow SemVer, starting at `0.x` while the editor is incomplete. A release moves the
 **Unreleased** changelog section under a version heading, bumps `version` in the workspace
-`Cargo.toml`, and tags `vX.Y.Z` on `main`.
+`Cargo.toml`, and tags `vX.Y.Z` on `main`. Pushing that tag runs
+[`.github/workflows/release.yml`](.github/workflows/release.yml), which builds `cargo xtask dist`
+on Windows, Linux and macOS and publishes a GitHub Release with the three archives, a
+`SHA256SUMS.txt`, and notes taken from the matching `CHANGELOG.md` section; the tag must match the
+workspace version or the workflow fails before building. `workflow_dispatch` runs the same build
+as a dry run (artifacts uploaded, no release), useful for checking the packaging steps before
+cutting a tag. The Windows build is signed with Azure Trusted Signing, which needs the
+`AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_TRUSTED_SIGNING_ACCOUNT`,
+`AZURE_TRUSTED_SIGNING_PROFILE` and `AZURE_TRUSTED_SIGNING_ENDPOINT` repository secrets; without
+them the workflow warns and ships an unsigned `tachyon.exe` instead of failing.

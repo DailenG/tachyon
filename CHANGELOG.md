@@ -16,6 +16,12 @@ All notable user-visible changes are recorded here. The format follows
   with" menus, with its icon, or removes it.
 - `cargo xtask dist` packs a release archive: the binary with the README, changelog and licenses
   (`.zip` on Windows, `.tar.gz` elsewhere).
+- Pushing a `vX.Y.Z` tag runs `.github/workflows/release.yml`: it checks the tag against the
+  workspace version, builds `cargo xtask dist` on Windows, Linux and macOS, signs `tachyon.exe`
+  with Azure Trusted Signing before packing it, and publishes a GitHub Release with the three
+  archives, a `SHA256SUMS.txt`, and notes from the matching changelog section. `workflow_dispatch`
+  runs the same build as a dry run that uploads the archives as workflow artifacts without
+  creating a release; signing is skipped with a warning when the Azure secrets are not configured.
 - Local images are shown in rendered text (paths relative to the document, absolute or `file:`);
   remote images still show their alt text.
 - Settings (`Ctrl+,` opens `settings.toml`): theme (system, dark or light), zoom of new windows,

@@ -1,0 +1,149 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: short
+
+jobs:
+  # Runs only for an actual tag push, so a mismatched tag fails before any platform builds.
+  check-version:
+    name: Check tag matches version
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Verify the tag matches the workspace version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version=$(awk '
+            /^\[workspace\.package\]/ { f = 1; next }
+            /^\[/ { f = 0 }
+            f && /^version = / { gsub(/version = "|"/, ""); print; exit }
+          ' Cargo.toml)
+          if [ "$tag" != "$version" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match the workspace version ($version)" >&2
+            exit 1
+          fi
+          echo "Tag $GITHUB_REF_NAME matches the workspace version"
+
+  # workflow_dispatch skips check-version; build still runs so a dry run can upload artifacts.
+  build:
+    name: Build (${{ matrix.os }})
+    needs: check-version
+    if: always() && (needs.check-version.result == 'success' || needs.check-version.result == 'skipped')
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install GPUI build dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: >
+          sudo apt-get update && sudo apt-get install -y
+          libxkbcommon-x11-dev libwayland-dev libxcb1-dev libx11-xcb-dev
+          libfontconfig-dev libfreetype-dev libvulkan-dev libzstd-dev
+      - name: Install toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked --package tachyon
+      - name: Check Azure Trusted Signing secrets
+        id: signing
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          if [ -n "${{ secrets.AZURE_CLIENT_ID }}" ] && [ -n "${{ secrets.AZURE_TENANT_ID }}" ] && \
+             [ -n "${{ secrets.AZURE_CLIENT_SECRET }}" ] && [ -n "${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}" ] && \
+             [ -n "${{ secrets.AZURE_TRUSTED_SIGNING_PROFILE }}" ] && [ -n "${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Azure Trusted Signing secrets are not set; tachyon.exe will ship unsigned."
+          fi
+      # Signs target/release/tachyon.exe in place; the archive is built from the signed binary below.
+      - name: Sign tachyon.exe (Azure Trusted Signing)
+        if: matrix.os == 'windows-latest' && steps.signing.outputs.available == 'true'
+        uses: Azure/trusted-signing-action@208f8af4bf26cf2af8597424e3cb5582801523ba # v2.0.0
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.AZURE_TRUSTED_SIGNING_PROFILE }}
+          files-folder: ${{ github.workspace }}/target/release
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+      - name: Verify Authenticode signature
+        if: matrix.os == 'windows-latest' && steps.signing.outputs.available == 'true'
+        shell: bash
+        run: pwsh -File .github/scripts/verify-signature.ps1 -Path target/release/tachyon.exe
+      - run: cargo xtask dist --no-build
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist-${{ matrix.os }}
+          path: |
+            target/dist/tachyon-*.zip
+            target/dist/tachyon-*.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  # Skipped on workflow_dispatch: that path is the dry run (artifacts only, no release).
+  release:
+    name: Publish release
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with:
+          path: dist
+      - name: Collect archives and checksum them
+        run: |
+          mkdir -p release
+          find dist -type f \( -name 'tachyon-*.zip' -o -name 'tachyon-*.tar.gz' \) -exec cp {} release/ \;
+          cd release
+          sha256sum -- * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v ver="$version" '
+            /^## \[/ {
+              if (found) exit
+              if ($0 ~ "^## \\[" ver "\\]") { found = 1 } else { found = 0 }
+              next
+            }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "CHANGELOG.md has no [$version] section" >&2
+            exit 1
+          fi
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" release/* \
+            --verify-tag \
+            --title "Tachyon $GITHUB_REF_NAME" \
+            --notes-file release-notes.md
