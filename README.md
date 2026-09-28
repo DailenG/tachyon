@@ -17,13 +17,13 @@ start as fast as a scratchpad and edit like Typora: one pane, inline WYSIWYG, no
 - **Website:** <https://daileng.github.io/tachyon/>, published from `site/` by the Pages
   workflow.
 
-> **Status:** early, but the core holds its budgets. Block-swap editing, incremental parsing,
-> everyday editing (find/replace, themes, zoom, links), writing comfort (lists, code
-> highlighting, hot exit, Copy as HTML) and files/settings are done (Phases 1-6). Distribution,
-> large-file stability and Markdown-mode memory efficiency (Phases 7-9) have shipped their
-> user-facing work; what remains is owner-only (macOS signing and notarization) or a documented
-> measurement follow-up - see [ROADMAP](docs/ROADMAP.md). No release has been published yet:
-> [building from source](#building) is the current way to run Tachyon.
+> **Status:** 1.0. Block-swap editing, incremental parsing, everyday editing (find/replace,
+> themes, zoom, links, the command palette), writing comfort (lists, code highlighting, hot exit,
+> Copy as HTML), files and settings, distribution, large-file stability and Markdown-mode memory
+> efficiency are done (Phases 1-9), each held to its measured budget. What remains is owner-only
+> (macOS signing and notarization) or a documented measurement follow-up - see
+> [ROADMAP](docs/ROADMAP.md). Download it from the
+> [latest release](https://github.com/DailenG/tachyon/releases/latest).
 
 ## Highlights
 
@@ -89,10 +89,6 @@ Budgets are requirements, not goals: a change that regresses one needs a recorde
 
 ## Install
 
-No release has been published yet: [building from source](#building) is the current way to run
-Tachyon. The instructions below describe what each GitHub Release will contain once the first
-one ships.
-
 Prebuilt archives for Windows, Linux and macOS are attached to each
 [release](https://github.com/DailenG/tachyon/releases/latest): a `.zip` on Windows, a `.tar.gz`
 elsewhere, plus a `SHA256SUMS.txt` to verify the download. Extract it and run `tachyon`
@@ -107,17 +103,18 @@ to install. This registers Tachyon as an MSIX package (also signed with Azure Tr
 that checks for an update every time it launches and applies it in the background; a resident
 Tachyon (the default) picks up the update the next time it fully quits (tray icon → "Quit
 Tachyon", or `tachyon --quit`) or at the next sign-in. `tachyon` also works from any terminal, and
-opening a `.md` or `.markdown` file offers Tachyon in "Open with". Launches of a packaged app go
-through Windows' package activation, which adds about 35-40 ms per launch on the reference
-machine (p50 about 59 ms instead of about 21 ms), so the `.zip` above is the faster choice if you
-would rather manage updates yourself. Uninstalling the package does not remove the autostart
-entry if you turned it on; run `tachyon --autostart off` first.
+opening a `.md` or `.markdown` file, or a `.txt`, `.text` or `.log` file, offers Tachyon in "Open
+with". Launches of a packaged app go through Windows' package activation, which adds about
+35-40 ms per launch on the reference machine (p50 about 59 ms instead of about 21 ms), so the
+`.zip` above is the faster choice if you would rather manage updates yourself. Uninstalling the
+package does not remove the autostart entry if you turned it on; run `tachyon --autostart off`
+first.
 
 **Nightly builds:** every merge to `main` publishes a signed MSIX to a rolling
 [`nightly`](https://github.com/DailenG/tachyon/releases/tag/nightly) prerelease. Install once from
 [`Tachyon.appinstaller`](https://github.com/DailenG/tachyon/releases/download/nightly/Tachyon.appinstaller)
-the same way as above; it then updates itself on every launch. An already-installed stable
-`0.1.0.0` MSIX updates in place the same way, no uninstall needed, because a nightly's version is
+the same way as above; it then updates itself on every launch. An already-installed stable MSIX
+(`1.0.0.0`) updates in place the same way, no uninstall needed, because a nightly's version is
 always higher than the stable release it followed. There is no path back from nightly to the
 stable release with that same version without uninstalling first (it would be a downgrade); switch
 channels only if you want a tested, versioned build instead of main's latest commit.

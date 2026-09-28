@@ -6,6 +6,8 @@ All notable user-visible changes are recorded here. The format follows
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-09-28
+
 ### Added
 
 - An About window: the owner's signature artwork (a light-ink variant for the dark theme),
