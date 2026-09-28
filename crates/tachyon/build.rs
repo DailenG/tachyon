@@ -1,8 +1,36 @@
 //! Windows: gives the executable its icon and version information, so Explorer, Task Manager, the
 //! taskbar and GPUI's windows (which load icon resource 1) show them. The resources are written
 //! as a `.res` file, which the MSVC linker takes directly, so no resource compiler is needed.
+//!
+//! Also embeds the running version's CHANGELOG section for the What's new window
+//! (`tachyon::whats_new`), on every platform.
+
+// A build script cannot depend on the crate it builds (it runs before that crate exists as a
+// built artifact), so `extract_section` is shared with `src/changelog.rs` - which also declares
+// it as `mod changelog` for the binary itself - by including its source rather than duplicating
+// it. `#[cfg(test)]` there is inert here: this is a plain `fn main`, never built as a test binary.
+// Included before any other item: changelog.rs's own `//!` module doc comment is only valid at
+// the very start of the file it appears in.
+include!("src/changelog.rs");
 
 use std::path::PathBuf;
+
+/// Writes `OUT_DIR/whats-new.md`: the running crate version's CHANGELOG section (falling back to
+/// `## [Unreleased]`), with a `# What's new in Tachyon X.Y.Z` heading prepended, or an empty
+/// string if `CHANGELOG.md` cannot be read (a `crates.io`-style build with no repository
+/// checkout) - never a build failure either way.
+fn embed_whats_new(version: &str) {
+    let changelog = PathBuf::from("../../CHANGELOG.md");
+    println!("cargo:rerun-if-changed={}", changelog.display());
+    let text = std::fs::read_to_string(&changelog).unwrap_or_default();
+    let notes = match extract_section(&text, version) {
+        Some(section) => format!("# What's new in Tachyon {version}\n\n{}", section.trim_end()),
+        None => String::new(),
+    };
+    let out =
+        PathBuf::from(std::env::var_os("OUT_DIR").expect("set by cargo")).join("whats-new.md");
+    std::fs::write(&out, notes).expect("OUT_DIR is writable");
+}
 
 /// Resource types and the ids used here.
 const RT_ICON: u16 = 3;
@@ -14,6 +42,9 @@ const LANGUAGE: u16 = 0x0409;
 const CODE_PAGE: u16 = 1200;
 
 fn main() {
+    let version = std::env::var("CARGO_PKG_VERSION").expect("set by cargo");
+    embed_whats_new(&version);
+
     let ico = PathBuf::from("../tachyon-platform/assets/tachyon.ico");
     println!("cargo:rerun-if-changed={}", ico.display());
     let windows = std::env::var("CARGO_CFG_TARGET_OS").is_ok_and(|os| os == "windows");
@@ -22,7 +53,6 @@ fn main() {
         return;
     }
     let ico = std::fs::read(&ico).expect("the icon is in the repository");
-    let version = std::env::var("CARGO_PKG_VERSION").expect("set by cargo");
     let mut res = Vec::new();
     // A .res file starts with an empty entry.
     push_resource(&mut res, 0, 0, &[]);

@@ -14,8 +14,9 @@ use tachyon_platform::{Listener, TrayEvent};
 
 use crate::cli::{self, Cli};
 use crate::startup::Startup;
+use crate::whats_new;
 
-actions!(tachyon, [Quit, NewWindow, Open, OpenSettings]);
+actions!(tachyon, [Quit, NewWindow, Open, OpenSettings, WhatsNew]);
 
 const APP_ID: &str = "tachyon";
 
@@ -41,6 +42,12 @@ enum Source {
     Blank,
     Clipboard,
     File(PathBuf),
+    /// This version's embedded CHANGELOG notes (see `whats_new`), opened as an ordinary
+    /// untitled document: on demand (the command palette's "What's new" row) or once, after an
+    /// update (`check_whats_new`).
+    WhatsNew {
+        version: String,
+    },
 }
 
 impl Source {
@@ -74,6 +81,7 @@ impl Source {
                 let name = path.file_name().unwrap_or(path.as_os_str()).to_string_lossy();
                 format!("{name} - Tachyon").into()
             }
+            Source::WhatsNew { version } => format!("What's new in Tachyon {version}").into(),
         }
     }
 }
@@ -86,15 +94,21 @@ struct Lifecycle {
     /// when resident.
     quitting: bool,
     report_launches: bool,
+    /// This process claimed the single-instance channel (`main::claim_instance`'s
+    /// `Claim::Primary`), as opposed to a standalone (`-n`) process: only the primary compares
+    /// and records the What's new version (`check_whats_new_after_first_window`).
+    is_primary: bool,
 }
 
 impl Global for Lifecycle {}
 
 pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
     startup.set_report(cli.startup_report);
-    // Resident only makes sense for the primary: it needs the channel that
-    // later launches arrive on.
-    let resident = cli.resident() && listener.is_some();
+    // Whether this process claimed the single-instance channel: only it should compare and
+    // record the What's new version (`check_whats_new`), never a standalone (`-n`) or forwarded
+    // launch. Resident only makes sense for the primary too: it needs the same channel.
+    let is_primary = listener.is_some();
+    let resident = cli.resident() && is_primary;
     let report_launches = cli.report_launches && resident;
     let system_appearance = tachyon_platform::query_system_appearance();
     // Hot exit: the primary backs up unsaved documents and restores them at the next start.
@@ -117,7 +131,7 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
     gpui_platform::application().with_quit_mode(QuitMode::Explicit).run(move |cx: &mut App| {
         startup.mark("platform_ready");
         cx.set_global(startup);
-        cx.set_global(Lifecycle { resident, quitting: false, report_launches });
+        cx.set_global(Lifecycle { resident, quitting: false, report_launches, is_primary });
         cx.set_global(tachyon_editor::AppInfo {
             version: env!("CARGO_PKG_VERSION").into(),
             resident,
@@ -150,6 +164,11 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
         });
         cx.on_action(|_: &NewWindow, cx| {
             show_window(Source::Blank, cx);
+        });
+        cx.on_action(|_: &WhatsNew, cx| {
+            if !whats_new::NOTES.is_empty() {
+                open_window(Source::WhatsNew { version: whats_new::current_version() }, cx);
+            }
         });
         cx.on_action(|_: &Open, cx| {
             let chosen = cx.prompt_for_paths(PathPromptOptions {
@@ -285,10 +304,19 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
             let Some(handle) = open_window(source, cx) else { continue };
             if std::mem::take(&mut first) {
                 cx.global_mut::<Startup>().mark("window_open");
+                // Set synchronously, before any forwarded launch reaching `show_window` could
+                // possibly race it (both run on this same executor, but only one at a time): a
+                // second `check_whats_new` for the same process would be harmless (idempotent
+                // once the version file already matches), just redundant.
+                if is_primary {
+                    cx.set_global(WhatsNewChecked);
+                }
                 let _ = handle.update(cx, |_, window, _| {
-                    window.on_next_frame(|_, cx| {
+                    window.on_next_frame(move |_, cx| {
                         if cx.global_mut::<Startup>().finish() {
                             cx.quit();
+                        } else if is_primary {
+                            check_whats_new(cx);
                         }
                     });
                 });
@@ -412,12 +440,14 @@ fn initial_document(source: &Source, cx: &App) -> Document {
             Document::new(&format!("Loading {name}...\n"))
         }
         Source::Blank | Source::Restored(_) => Document::new(""),
+        Source::WhatsNew { .. } => Document::new(whats_new::NOTES),
     }
 }
 
 fn open_window(source: Source, cx: &mut App) -> Option<WindowHandle<Editor>> {
+    let title = source.title();
     let bounds = initial_bounds(cx);
-    let options = window_options(source.title(), true, bounds);
+    let options = window_options(title.clone(), true, bounds);
     let result = cx.open_window(options, move |window, cx| {
         tachyon_platform::set_window_icon(window);
         // Set before the window's first frame paints, so DWM never shows the OS dark-mode
@@ -428,8 +458,14 @@ fn open_window(source: Source, cx: &mut App) -> Option<WindowHandle<Editor>> {
         let dark = Theme::for_window(window, cx).dark;
         tachyon_platform::set_title_bar_dark(window, dark);
         tachyon_platform::set_popup_menu_dark(dark);
+        // `Editor::sync_title` otherwise overwrites this window's title every frame with the
+        // usual file-name/scratch-buffer rule, which has no notion of "What's new".
+        let fixed_title = matches!(source, Source::WhatsNew { .. }).then(|| title.to_string());
         cx.new(|cx| {
             let mut editor = Editor::with_document(initial_document(&source, cx), window, cx);
+            if let Some(fixed_title) = fixed_title {
+                editor.set_title_override(fixed_title);
+            }
             fill(&mut editor, source, cx);
             editor
         })
@@ -454,7 +490,7 @@ fn fill(editor: &mut Editor, source: Source, cx: &mut Context<Editor>) {
     match source {
         Source::File(path) => load_file(path, cx),
         Source::Restored(restored) => editor.adopt_backup(restored, cx),
-        Source::Sample | Source::Blank | Source::Clipboard => {}
+        Source::Sample | Source::Blank | Source::Clipboard | Source::WhatsNew { .. } => {}
     }
 }
 
@@ -587,6 +623,10 @@ fn show_window(source: Source, cx: &mut App) -> Option<WindowHandle<Editor>> {
         Ok(handle) => Some(handle),
         Err(source) => open_window(source, cx),
     }?;
+    // Covers the one path the initial-sources loop in `run` cannot: a `--background` primary
+    // with nothing to open (login autostart) stays windowless until a forwarded launch (which
+    // reaches this same function) finally opens one.
+    check_whats_new_after_first_window(&handle, cx);
     let _ = handle.update(cx, |_, window, _| window.activate_window());
     let prepare = handle.update(cx, |_, window, _| {
         window.on_next_frame(|_, cx| prepare_ready_window(cx));
@@ -607,6 +647,64 @@ fn report_line(line: &str) {
     let mut stdout = std::io::stdout().lock();
     let _ = writeln!(stdout, "{line}");
     let _ = stdout.flush();
+}
+
+/// Marker: `check_whats_new` has already been scheduled once for this process (see
+/// `check_whats_new_after_first_window`, and the initial-sources loop in `run` which sets this
+/// itself for the common case).
+struct WhatsNewChecked;
+
+impl Global for WhatsNewChecked {}
+
+/// Schedules `check_whats_new` after `handle`'s next frame, but only the first time this is
+/// called for the whole process (`WhatsNewChecked`) and only for the primary instance
+/// (`Lifecycle::is_primary`). Exists for `show_window`: a `--background` primary with nothing to
+/// open (login autostart) has no window for the initial-sources loop in `run` to hook, so its
+/// first real window - opened later by a forwarded launch, always through `show_window` - has to
+/// carry this instead.
+fn check_whats_new_after_first_window(handle: &WindowHandle<Editor>, cx: &mut App) {
+    if !cx.global::<Lifecycle>().is_primary || cx.has_global::<WhatsNewChecked>() {
+        return;
+    }
+    cx.set_global(WhatsNewChecked);
+    let _ = handle.update(cx, |_, window, _| {
+        window.on_next_frame(|_, cx| check_whats_new(cx));
+    });
+}
+
+/// After the first window's first frame, primary instances only (`check_whats_new`'s callers
+/// gate on `is_primary`/`Lifecycle::is_primary`; a forwarded launch never reaches `run` at all,
+/// and `--quit`/`--status` never reach `run` either): reads the version last seen against this
+/// launch's (`whats_new::current_version`) off the UI thread, updates the record if it is stale,
+/// and, if it changed, the record was written successfully, the `whats_new` setting allows it,
+/// and there is anything embedded to show (`whats_new::should_open_window`), opens the notes as
+/// a new window. A record that failed to write (an unwritable state directory) is logged once
+/// and never opens a window itself - showing it anyway would reopen it on every single launch,
+/// since there would be no way to remember it was already shown.
+fn check_whats_new(cx: &mut App) {
+    let Some(state_dir) = tachyon_platform::state_dir() else { return };
+    let path = state_dir.join(format!("whats-new-{}.txt", crate::instance_id()));
+    let current = whats_new::current_version();
+    let enabled = cx.try_global::<tachyon_editor::Settings>().is_none_or(|s| s.whats_new);
+    let has_notes = !whats_new::NOTES.is_empty();
+    cx.spawn(async move |cx| {
+        let record_version = current.clone();
+        let log_path = path.clone();
+        let (check, recorded) = cx
+            .background_executor()
+            .spawn(async move { whats_new::read_and_record(&path, &record_version) })
+            .await;
+        if !recorded {
+            eprintln!("tachyon: could not record the What's new version at {}", log_path.display());
+            return;
+        }
+        if whats_new::should_open_window(check, enabled, has_notes) {
+            cx.update(|cx| {
+                open_window(Source::WhatsNew { version: current }, cx);
+            });
+        }
+    })
+    .detach();
 }
 
 /// The resident instance's tray icon (Windows), removed when the app quits.

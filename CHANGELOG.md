@@ -6,6 +6,21 @@ All notable user-visible changes are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- A "What's new" window: after an update, the next launch opens the running version's CHANGELOG
+  section as an ordinary untitled Markdown document - titled "What's new in Tachyon X.Y.Z",
+  readable, editable, and closing without a save prompt unless you edit it - once, the first
+  time that version starts. The command palette's "What's new" row opens it again at any time,
+  and its "Show what's new after updates" row (`whats_new = true` in `settings.toml`) turns the
+  automatic prompt off without stopping the version from being recorded, so it never shows twice
+  for the same update. The notes are embedded in the binary at build time from `CHANGELOG.md`
+  (the section for the running version, or `Unreleased` if there is none yet), so showing them
+  needs no network access and nothing can fail offline; a build with no `CHANGELOG.md` (a
+  `crates.io`-style package) simply never shows the window. The version last seen lives in a
+  small file next to hot-exit backups and recent files, checked off the UI thread after the
+  first window's first frame, so nothing is added to the startup path.
+
 ### Fixed
 
 - Undo (or redo) back to exactly the text last saved now clears the title's dirty marker and lets

@@ -522,6 +522,42 @@ executables, so these commands attach to the parent console to print. `TACHYON_I
 (`--report-launches` prints one line per forwarded launch once its window has drawn;
 `--gap-ms` spaces the launches, 500 ms by default).
 
+**What's new window** (`crates/tachyon/src/whats_new.rs`, `changelog.rs`). Reuses `Editor`
+directly, unlike the About window: `open_window` builds it the same way as any other document
+window (a plain, untitled `Document` over the embedded notes), except `Editor::title_override`
+pins its title to "What's new in Tachyon X.Y.Z" so `sync_title`'s usual file-name/scratch-buffer
+rule never overwrites it - only while the document has no file: Save As gives it one, and
+`title()` reverts to the ordinary rule from then on rather than keeping a stale fixed title.
+`crates/tachyon/build.rs` embeds the notes at build time (`changelog::extract_section`, shared
+with the build script by `include!`-ing its source rather than depending on the crate it belongs
+to, which does not exist as a built artifact yet when a build script runs): the workspace
+`CHANGELOG.md`'s section for `CARGO_PKG_VERSION` (its own `## [X.Y.Z]` heading up to the next
+line starting `## ` - any level-two heading, not only a bracketed version, so a following
+`## Migration notes` or the like still ends the section - falling back to `## [Unreleased]`),
+with a `# What's new in Tachyon X.Y.Z` heading prepended, written to `OUT_DIR` and pulled in with
+`include_str!`; a `crates.io`-style build with no `CHANGELOG.md` embeds an empty string instead
+of failing, and an empty string never opens a window (automatically or from the palette row
+below). The trigger compares the version last seen - one line in a file next to hot-exit backups
+and recent files in `tachyon_platform::state_dir()`, namespaced by `TACHYON_INSTANCE_ID` the same
+way - against this launch's (the installed MSIX package's version when packaged, else the crate
+version). `app::check_whats_new` itself only ever runs once per process (`WhatsNewChecked`, a
+global flag) and only for the primary instance (`Lifecycle::is_primary`; never a forwarded
+launch, `--quit`, `--status`, or a `--startup-report` run, which is always `--new-instance`),
+after the first window's first frame - scheduled directly by the initial-sources loop in `run`
+for the common case, or by `show_window` for the one case that loop cannot cover: a
+`--background` primary with nothing to open (login autostart) stays windowless until a forwarded
+launch, always routed through `show_window`, finally opens one. Reading and rewriting the one
+version file happens on the background executor, so nothing is added to the startup path; a
+fresh install (no file) or the same version writes the file and shows nothing, a changed version
+writes the file and opens the window too when `Settings::whats_new` is on and the embedded notes
+are not empty, and a write that fails (an unwritable state directory) is logged once and never
+opens a window from that launch - showing it anyway would have no way to remember it was already
+shown, so it would reopen on every later launch instead of just this one. The command palette's
+"What's new" row (`tachyon::WhatsNew`, a cross-crate action like the ones in the palette table
+above) opens the same window on demand regardless of the stored version or the setting, except
+when the embedded notes are empty, same as the automatic path; its "Show what's new after
+updates" row only flips the setting, the same way the palette's hot-exit row does.
+
 On Windows a resident instance keeps one **ready window**: created hidden 100 ms after each
 launch's first frame (and at resident start), sized in advance, and filled with the launch's
 document and shown when the next launch arrives. Creating a window there costs 40-60 ms and

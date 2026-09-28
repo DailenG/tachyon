@@ -41,7 +41,8 @@ start as fast as a scratchpad and edit like Typora: one pane, inline WYSIWYG, no
   resident mode is the default on Windows); a keystroke paints within one frame (reparse p99
   about 45-55 µs against a 0.5 ms budget); a 5 MB paste never drops a frame (worst 5-9 ms).
 - **Signed Windows builds:** `tachyon.exe` is signed with Azure Trusted Signing; an optional MSIX
-  install auto-updates itself from GitHub Releases.
+  install auto-updates itself from GitHub Releases, and shows what changed as a Markdown document
+  the first time the new version starts.
 - **Everyday editing:** find and replace (Replace All is one undo step), light and dark themes
   following the system or a setting, zoom, `Ctrl+click` links, list continuation and `Tab`
   nesting, syntax highlighting in fenced code (Rust, Python, JS/TS, C family, Go, Java, C#,
@@ -156,8 +157,9 @@ tachyon --desktop-entry on   # Linux: add it to the launcher and "Open with" men
 ```
 
 `cargo xtask dist` builds a release archive in `target/dist/`. `tachyon --help` lists all options. Settings live in `settings.toml` (`Ctrl+,` opens it): theme,
-zoom of new windows, whether Quit keeps unsaved documents, and whether a faint rotating tip shows
-behind the document.
+zoom of new windows, whether Quit keeps unsaved documents, whether a faint rotating tip shows
+behind the document, and whether an update opens a "What's new" window (the command palette's
+"What's new" row opens it any time regardless).
 
 ## Development
 

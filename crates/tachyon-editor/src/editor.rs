@@ -289,6 +289,10 @@ pub struct Editor {
     /// the first frame, see `with_document`) or while tips are turned off; picked once and kept
     /// for the rest of the window's life otherwise.
     pub(crate) tip: Option<SharedString>,
+    /// Fixed window title, if set: for a special document whose title should not follow the
+    /// usual file-name / scratch-buffer rule (the What's new window; see `tachyon::whats_new`).
+    /// Set once, right after the editor is created (`set_title_override`); nothing clears it.
+    title_override: Option<String>,
 }
 
 /// Zoom levels `Ctrl+=` and `Ctrl+-` step through, as in browsers.
@@ -376,6 +380,7 @@ impl Editor {
             lossy: false,
             notice: None,
             tip: None,
+            title_override: None,
         };
         editor.doc.take_splices();
         editor.update_active();
@@ -427,9 +432,16 @@ impl Editor {
         self.doc.buffer().history_position() != self.saved_history_position
     }
 
-    /// Window title: file name (or "Tachyon" for a scratch buffer), with a
-    /// leading dot while there are unsaved changes.
+    /// Window title: `title_override` if one was set and the document has no file yet, else the
+    /// file name (or "Tachyon" for a scratch buffer), with a leading dot while there are unsaved
+    /// changes. Save As on an overridden document (the What's new window) gives it a file, so
+    /// this reverts to the ordinary rule from then on rather than keeping a stale fixed title.
     pub fn title(&self) -> String {
+        if self.file.is_none()
+            && let Some(title) = &self.title_override
+        {
+            return title.clone();
+        }
         let name = self
             .file
             .as_ref()
@@ -437,6 +449,14 @@ impl Editor {
             .map(|n| format!("{} - Tachyon", n.to_string_lossy()))
             .unwrap_or_else(|| "Tachyon".to_owned());
         if self.is_modified() { format!("• {name}") } else { name }
+    }
+
+    /// Overrides the ordinary file-name/scratch-buffer window title with a fixed one: for a
+    /// special document that should keep its own name rather than being mistaken for an
+    /// untitled scratch buffer (the What's new window). Meant to be called once, right after
+    /// the editor is created, before its first frame.
+    pub fn set_title_override(&mut self, title: impl Into<String>) {
+        self.title_override = Some(title.into());
     }
 
     pub(crate) fn sync_title(&mut self, window: &mut Window) {

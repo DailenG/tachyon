@@ -25,11 +25,20 @@ pub struct Settings {
     pub hot_exit: bool,
     /// Show a faint rotating tip behind the document (`render::tip_overlay`).
     pub tips: bool,
+    /// Show the What's new window once, after an update (`tachyon::whats_new`). The command
+    /// palette's "What's new" row opens it on demand regardless of this setting.
+    pub whats_new: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { theme: ThemeChoice::System, zoom: 1., hot_exit: true, tips: true }
+        Settings {
+            theme: ThemeChoice::System,
+            zoom: 1.,
+            hot_exit: true,
+            tips: true,
+            whats_new: true,
+        }
     }
 }
 
@@ -50,6 +59,10 @@ hot_exit = true
 
 # Show a faint rotating tip behind the document.
 tips = true
+
+# Show what's new after an update, once, the next time Tachyon starts. false only stops that
+# automatic prompt; the command palette's \"What's new\" row still opens the notes any time.
+whats_new = true
 ";
 
 impl Settings {
@@ -91,6 +104,11 @@ impl Settings {
                     "true" => settings.tips = true,
                     "false" => settings.tips = false,
                     _ => problems.push(format!("{number}: tips is true or false")),
+                },
+                "whats_new" => match value {
+                    "true" => settings.whats_new = true,
+                    "false" => settings.whats_new = false,
+                    _ => problems.push(format!("{number}: whats_new is true or false")),
                 },
                 other => problems.push(format!("{number}: unknown setting `{other}`")),
             }
@@ -218,18 +236,25 @@ mod tests {
     #[test]
     fn values_comments_and_problems() {
         let (settings, problems) = Settings::parse(
-            "theme = \"light\"  # always\nzoom = 1.25\nhot_exit = false\ntips = false\nzoom = 9\ncolour = red\nnonsense\n",
+            "theme = \"light\"  # always\nzoom = 1.25\nhot_exit = false\ntips = false\n\
+             whats_new = false\nzoom = 9\ncolour = red\nnonsense\n",
         );
         assert_eq!(
             settings,
-            Settings { theme: ThemeChoice::Light, zoom: 1.25, hot_exit: false, tips: false }
+            Settings {
+                theme: ThemeChoice::Light,
+                zoom: 1.25,
+                hot_exit: false,
+                tips: false,
+                whats_new: false,
+            }
         );
         assert_eq!(
             problems,
             [
-                "5: zoom is a number from 0.5 to 3.0",
-                "6: unknown setting `colour`",
-                "7: expected `key = value`",
+                "6: zoom is a number from 0.5 to 3.0",
+                "7: unknown setting `colour`",
+                "8: expected `key = value`",
             ]
         );
     }
