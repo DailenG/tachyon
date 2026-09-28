@@ -43,6 +43,15 @@ elsewhere, plus a `SHA256SUMS.txt` to verify the download. Extract it and run `t
 with Azure Trusted Signing; macOS signing and notarization are not done yet, so Gatekeeper will
 warn on first launch.
 
+**Windows, with automatic updates:** download `Tachyon.appinstaller` from the latest release and
+open it (or `Add-AppxPackage -AppInstallerFile Tachyon.appinstaller` from PowerShell), then follow
+the prompt to install. This registers Tachyon as an MSIX package (also signed with Azure Trusted
+Signing) that checks for an update every time it launches and applies it in the background; a
+resident Tachyon (the default) picks up the update the next time it fully quits (tray icon →
+"Quit Tachyon", or `tachyon --quit`) or at the next sign-in. `tachyon` also works from any
+terminal, and opening a `.md` or `.markdown` file offers Tachyon in "Open with". The `.zip` above
+still works if you would rather manage updates yourself.
+
 ## Building
 
 Requires the toolchain pinned in [`rust-toolchain.toml`](rust-toolchain.toml); `rustup` installs it

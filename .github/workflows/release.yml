@@ -4,6 +4,15 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      msix_version:
+        description: Override the MSIX manifest version (4 parts, e.g. 0.1.0.1) for update testing
+        required: false
+        type: string
+      appinstaller_base:
+        description: Override where Tachyon.appinstaller points (URL or path), for testing updates from a location other than the GitHub release
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -95,12 +104,50 @@ jobs:
         shell: bash
         run: pwsh -File .github/scripts/verify-signature.ps1 -Path target/release/tachyon.exe
       - run: cargo xtask dist --no-build
+      # Unconditional, like the archive above: an unsigned MSIX still exercises the packaging
+      # steps on a fork or a secrets-less dry run. --version and --appinstaller-base are only
+      # set for a workflow_dispatch run testing App Installer's update detection.
+      - name: Package the MSIX installer
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          args=()
+          if [ -n "${{ inputs.msix_version }}" ]; then
+            args+=(--version "${{ inputs.msix_version }}")
+          fi
+          if [ -n "${{ inputs.appinstaller_base }}" ]; then
+            args+=(--appinstaller-base "${{ inputs.appinstaller_base }}")
+          fi
+          cargo xtask msix "${args[@]}"
+      - name: Sign the MSIX installer (Azure Trusted Signing)
+        if: matrix.os == 'windows-latest' && steps.signing.outputs.available == 'true'
+        uses: Azure/trusted-signing-action@208f8af4bf26cf2af8597424e3cb5582801523ba # v2.0.0
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.AZURE_TRUSTED_SIGNING_PROFILE }}
+          files-folder: ${{ github.workspace }}/target/dist
+          files-folder-filter: msix
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+      - name: Verify the MSIX installer's signature
+        if: matrix.os == 'windows-latest' && steps.signing.outputs.available == 'true'
+        shell: bash
+        run: |
+          msix=$(ls target/dist/Tachyon_*.msix)
+          pwsh -File .github/scripts/verify-signature.ps1 -Path "$msix"
       - uses: actions/upload-artifact@v7
         with:
           name: dist-${{ matrix.os }}
           path: |
             target/dist/tachyon-*.zip
             target/dist/tachyon-*.tar.gz
+            target/dist/Tachyon_*.msix
+            target/dist/Tachyon.appinstaller
           if-no-files-found: error
           retention-days: 14
 
@@ -120,7 +167,7 @@ jobs:
       - name: Collect archives and checksum them
         run: |
           mkdir -p release
-          find dist -type f \( -name 'tachyon-*.zip' -o -name 'tachyon-*.tar.gz' \) -exec cp {} release/ \;
+          find dist -type f \( -name 'tachyon-*.zip' -o -name 'tachyon-*.tar.gz' -o -name 'Tachyon_*.msix' -o -name 'Tachyon.appinstaller' \) -exec cp {} release/ \;
           cd release
           sha256sum -- * > SHA256SUMS.txt
           cat SHA256SUMS.txt
