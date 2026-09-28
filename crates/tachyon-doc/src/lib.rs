@@ -1155,10 +1155,13 @@ impl Document {
     /// fence nor a container (a list item or block quote, whose own nested content can open a
     /// fence at a column a top-level line never could) nor an HTML block is fence-and-HTML-free
     /// throughout, and a bounded window anywhere in it is safe (`Plain`). An HTML block's first
-    /// line does *not* similarly make the rest of `range` safe to assume: unlike a fence, it
-    /// ends at the next blank line rather than swallowing everything, so - unlike genuine
-    /// `Plain` content - the state a bounded window elsewhere in `range` would need to start
-    /// from is "still inside the HTML block opened at `range.start`", which a window starting
+    /// line does *not* similarly make the rest of `range` safe to assume: unlike a fence, most
+    /// HTML block types (`tachyon_md::presegment`'s module doc comment has the full CommonMark
+    /// rules) end at a specific pattern - a blank line for some, a line containing `-->`, `?>`,
+    /// `>` or `]]>` for others - that a bounded window checks for on every line it scans just
+    /// like a real fence's own closing marker, so - unlike genuine `Plain` content - the state
+    /// a bounded window elsewhere in `range` would need to start from is "still inside the HTML
+    /// block opened at `range.start`, watching for *its* end pattern", which a window starting
     /// fresh partway through cannot represent; a fence-marker-shaped line the edit adds there
     /// would misread as a real fence the same way one swallowed by an HTML block already did
     /// once (`tachyon_md::presegment`'s module doc comment). A container, an HTML block, or a
@@ -1645,15 +1648,16 @@ fn block_shape(rope: &Rope, range: &Range<usize>) -> BlockShape {
     let peek_limit = (range.start + BOUNDARY_FENCE_PEEK_LIMIT).min(range.end);
     let Some(nl) = find_newline(rope, range.start, peek_limit) else { return BlockShape::Unknown };
     let first_line = rope.byte_slice(range.start..nl + 1).to_string();
-    // An HTML block, unlike a fence, ends at the next blank line rather than swallowing every
-    // line indefinitely: an edit elsewhere in `range` (Fence's own reasoning does not apply) can
+    // An HTML block, unlike a fence, ends at its own pattern - a blank line for some types, a
+    // line containing a specific closing sequence for others (`tachyon_md::presegment`'s module
+    // doc comment has the full CommonMark rules) - rather than swallowing every line
+    // indefinitely: an edit elsewhere in `range` (Fence's own reasoning does not apply) can
     // still create a genuinely new boundary there, which only the full scan below is guaranteed
     // to find - a bounded window starting fresh partway through the block would not know it is
     // still "inside HTML" and could misread a fence-marker-shaped line the same way a swallowed
-    // one already did once (see `tachyon_md::presegment`'s module doc comment). Checked before
-    // `ends_in_fence`, which also reports true for an HTML-opening line (an HTML block swallows
-    // fence markers exactly like a fence swallows blank lines), so this must not fall through to
-    // the `Fence` arm below.
+    // one already did once. Checked before `ends_in_fence`, which also reports true for an
+    // HTML-opening line (an HTML block swallows fence markers exactly like a fence swallows
+    // blank lines), so this must not fall through to the `Fence` arm below.
     if md::opens_html_block(&first_line) {
         return BlockShape::Unknown;
     }
