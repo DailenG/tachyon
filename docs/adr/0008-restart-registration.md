@@ -53,37 +53,55 @@ once a window is asked for. The existing single-instance claim already drops a f
 sign-in never opens a duplicate window.
 
 **Session-end backup (`tachyon_platform::TrayEvent::EndSession`).** The tray's hidden window
-(`crates/tachyon-platform/src/windows/tray.rs`) now handles two more messages:
+(`crates/tachyon-platform/src/windows/tray.rs`) now handles two more messages, following
+Microsoft's own shutdown guidance rather than answering and hoping the write finishes in time:
 
-- `WM_QUERYENDSESSION`: answered `TRUE` immediately, never blocking. Windows measures how quickly
-  each top-level window responds; hot exit means there is never unsaved work worth blocking a
-  shutdown over, so there is nothing to gain by delaying the answer, and the actual backup happens
-  in `WM_ENDSESSION` regardless.
+- `WM_QUERYENDSESSION`: registers a shutdown block reason (`ShutdownBlockReasonCreate`, "Tachyon
+  is saving unsaved documents") unconditionally, then answers `TRUE` at once - Windows measures
+  how quickly each top-level window responds to this specific message, so refusing or delaying it
+  risks its own "close programs" prompt before the application even reaches `WM_ENDSESSION`. The
+  platform layer has no cheap way to know *from here* whether there is actually anything unsaved
+  without a synchronous round trip to the application on every single query, so it always
+  registers the reason; if it turns out nothing needed saving, `WM_ENDSESSION`'s own call below
+  finishes at once and clears it well before Windows would ever show it to the user.
 - `WM_ENDSESSION` with `wParam != 0` (the session is actually ending, not cancelled by another
   application refusing `WM_QUERYENDSESSION`): calls the tray's ordinary `on_event(TrayEvent::EndSession)`
   synchronously, which blocks this window procedure - and so this message - until the application
-  has written every window's backup. The process may be killed as soon as `WM_ENDSESSION` returns,
-  so the write cannot be deferred to the usual 1.5 s typing-pause delay.
+  has written every window's backup or a timeout passes. The reason registered above is destroyed
+  afterwards either way (`wParam == 0` too, so a cancelled session end never leaves a stale one
+  registered). The process may be killed as soon as `WM_ENDSESSION` returns, so the write cannot
+  be deferred to the usual 1.5 s typing-pause delay.
 
 `crates/tachyon/src/app.rs`'s `show_tray` intercepts `TrayEvent::EndSession` in the tray callback
 itself (rather than forwarding it through the ordinary async event channel, the way `Open`/`About`/
 `Quit` are): it sends a one-shot reply channel to the application's own async loop and blocks on it
-with a bounded timeout (`END_SESSION_BACKUP_TIMEOUT`, 3 s - comfortably above how long a handful of
-small text files should ever take to write, comfortably under Windows' default ~5 s
-`HungAppTimeout` per top-level window). The async loop runs `backup_every_window_for_session_end`
-(every open window, `Editor::backup_for_session_end`: writes the hot-exit backup immediately if the
-document is modified, same guard `Editor::write_backup` already relies on, never closes the
-window) and replies. If the reply never arrives (a wedged UI thread), the tray thread gives up
-after the timeout and lets `WM_ENDSESSION` return anyway - an incomplete backup is better than
-none, and blocking forever risks losing it entirely.
+with a bounded timeout (`END_SESSION_BACKUP_TIMEOUT`, 30 s). Thirty seconds, not a few, because the
+shutdown block reason above means the wait is no longer racing Windows' own ~5 s `HungAppTimeout`
+silently - if it runs long, the user sees exactly why ("Tachyon is preventing shutdown", with the
+reason) and can choose to wait or force it, rather than the process just appearing hung. If the
+wait itself times out, the tray callback logs it (`eprintln!`) before letting `WM_ENDSESSION`
+return, so a genuinely wedged UI thread is at least visible somewhere durable instead of silently
+producing an incomplete backup.
+
+The async loop runs `backup_every_window_for_session_end` (every open window,
+`Editor::backup_for_session_end`, which now returns whether the document ended up safe: `true` if
+there was nothing to do or the write succeeded, `false` only if a write was attempted and failed)
+and replies once done. Any window reported `false` has its title logged to stderr
+(`tachyon: could not back up "<title>" before session end`) - there is no time left for a
+user-facing notice this late, but a full disk or a state directory that went away should not fail
+completely silently. This is a best effort, not an unconditional guarantee: a wedged UI thread, a
+persistently failing write, or a very large number of windows can still exhaust the 30 s budget.
 
 ## Consequences
 
 - Turning on "Automatically save my restartable apps and restart them when I sign back in" now
   actually brings Tachyon back, with its unsaved documents, after a reboot, a Windows Update
   restart, or signing out and back in - provided hot exit (on by default) is also on.
-- A session end (logoff, sign-out, shutdown, restart) now always gets a final, synchronous backup
-  of whatever was not yet on disk, closing the gap ADR 0006 assumed was already closed.
+- A session end (logoff, sign-out, shutdown, restart) now blocks shutdown, with a visible reason,
+  for up to 30 s while every open window gets a final, synchronous backup of whatever was not yet
+  on disk - closing the gap ADR 0006 assumed was already closed, though as a best effort rather
+  than an unconditional guarantee: a failed write or an exhausted wait is reported to stderr, not
+  silently swallowed, but does not retry or block shutdown further.
 - Two more integration points for a future session-restore feature (issue #79) to hook: the same
   `TrayMessage::EndingSession` arm is the one place a session file would also need writing before
   the process can be killed, and `RestartRegistration`'s pattern (a `Copy` struct of plain `fn`

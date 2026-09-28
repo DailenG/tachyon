@@ -749,10 +749,13 @@ fn resolved_dark(cx: &App) -> bool {
 /// ([`TrayEvent::EndSession`]) waiting for every window's backup to finish, before giving up and
 /// letting `WM_ENDSESSION` return anyway: the process may be killed right after that, so waiting
 /// forever would risk losing the backup entirely if the UI thread were ever wedged, in exchange
-/// for, at worst, an incomplete backup instead of none. Comfortably above how long a handful of
-/// small text files should ever take to write (`Editor::backup_for_session_end`), and
-/// comfortably under the default ~5 s `HungAppTimeout` Windows applies per top-level window.
-const END_SESSION_BACKUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+/// for, at worst, an incomplete backup instead of none. `tachyon_platform`'s tray module
+/// registers a shutdown block reason (`ShutdownBlockReasonCreate`) for exactly this wait, so
+/// Windows shows its own "Tachyon is preventing shutdown" screen (with the reason) rather than
+/// silently appearing hung - the user can see why and choose to force it - which is why this can
+/// afford to be generous rather than racing the ~5 s `HungAppTimeout` an unexplained wait would
+/// risk.
+const END_SESSION_BACKUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// What the tray thread forwards to this process's async loop: an ordinary [`TrayEvent`], or a
 /// session-end request carrying the reply [`show_tray`]'s tray thread is blocked on.
@@ -765,11 +768,18 @@ enum TrayMessage {
 /// (logoff, sign-out, shutdown or restart) reaching [`TrayEvent::EndSession`]. Never closes a
 /// window - hot exit's usual typing-pause backup (`Editor::schedule_backup`) already covers the
 /// ordinary case; this only covers whatever text has not been backed up yet when the session
-/// ends first.
+/// ends first. A window whose backup could not be written (a full disk, a state directory that
+/// went away) is reported to stderr by its title: there is no time left for a user-facing notice
+/// this late, but the failure should still be visible somewhere durable rather than silently
+/// losing the text.
 fn backup_every_window_for_session_end(cx: &mut App) {
     for window in cx.windows() {
         if let Some(editor) = window.downcast::<Editor>() {
-            let _ = editor.update(cx, |editor, _, cx| editor.backup_for_session_end(cx));
+            let outcome = editor
+                .update(cx, |editor, _, cx| (editor.title(), editor.backup_for_session_end(cx)));
+            if let Ok((title, false)) = outcome {
+                eprintln!("tachyon: could not back up \"{title}\" before session end");
+            }
         }
     }
 }
@@ -785,8 +795,16 @@ fn show_tray(cx: &mut App) {
     let Some(tray) = tachyon_platform::Tray::show("Tachyon", move |event| match event {
         TrayEvent::EndSession => {
             let (done_tx, done_rx) = std::sync::mpsc::sync_channel(0);
-            if tx.unbounded_send(TrayMessage::EndingSession(done_tx)).is_ok() {
-                let _ = done_rx.recv_timeout(END_SESSION_BACKUP_TIMEOUT);
+            if tx.unbounded_send(TrayMessage::EndingSession(done_tx)).is_ok()
+                && done_rx.recv_timeout(END_SESSION_BACKUP_TIMEOUT).is_err()
+            {
+                // The UI thread did not reply in time (wedged, or a very large number of
+                // windows): explicit rather than silently letting `WM_ENDSESSION` return with no
+                // record of why the backup may be incomplete.
+                eprintln!(
+                    "tachyon: timed out waiting {END_SESSION_BACKUP_TIMEOUT:?} for session-end \
+                     backups; continuing without them"
+                );
             }
         }
         event => {

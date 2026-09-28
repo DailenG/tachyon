@@ -5,7 +5,8 @@
 #
 # Without -ProcessId, the first running "tachyon" process is used. Requires no special
 # privileges against a process owned by the same user: OpenProcess only asks for
-# PROCESS_QUERY_LIMITED_INFORMATION.
+# PROCESS_QUERY_LIMITED_INFORMATION plus PROCESS_VM_READ, which GetApplicationRestartSettings
+# itself needs to read the registered command line back out of the target process.
 
 param(
     [int]$ProcessId = 0
@@ -30,6 +31,7 @@ using System.Text;
 public static class TachyonRestartInfo
 {
     public const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+    public const uint PROCESS_VM_READ = 0x0010;
 
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, int dwProcessId);
@@ -48,8 +50,8 @@ public static class TachyonRestartInfo
 
 Add-Type -TypeDefinition $signature -Language CSharp
 
-$handle = [TachyonRestartInfo]::OpenProcess(
-    [TachyonRestartInfo]::PROCESS_QUERY_LIMITED_INFORMATION, $false, $ProcessId)
+$accessRights = [TachyonRestartInfo]::PROCESS_QUERY_LIMITED_INFORMATION -bor [TachyonRestartInfo]::PROCESS_VM_READ
+$handle = [TachyonRestartInfo]::OpenProcess($accessRights, $false, $ProcessId)
 if ($handle -eq [IntPtr]::Zero) {
     $lastError = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
     Write-Error "Could not open process $ProcessId (Win32 error $lastError)."
@@ -64,9 +66,10 @@ try {
         $handle, $commandLine, [ref]$size, [ref]$flags)
 
     if ($result -ne 0) {
-        Write-Host ("GetApplicationRestartSettings failed for PID {0}: HRESULT 0x{1:X8} " +
+        $message = ("GetApplicationRestartSettings failed for PID {0}: HRESULT 0x{1:X8} " +
             "(this is the expected result if the process has not registered, or has hot " +
-            "exit turned off)." -f $ProcessId, $result)
+            "exit turned off).") -f $ProcessId, $result
+        Write-Host $message
         exit 1
     }
 

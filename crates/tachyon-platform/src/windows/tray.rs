@@ -16,6 +16,7 @@ use std::thread::JoinHandle;
 
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress, LoadLibraryW};
+use windows_sys::Win32::System::Shutdown::{ShutdownBlockReasonCreate, ShutdownBlockReasonDestroy};
 use windows_sys::Win32::UI::HiDpi::{GetDpiForSystem, GetDpiForWindow, GetSystemMetricsForDpi};
 use windows_sys::Win32::UI::Shell::{
     NIF_ICON, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_SETVERSION, NIN_SELECT,
@@ -426,21 +427,41 @@ unsafe extern "system" fn window_proc(
             unsafe { DestroyWindow(hwnd) };
             0
         }
-        // Answered immediately, never blocking: Windows measures how quickly each top-level
-        // window responds to this message, and a slow or missing answer risks the "these
-        // programs are preventing shutdown" prompt. Allowing the session to end unconditionally
-        // is safe for Tachyon - hot exit means there is never unsaved work to lose - and the
-        // actual backup happens below, in WM_ENDSESSION, which is sent afterwards regardless.
-        (WM_QUERYENDSESSION, _) => 1,
-        // The session is actually ending (not cancelled by another application refusing
-        // WM_QUERYENDSESSION - `wparam` is 0 then): the process may be killed as soon as this
-        // returns, so the backup has to be written before that, not after a typing-pause delay.
-        // `on_event` is an ordinary synchronous call (as every other event here already is), so
-        // blocking inside it blocks this window proc, and so this whole message, exactly as
-        // needed; the application's handler (`crates/tachyon/src/app.rs`) is the one that
-        // actually waits, with a bounded timeout, for every window's backup to finish.
-        (WM_ENDSESSION, Some(state)) if wparam != 0 => {
-            (state.on_event)(TrayEvent::EndSession);
+        // Answered TRUE immediately: Windows measures how quickly each top-level window responds
+        // to this message, and refusing (or being slow) here risks its own "close programs"
+        // prompt before the application even gets to WM_ENDSESSION. Registers a shutdown block
+        // reason unconditionally rather than only when there is something unsaved: the platform
+        // layer has no cheap way to know that without a synchronous round trip to the
+        // application on every single WM_QUERYENDSESSION (there is no window yet to hold a
+        // result, unlike WM_ENDSESSION's own blocking call below), and the cost of being wrong is
+        // asymmetric - if there is nothing to back up, WM_ENDSESSION's own call finishes almost
+        // at once and destroys the reason before Windows would ever show it to the user; if there
+        // is something to back up and this were skipped, the user would see no explanation at all
+        // for whatever shutdown delay follows.
+        (WM_QUERYENDSESSION, _) => {
+            let reason = wide("Tachyon is saving unsaved documents");
+            // SAFETY: `hwnd` is ours; `reason` is a NUL-terminated wide string valid for the
+            // call (`ShutdownBlockReasonCreate` copies it, per its documentation).
+            unsafe { ShutdownBlockReasonCreate(hwnd, reason.as_ptr()) };
+            1
+        }
+        // The process may be killed as soon as this returns, so the backup has to be written
+        // before that, not after a typing-pause delay. `on_event` is an ordinary synchronous call
+        // (as every other event here already is), so blocking inside it blocks this window proc,
+        // and so this whole message, exactly as needed; the application's handler
+        // (`crates/tachyon/src/app.rs`) is the one that actually waits, with a bounded timeout
+        // long enough to show Windows' own "Tachyon is preventing shutdown" screen (with the
+        // reason above) rather than raced against it, for every window's backup to finish. Only
+        // run when the session is actually ending (`wparam != 0`; it is 0 if another application
+        // refused `WM_QUERYENDSESSION` and the session was cancelled), but the reason is
+        // destroyed either way - left registered, it would still show if a later
+        // `WM_QUERYENDSESSION` recreated one before anything cleared the first.
+        (WM_ENDSESSION, Some(state)) => {
+            if wparam != 0 {
+                (state.on_event)(TrayEvent::EndSession);
+            }
+            // SAFETY: `hwnd` is ours; safe to call even if no reason is currently registered.
+            unsafe { ShutdownBlockReasonDestroy(hwnd) };
             0
         }
         (WM_DESTROY, _) => {
