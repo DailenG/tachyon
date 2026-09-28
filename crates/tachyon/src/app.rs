@@ -461,15 +461,17 @@ fn prepare_ready_window(cx: &mut App) {
             if !ready_windows_enabled(cx) || has_ready_window(cx) {
                 return;
             }
+            let bounds = initial_bounds(cx);
             let options = window_options("Tachyon".into(), false, cx);
             match cx.open_window(options, |window, cx| cx.new(|cx| Editor::new("", window, cx))) {
                 Ok(handle) => {
                     // A hidden window only gets its final size when shown,
                     // and resizing the render targets then takes ≈ 20 ms.
                     // Without DWM's open animation the window appears as soon as it is
-                    // shown, and its first frame is drawn sooner (docs/adr/0004).
+                    // shown, and its first frame is drawn sooner (docs/adr/0004). The size is
+                    // the fitted one, so a small screen's work area still holds the window.
                     let _ = handle.update(cx, |_, window, cx| {
-                        window.resize(WINDOW_SIZE);
+                        window.resize(bounds.size);
                         tachyon_platform::disable_window_transitions(window);
                         tachyon_platform::set_window_icon(window);
                         // Same reasoning as in `open_window`: set before this window is ever
