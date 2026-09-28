@@ -26,6 +26,9 @@ use windows_sys::Win32::System::Pipes::{
     ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS,
     PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT, WaitNamedPipeW,
 };
+use windows_sys::Win32::System::Recovery::{
+    RegisterApplicationRestart, UnregisterApplicationRestart,
+};
 use windows_sys::Win32::System::RemoteDesktop::ProcessIdToSessionId;
 use windows_sys::Win32::System::SystemInformation::OSVERSIONINFOW;
 use windows_sys::Win32::UI::WindowsAndMessaging::{ASFW_ANY, AllowSetForegroundWindow};
@@ -254,6 +257,23 @@ pub fn set_title_bar_dark(window: &impl raw_window_handle::HasWindowHandle, dark
         )
     };
     result == 0
+}
+
+/// See [`crate::register_restart`].
+pub fn register_restart() {
+    let command_line = wide(crate::RESTART_COMMAND_LINE);
+    // SAFETY: `command_line` is a NUL-terminated wide string kept alive for the whole call;
+    // `crate::RESTART_FLAGS` is a valid combination of the documented `dwFlags` bits. The
+    // `HRESULT` result is ignored, matching how other optional Windows integrations here degrade
+    // (the jump list, `set_title_bar_dark`): failing to register only means Windows will not
+    // bring Tachyon back, never a crash or a startup failure.
+    let _ = unsafe { RegisterApplicationRestart(command_line.as_ptr(), crate::RESTART_FLAGS) };
+}
+
+/// See [`crate::unregister_restart`].
+pub fn unregister_restart() {
+    // SAFETY: takes no arguments; safe to call even when nothing is currently registered.
+    let _ = unsafe { UnregisterApplicationRestart() };
 }
 
 pub fn desktop_entry_installed() -> io::Result<bool> {

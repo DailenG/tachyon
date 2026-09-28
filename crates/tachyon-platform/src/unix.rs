@@ -173,6 +173,12 @@ pub fn show_tray(
 
 pub fn set_window_icon(_window: &impl raw_window_handle::HasWindowHandle) {}
 
+/// No OS restart-registration API on Linux or macOS: Windows only (see `crate::register_restart`).
+pub fn register_restart() {}
+
+/// See [`register_restart`]; `crate::unregister_restart`.
+pub fn unregister_restart() {}
+
 #[cfg(target_os = "macos")]
 pub fn query_system_appearance() -> Option<std::sync::mpsc::Receiver<bool>> {
     None

@@ -150,6 +150,23 @@ impl Editor {
         cx.notify();
     }
 
+    /// Writes this document's unsaved-document backup immediately, without closing the window:
+    /// for Windows session end (`WM_QUERYENDSESSION`/`WM_ENDSESSION` - see
+    /// `tachyon_platform::windows::tray`), where the process may be killed as soon as the tray's
+    /// window procedure returns, so there is no time to wait for the usual 1.5 s pause
+    /// ([`Editor::schedule_backup`]). Returns whether the document is safe: `true` if there was
+    /// nothing to back up (no hot exit, or no unsaved changes - the same guard
+    /// [`Editor::write_backup`] itself relies on, so this never creates a backup file for an
+    /// untouched document), or the write succeeded; `false` only if a write was attempted and
+    /// failed, so the caller (`crates/tachyon/src/app.rs`) can report exactly which document was
+    /// not preserved.
+    pub fn backup_for_session_end(&mut self, cx: &mut Context<Self>) -> bool {
+        if !cx.has_global::<Backups>() || !self.is_modified() {
+            return true;
+        }
+        self.backup_now(cx)
+    }
+
     /// After an edit or a save: backs up unsaved text after a pause, or drops the backup of text
     /// that is saved now. Above [`tachyon_doc::LARGE_PLAIN_SIZE`] this is a no-op: writing tens or
     /// hundreds of megabytes 1.5 s after every keystroke would itself compete with the UI

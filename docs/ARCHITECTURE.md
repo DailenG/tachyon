@@ -505,6 +505,20 @@ from plain `MF_STRING` items with real text, so screen readers and other UI Auto
 can read it like any other menu (`SetForegroundWindow` before `TrackPopupMenuEx`,
 `PostMessage(WM_NULL)` after: the documented pattern for a tray menu that keeps working, and
 closes, on repeated shows).
+On Windows, a resident primary with `hot_exit` on also registers for an OS restart
+(`tachyon_platform::register_restart`/`unregister_restart`, tied to the setting via
+`tachyon_editor::RestartRegistration`/`sync_restart_registration`): after the first window's first
+frame (never before it), so a reboot, a Windows Update install, or signing out and back in with
+"Automatically save my restartable apps..." brings Tachyon back the same way autostart does
+([ADR 0008](adr/0008-restart-registration.md)). The tray's hidden window also handles
+`WM_QUERYENDSESSION` (registers a shutdown block reason, "Tachyon is saving unsaved documents",
+and answers TRUE at once) and `WM_ENDSESSION`: a real session end (`TrayEvent::EndSession`) blocks
+the tray thread - and so the window procedure, since the process may be killed as soon as it
+returns - until every open window's hot-exit backup is written synchronously or 30 s pass,
+whichever comes first, then clears the block reason. Windows shows its own "Tachyon is preventing
+shutdown" screen (with that reason) if the wait runs long, rather than the process silently
+appearing hung; the user can still force the shutdown through it. A document that could not be
+backed up, or a wait that timed out, is reported to stderr - a best effort, not a guarantee.
 
 **About window** (`crates/tachyon-editor/src/about.rs`). A separate GPUI window, opened on
 demand by the `About` action (tray, `tachyon --about` forwarded like other launches, and a

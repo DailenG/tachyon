@@ -136,6 +136,17 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
             version: env!("CARGO_PKG_VERSION").into(),
             resident,
         });
+        // Windows only in effect (see `tachyon_platform::register_restart`'s Linux/macOS
+        // no-ops): only a resident primary is worth bringing back after a reboot or sign-in -
+        // a standalone (`-n`) or secondary process holds no hot-exit backups of its own to
+        // restore. Negligible cost (two function pointers into a global), same class as the
+        // `AppInfo` global just above.
+        if is_primary && resident {
+            cx.set_global(tachyon_editor::RestartRegistration {
+                register: tachyon_platform::register_restart,
+                unregister: tachyon_platform::unregister_restart,
+            });
+        }
 
         // Before any window opens or a notification could be posted (`App::set_app_identity`'s
         // own requirement); negligible cost on Linux and macOS (a string clone into the
@@ -289,6 +300,9 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
             // way `open_window` and `prepare_ready_window` do, so it is resolved here instead,
             // the one time this path is windowless.
             tachyon_platform::set_popup_menu_dark(resolved_dark(cx));
+            // No first frame will come either: register for restart right away rather than
+            // waiting for one that never happens.
+            tachyon_editor::sync_restart_registration(cx);
             Vec::new()
         } else if about {
             // `--about` shows the About window, not a document window; restored documents (hot
@@ -317,6 +331,9 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
                             cx.quit();
                         } else if is_primary {
                             check_whats_new(cx);
+                            // After the first frame, never before it (issue #80); a no-op unless
+                            // `RestartRegistration` was set above (resident primary only).
+                            tachyon_editor::sync_restart_registration(cx);
                         }
                     });
                 });
@@ -728,11 +745,71 @@ fn resolved_dark(cx: &App) -> bool {
     cx.try_global::<tachyon_editor::Settings>().map_or(system, |settings| settings.dark(system))
 }
 
-/// Shows the tray icon: clicking it opens a window, its menu opens a window or quits.
+/// How long the tray thread blocks a Windows session-end message
+/// ([`TrayEvent::EndSession`]) waiting for every window's backup to finish, before giving up and
+/// letting `WM_ENDSESSION` return anyway: the process may be killed right after that, so waiting
+/// forever would risk losing the backup entirely if the UI thread were ever wedged, in exchange
+/// for, at worst, an incomplete backup instead of none. `tachyon_platform`'s tray module
+/// registers a shutdown block reason (`ShutdownBlockReasonCreate`) for exactly this wait, so
+/// Windows shows its own "Tachyon is preventing shutdown" screen (with the reason) rather than
+/// silently appearing hung - the user can see why and choose to force it - which is why this can
+/// afford to be generous rather than racing the ~5 s `HungAppTimeout` an unexplained wait would
+/// risk.
+const END_SESSION_BACKUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// What the tray thread forwards to this process's async loop: an ordinary [`TrayEvent`], or a
+/// session-end request carrying the reply [`show_tray`]'s tray thread is blocked on.
+enum TrayMessage {
+    Event(TrayEvent),
+    EndingSession(std::sync::mpsc::SyncSender<()>),
+}
+
+/// Writes every open window's unsaved-document backup synchronously: a Windows session end
+/// (logoff, sign-out, shutdown or restart) reaching [`TrayEvent::EndSession`]. Never closes a
+/// window - hot exit's usual typing-pause backup (`Editor::schedule_backup`) already covers the
+/// ordinary case; this only covers whatever text has not been backed up yet when the session
+/// ends first. A window whose backup could not be written (a full disk, a state directory that
+/// went away) is reported to stderr by its title: there is no time left for a user-facing notice
+/// this late, but the failure should still be visible somewhere durable rather than silently
+/// losing the text.
+fn backup_every_window_for_session_end(cx: &mut App) {
+    for window in cx.windows() {
+        if let Some(editor) = window.downcast::<Editor>() {
+            let outcome = editor
+                .update(cx, |editor, _, cx| (editor.title(), editor.backup_for_session_end(cx)));
+            if let Ok((title, false)) = outcome {
+                eprintln!("tachyon: could not back up \"{title}\" before session end");
+            }
+        }
+    }
+}
+
+/// Shows the tray icon: clicking it opens a window, its menu opens a window or quits. A Windows
+/// session end backs up every window's unsaved text before the process can be killed: the tray
+/// thread's `on_event` call for [`TrayEvent::EndSession`] blocks (see
+/// [`END_SESSION_BACKUP_TIMEOUT`]) until this process's own async loop, below, has run
+/// [`backup_every_window_for_session_end`] and replied - `tachyon_platform`'s tray module relies
+/// on that block to keep `WM_ENDSESSION`'s window procedure from returning any earlier.
 fn show_tray(cx: &mut App) {
-    let (tx, mut rx) = futures::channel::mpsc::unbounded::<TrayEvent>();
-    let Some(tray) = tachyon_platform::Tray::show("Tachyon", move |event| {
-        let _ = tx.unbounded_send(event);
+    let (tx, mut rx) = futures::channel::mpsc::unbounded::<TrayMessage>();
+    let Some(tray) = tachyon_platform::Tray::show("Tachyon", move |event| match event {
+        TrayEvent::EndSession => {
+            let (done_tx, done_rx) = std::sync::mpsc::sync_channel(0);
+            if tx.unbounded_send(TrayMessage::EndingSession(done_tx)).is_ok()
+                && done_rx.recv_timeout(END_SESSION_BACKUP_TIMEOUT).is_err()
+            {
+                // The UI thread did not reply in time (wedged, or a very large number of
+                // windows): explicit rather than silently letting `WM_ENDSESSION` return with no
+                // record of why the backup may be incomplete.
+                eprintln!(
+                    "tachyon: timed out waiting {END_SESSION_BACKUP_TIMEOUT:?} for session-end \
+                     backups; continuing without them"
+                );
+            }
+        }
+        event => {
+            let _ = tx.unbounded_send(TrayMessage::Event(event));
+        }
     }) else {
         return;
     };
@@ -747,24 +824,34 @@ fn show_tray(cx: &mut App) {
     })
     .detach();
     cx.spawn(async move |cx| {
-        while let Some(event) = rx.next().await {
-            cx.update(|cx| match event {
-                TrayEvent::Open => {
-                    let restored = take_pending_restore(cx);
-                    if restored.is_empty() {
-                        show_window(Source::Blank, cx);
-                    }
-                    for source in restored {
-                        show_window(source, cx);
-                    }
-                    cx.activate(true);
+        while let Some(message) = rx.next().await {
+            match message {
+                TrayMessage::Event(event) => {
+                    cx.update(|cx| match event {
+                        TrayEvent::Open => {
+                            let restored = take_pending_restore(cx);
+                            if restored.is_empty() {
+                                show_window(Source::Blank, cx);
+                            }
+                            for source in restored {
+                                show_window(source, cx);
+                            }
+                            cx.activate(true);
+                        }
+                        TrayEvent::About => {
+                            tachyon_editor::open_about(cx);
+                            cx.activate(true);
+                        }
+                        TrayEvent::Quit => cx.dispatch_action(&Quit),
+                        // Intercepted above, before it ever reaches this channel.
+                        TrayEvent::EndSession => {}
+                    });
                 }
-                TrayEvent::About => {
-                    tachyon_editor::open_about(cx);
-                    cx.activate(true);
+                TrayMessage::EndingSession(done) => {
+                    cx.update(backup_every_window_for_session_end);
+                    let _ = done.send(());
                 }
-                TrayEvent::Quit => cx.dispatch_action(&Quit),
-            });
+            }
         }
     })
     .detach();

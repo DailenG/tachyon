@@ -1486,6 +1486,51 @@ fn quit_closes_without_asking_and_the_backup_restores(cx: &mut TestAppContext) {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[gpui::test]
+fn session_end_backs_up_immediately_without_closing_the_window(cx: &mut TestAppContext) {
+    let dir = backup_dir("session-end");
+    cx.update(|cx| cx.set_global(crate::Backups::new(dir.clone())));
+    let (editor, vcx) = open("", cx);
+
+    // Nothing typed yet: no backup should appear, and nothing to do counts as safe.
+    assert!(editor.update(vcx, |e, cx| e.backup_for_session_end(cx)));
+    vcx.run_until_parked();
+    assert!(backups_in(&dir).is_empty(), "nothing unsaved, nothing to back up");
+
+    vcx.simulate_input("draft");
+    assert!(editor.update(vcx, |e, cx| e.backup_for_session_end(cx)), "the write succeeded");
+    vcx.run_until_parked();
+    assert_eq!(backups_in(&dir), ["draft"], "written right away, not after the usual pause");
+    assert!(!vcx.windows().is_empty(), "the window stays open: this only preserves the text");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[gpui::test]
+fn session_end_without_hot_exit_writes_nothing(cx: &mut TestAppContext) {
+    let (editor, vcx) = open("", cx);
+    vcx.simulate_input("draft");
+    assert!(editor.update(vcx, |e, cx| e.backup_for_session_end(cx)), "no Backups global: safe");
+    vcx.run_until_parked();
+    assert!(editor.read_with(vcx, |e, _| e.backup_slot.is_none()), "no Backups global, no slot");
+}
+
+#[gpui::test]
+fn session_end_reports_failure_when_the_backup_cannot_be_written(cx: &mut TestAppContext) {
+    // A plain file where the backup directory needs to be: `create_dir_all` for any path under
+    // it must fail (its parent is not a directory), so the write is deterministically refused
+    // without relying on permissions or disk space.
+    let blocker = backup_dir("session-end-failure");
+    std::fs::write(&blocker, "not a directory").expect("create the blocking file");
+    cx.update(|cx| cx.set_global(crate::Backups::new(blocker.join("backups"))));
+    let (editor, vcx) = open("", cx);
+    vcx.simulate_input("draft");
+    assert!(
+        !editor.update(vcx, |e, cx| e.backup_for_session_end(cx)),
+        "the backup directory could not be created"
+    );
+    let _ = std::fs::remove_file(&blocker);
+}
+
 thread_local! {
     /// What the fake rich-text clipboard received: (html, text).
     static RICH: std::cell::RefCell<Option<(String, String)>> = const { std::cell::RefCell::new(None) };
