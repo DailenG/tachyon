@@ -251,7 +251,7 @@ accounts only the project owner has.
       `AZURE_TRUSTED_SIGNING_ACCOUNT`, `AZURE_TRUSTED_SIGNING_PROFILE` and
       `AZURE_TRUSTED_SIGNING_ENDPOINT` repository secrets; without them signing is skipped with a
       workflow warning instead of failing (forks, or a dry run with no secrets configured)
-- [ ] MSIX installer and auto-update: `cargo xtask msix` (Windows only, needs `makeappx.exe`
+- [x] MSIX installer and auto-update: `cargo xtask msix` (Windows only, needs `makeappx.exe`
       from the Windows 10/11 SDK) packs the signed `tachyon.exe` and
       `packaging/msix/Assets` (rendered from `assets/brand` by `cargo xtask icons`, alongside the
       existing `.ico`) with `packaging/msix/AppxManifest.xml` into an MSIX, and writes
@@ -264,7 +264,12 @@ accounts only the project owner has.
       (`GetCurrentPackageFullName`) and points the `Run` key at the execution alias instead of
       the versioned install path, which would otherwise break on the next update. The release
       workflow signs the MSIX with Azure Trusted Signing the same way as `tachyon.exe` and
-      verifies it the same way. Not yet installed and updated on Windows hardware; a resident
+      verifies it the same way. Checked on the reference machine: install through the
+      `.appinstaller` (1.8 s), alias, Start entry, `.md` association, settings path and autostart
+      target correct; an update from 0.1.0.1 to 0.1.0.2 applied silently about 6 s after a launch
+      and quit, and settings and autostart survived it. Packaged launches cost about 35-40 ms more
+      than the same exe unpackaged (warm p50 59 ms, p95 76-199 ms; package activation, before
+      Tachyon code runs), so the `.zip` stays the fastest option. A resident
       Tachyon's update applies once it fully quits (App Installer stages the update but MSIX
       cannot swap a package whose process is still running), documented in the README and
       ARCHITECTURE rather than automated, since Windows has no supported way to force a clean

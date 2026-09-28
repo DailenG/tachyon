@@ -49,8 +49,11 @@ the prompt to install. This registers Tachyon as an MSIX package (also signed wi
 Signing) that checks for an update every time it launches and applies it in the background; a
 resident Tachyon (the default) picks up the update the next time it fully quits (tray icon →
 "Quit Tachyon", or `tachyon --quit`) or at the next sign-in. `tachyon` also works from any
-terminal, and opening a `.md` or `.markdown` file offers Tachyon in "Open with". The `.zip` above
-still works if you would rather manage updates yourself.
+terminal, and opening a `.md` or `.markdown` file offers Tachyon in "Open with". Launches of a
+packaged app go through Windows' package activation, which adds about 35-40 ms per launch on the
+reference machine (p50 about 59 ms instead of about 21 ms), so the `.zip` above is the faster choice
+if you would rather manage updates yourself. Uninstalling the package does not remove the
+autostart entry if you turned it on; run `tachyon --autostart off` first.
 
 ## Building
 
