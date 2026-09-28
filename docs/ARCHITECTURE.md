@@ -94,6 +94,20 @@ the very top can clear the bar. The document caret is not painted while the find
 takes typing; the field there paints its own.
 Selections are drawn as highlight backgrounds, so they span raw and rendered blocks alike.
 
+An explicit `Editor::editing` flag, not the caret's mere presence, decides whether a block is
+active. `Escape` (`Editor::cancel`) turns it off without moving the caret, unless a find bar,
+picker or prompt is open (closed instead, keeping precedence), an IME composition is in
+progress (left alone), or the document is `Plain` (no raw/rendered distinction to leave); it
+also collapses a selection to a caret. With `editing` off, `active_block`/`update_active` report
+no active block, so every block renders and the caret is not painted, until the next click,
+keystroke, caret movement or edit turns it back on (`Editor::move_to`, `Editor::after_edit`). A
+click that misses every block's own text (`with_mouse`'s handlers all stop propagation once
+they place the caret) reaches the document's own handler instead: below the last block it goes
+to the document's end, and anywhere else to the block nearest the click's position and the
+offset nearest the click inside it - the source line by a row-height estimate from the block's
+own on-screen top, the character by an average glyph width, since a non-active block keeps no
+per-glyph layout to hit-test exactly the way the active block's own `TextLayout` does.
+
 ## Plain-text mode
 
 A `Document` has a `DocMode`: `Markdown` (block-swap, as above) or `Plain` (every block always

@@ -486,6 +486,182 @@ fn double_click_selects_a_word(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn clicking_below_the_last_block_puts_the_caret_at_the_end(cx: &mut TestAppContext) {
+    let (editor, cx) = open(THREE_PARAGRAPHS, cx);
+    let last = editor.read_with(cx, |e, _| e.document().blocks().len() - 1);
+    // `window_item_bounds` is one-frame-stale (see its own doc comment): paint a second frame
+    // so it reflects the blocks this frame actually drew, not the empty range from the first.
+    editor.update(cx, |e, cx| e.move_to(0, false, cx));
+    cx.run_until_parked();
+    let bounds = editor
+        .read_with(cx, |e, _| e.window_item_bounds.get(&last).copied())
+        .expect("last block rendered");
+    let point = gpui::point(bounds.left() + gpui::px(10.), bounds.bottom() + gpui::px(20.));
+
+    cx.simulate_click(point, gpui::Modifiers::none());
+    cx.run_until_parked();
+
+    assert_eq!(selection(&editor, cx), THREE_PARAGRAPHS.len()..THREE_PARAGRAPHS.len());
+    assert_eq!(editor.read_with(cx, |e, _| e.active_block()), Some(last));
+}
+
+#[gpui::test]
+fn clicking_in_the_left_margin_activates_the_nearest_rendered_block(cx: &mut TestAppContext) {
+    let (editor, cx) = open(THREE_PARAGRAPHS, cx);
+    editor.update(cx, |e, cx| e.move_to(find("alpha"), false, cx));
+    cx.run_until_parked();
+    assert_eq!(editor.read_with(cx, |e, _| e.active_block()), Some(0));
+
+    // Block 1 ("gamma delta") is rendered, not active: a click in its row's left margin, well
+    // outside the centered content column, should land on it at its (only) line.
+    let bounds = editor
+        .read_with(cx, |e, _| e.window_item_bounds.get(&1).copied())
+        .expect("second block rendered");
+    let point = gpui::point(gpui::px(2.), bounds.top() + bounds.size.height / 2.);
+    cx.simulate_click(point, gpui::Modifiers::none());
+    cx.run_until_parked();
+
+    assert_eq!(editor.read_with(cx, |e, _| e.active_block()), Some(1));
+    assert_eq!(selection(&editor, cx), find("gamma")..find("gamma"));
+}
+
+#[gpui::test]
+fn clicking_beside_a_wrapped_row_lands_near_that_row(cx: &mut TestAppContext) {
+    // One long single-line paragraph: wide enough windows wrap it into many visual rows.
+    let doc = "word ".repeat(400);
+    let (editor, cx) = open(&doc, cx);
+    editor.update(cx, |e, cx| e.move_to(0, false, cx));
+    cx.run_until_parked();
+    let bounds =
+        editor.read_with(cx, |e, _| e.window_item_bounds.get(&0).copied()).expect("block rendered");
+    let line_height = editor.read_with(cx, |e, _| e.theme.text_size * 1.6);
+
+    // Both clicks are in the left margin (well left of the centered content column), so the
+    // horizontal column is 0 for each; only the row differs.
+    let x = gpui::px(2.);
+    cx.simulate_click(gpui::point(x, bounds.top() + line_height * 1.5), gpui::Modifiers::none());
+    cx.run_until_parked();
+    let near = editor.read_with(cx, |e, _| e.head());
+
+    cx.simulate_click(gpui::point(x, bounds.top() + line_height * 4.5), gpui::Modifiers::none());
+    cx.run_until_parked();
+    let far = editor.read_with(cx, |e, _| e.head());
+
+    assert!(near > 0, "not the very first row: {near}");
+    assert!(
+        far > near + 20,
+        "a lower row lands further into the wrapped line: near={near} far={far}"
+    );
+    assert!(far < doc.len(), "still inside the block: {far}");
+}
+
+#[gpui::test]
+fn clicking_just_left_of_the_text_in_a_wide_window_lands_at_the_line_start(
+    cx: &mut TestAppContext,
+) {
+    let doc = "one two three\n";
+    let (editor, cx) = open(doc, cx);
+    editor.update(cx, |e, cx| e.move_to(0, false, cx));
+    cx.run_until_parked();
+    let bounds =
+        editor.read_with(cx, |e, _| e.window_item_bounds.get(&0).copied()).expect("block rendered");
+    let content_width = editor.read_with(cx, |e, _| e.theme.content_width);
+
+    // The same insets `render_block`'s centered content column (`px_4`, at the test window's
+    // default zoom `rem` of `BASE_REM_SIZE`) and the active block's raw card
+    // (`crate::render::RAW_INSET`, less its 1 px border) add around the text.
+    let rem = gpui::px(16.);
+    let raw_inset = crate::render::RAW_INSET - gpui::px(1.);
+    let column_left = bounds.left() + (bounds.size.width - content_width) / 2.;
+    let text_start_x = column_left + rem + raw_inset;
+    assert!(
+        text_start_x - bounds.left() > gpui::px(50.),
+        "the window is wide enough to actually center the column: {text_start_x:?}"
+    );
+
+    let point = gpui::point(text_start_x - gpui::px(2.), bounds.top() + gpui::px(5.));
+    cx.simulate_click(point, gpui::Modifiers::none());
+    cx.run_until_parked();
+
+    assert_eq!(selection(&editor, cx), 0..0, "just left of the text still lands at its start");
+}
+
+#[gpui::test]
+fn a_margin_click_with_nothing_rendered_yet_does_not_move_the_caret(cx: &mut TestAppContext) {
+    let (editor, cx) = open(THREE_PARAGRAPHS, cx);
+    editor.update(cx, |e, cx| e.move_to(find("gamma"), false, cx));
+    cx.run_until_parked();
+    let before = selection(&editor, cx);
+
+    // Simulates a click before any frame has ever completed: nothing to click relative to, and
+    // in particular no reason to assume the end of the document.
+    editor.update(cx, |e, _| {
+        e.window_item_bounds.clear();
+        e.rendered = 0..0;
+    });
+    cx.simulate_click(gpui::point(gpui::px(2.), gpui::px(400.)), gpui::Modifiers::none());
+    cx.run_until_parked();
+
+    assert_eq!(selection(&editor, cx), before, "nothing known: the click is ignored");
+}
+
+#[gpui::test]
+fn escape_leaves_edit_mode_and_a_typed_key_resumes_it_at_the_kept_position(
+    cx: &mut TestAppContext,
+) {
+    let doc = "one\n\ntwo\n";
+    let (editor, cx) = open(doc, cx);
+    let caret = doc.find("two").expect("fixture");
+    editor.update(cx, |e, cx| e.move_to(caret, false, cx));
+    cx.run_until_parked();
+    assert_eq!(editor.read_with(cx, |e, _| e.active_block()), Some(1));
+
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    assert_eq!(
+        editor.read_with(cx, |e, _| e.active_block()),
+        None,
+        "every block renders while not editing"
+    );
+    assert_eq!(selection(&editor, cx), caret..caret, "the caret keeps its offset");
+
+    cx.simulate_input("X");
+    cx.run_until_parked();
+    assert_eq!(text(&editor, cx), "one\n\nXtwo\n", "typed at the kept position");
+    assert_eq!(editor.read_with(cx, |e, _| e.active_block()), Some(1), "reactivated");
+}
+
+#[gpui::test]
+fn escape_with_the_find_bar_open_closes_only_the_bar(cx: &mut TestAppContext) {
+    let (editor, cx) = open("one\n\ntwo\n", cx);
+    cx.simulate_keystrokes("secondary-f");
+    cx.run_until_parked();
+    assert!(editor.read_with(cx, |e, _| e.find.is_some()));
+
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    assert!(editor.read_with(cx, |e, _| e.find.is_none()), "the bar closed");
+    assert_eq!(editor.read_with(cx, |e, _| e.active_block()), Some(0), "still editing");
+}
+
+#[gpui::test]
+fn arrow_key_after_escape_moves_from_the_kept_position(cx: &mut TestAppContext) {
+    let doc = "one two\n";
+    let (editor, cx) = open(doc, cx);
+    editor.update(cx, |e, cx| e.move_to(3, false, cx));
+    cx.run_until_parked();
+
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    assert_eq!(editor.read_with(cx, |e, _| e.active_block()), None);
+
+    cx.simulate_keystrokes("right");
+    cx.run_until_parked();
+    assert_eq!(selection(&editor, cx), 4..4, "moved right from the kept offset");
+    assert_eq!(editor.read_with(cx, |e, _| e.active_block()), Some(0), "resumed editing");
+}
+
+#[gpui::test]
 fn page_down_and_up_move_by_about_a_screen(cx: &mut TestAppContext) {
     let text: String = (0..400).map(|i| format!("Line {i}\n")).collect();
     let (editor, cx) = open(&text, cx);

@@ -41,6 +41,7 @@
 use std::ops::Range;
 
 use gpui::{Context, Window};
+use tachyon_doc::DocMode;
 
 use crate::editor::{Cancel, Editor, Find, FindNext, FindPrevious, Replace, ReplaceAll};
 
@@ -223,8 +224,31 @@ impl Editor {
         self.step_match(false, cx);
     }
 
+    /// Closes an open overlay first (unchanged: it always keeps Escape's attention). Otherwise,
+    /// outside plain text (no raw/rendered distinction to leave) and outside an IME composition
+    /// (Escape's platform-level behavior there is left alone), collapses the selection to a
+    /// caret and leaves edit mode: [`Editor::active_block`] then reports no active block, so
+    /// every block renders and the caret is not painted, until the next click, keystroke, caret
+    /// movement or edit turns editing back on (`Editor::move_to`/`Editor::after_edit`).
     pub(crate) fn cancel(&mut self, _: &Cancel, _: &mut Window, cx: &mut Context<Self>) {
         if self.find.take().is_some() | self.picker.take().is_some() {
+            cx.notify();
+            return;
+        }
+        if self.marked.is_some() || self.doc.mode() == DocMode::Plain {
+            return;
+        }
+        let had_selection = !self.selection.is_empty();
+        if had_selection {
+            let caret = self.head();
+            self.selection = caret..caret;
+            self.reversed = false;
+        }
+        let was_editing = std::mem::replace(&mut self.editing, false);
+        if was_editing {
+            self.update_active();
+        }
+        if had_selection || was_editing {
             cx.notify();
         }
     }

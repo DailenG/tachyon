@@ -166,8 +166,15 @@ impl Render for Editor {
             .on_action(cx.listener(Self::toggle_text_mode))
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(|editor, _: &MouseDownEvent, window, cx| {
+                cx.listener(|editor, event: &MouseDownEvent, window, cx| {
                     window.focus(&editor.focus, cx);
+                    editor.mouse_down_in_margin(
+                        event.position,
+                        event.modifiers,
+                        event.click_count,
+                        window,
+                        cx,
+                    );
                 }),
             )
             .on_mouse_up(MouseButton::Left, cx.listener(|editor, _, _, _| editor.selecting = false))
@@ -757,7 +764,7 @@ impl Editor {
         let editor = cx.entity();
         // Only one caret is ever visible: while the bar holds typing (see `bar_open`) the field
         // it belongs to draws its own, and the document's stays hidden even if it is focused.
-        let show_caret = self.focus.is_focused(window) && !self.bar_open();
+        let show_caret = self.focus.is_focused(window) && !self.bar_open() && self.editing;
         let cursor_color = theme.editing.caret;
         let paint_layout = layout.clone();
 
