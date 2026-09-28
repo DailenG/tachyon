@@ -306,17 +306,42 @@ currently indexes `&ir.text[range]` as a plain `&str` would need to go through a
 may or may not borrow the rope, and the source map merge above would need to track *why* a span
 stopped being contiguous with the rope's own layout, not just that it is verbatim.
 
-A separate, smaller cost remains open: typing into the active block of a document shaped like
-`fence-15mb.md` (one ~15 MiB fenced code block) or `log-15mb.md` (one ~15 MiB paragraph) shows
-occasional frames in the tens of milliseconds - `render_raw_segment` builds a fresh `StyledText`
-for the whole touched raw segment (up to `RAW_SPLIT_THRESHOLD`, 32 KiB) on every keystroke, and
-shaping that much monospace text is not free; a single-block document's own edit path
-(`Document::stale_block`) also re-derives pre-segmenter boundaries with a fresh copy-and-scan of
-the whole stale block on every keystroke when a giant block has no interior blank line to reuse.
-Both predate this phase (the same cost, worse, existed - unmeasurable, since the file never
-produced a frame at all - before these fixes) and are bounded by segment/chunk size rather than
-file size, so they are flagged in `docs/ROADMAP.md`'s Phase 9 for a follow-up rather than chased
-further here.
+**Typing in a huge single block (`tachyon-doc`, `tachyon-editor`).** Typing into the active block
+of a document shaped like `fence-15mb.md` (one ~15 MiB fenced code block) or `log-15mb.md` (one
+~15 MiB paragraph) used to cost 20-61 ms on the keystroke's own frame, two independent costs
+stacked on top of each other. First, `Document::stale_block` re-derived pre-segmenter boundaries
+with a fresh copy-and-scan of the *whole* stale block on every keystroke whenever a giant block
+had no interior blank line to reuse - the dominant cost at the end of a file, since the copy is
+proportional to the whole block. `Document::boundaries` now bounds that work instead: a
+`single_source` block (the edit touched exactly one pre-existing block, no merge) that is already
+large enough to reach this path parses identically alone (ADR 0005's segmenter invariant), so it
+had *no* interior boundary before the edit, or it would already have been split then. Which of
+"can never gain one" (a fence: closing it for real would end the block, so nothing inside is ever
+outside it) or "can only gain one very close to the edit" (anything else without a container that
+could wrap a nested fence at a raw column a top-level line never could - a list item or a block
+quote) a block is can be told from its own first line alone (`block_shape`), without scanning the
+rest. A fenced block gets no boundaries at all; anything else is presegmented in just a window
+around the edit (`BOUNDARY_SCAN_MARGIN`, 64 KiB each side) instead of the whole block - and that
+scan, like `boundaries`' other calls, now walks the rope's own chunks (`tachyon_md::presegment_chunks`/
+`ends_in_fence_chunks`) instead of copying the range into a `String` first, the same treatment
+`plain_chunk_len_capped` got above. A container, or an edit spanning more than one pre-existing
+block, falls back to the old full scan - rarer, and still correct, just not fast; property tests
+(`incremental`/`corpus`, ADR 0005's arbiter) are unaffected by any of this, since it only changes
+which boundaries a *provisional* placeholder split finds, never the real parse a background job
+settles it against. Second, `Editor::render_raw` split an oversized active block into segments
+sized like `DocMode::Plain`'s own chunks (`PLAIN_CHUNK_BYTES`, 16 KiB): shaping that much
+monospace text fresh on every keystroke - GPUI's line layout cache keys by text, so the one
+segment actually edited always misses it - was the larger of the two costs at the middle of a
+file. `raw_segment_lens` targets a quarter of that (`RAW_SEGMENT_TARGET_BYTES`, 4 KiB) instead,
+reusing the same rope-chunk-walking `plain_chunk_len_capped` with smaller targets; `DocMode::Plain`
+itself is untouched (still `plain_chunk_lens`, and `RAW_SPLIT_THRESHOLD` stays at
+`PLAIN_CHUNK_BYTES * 2` so one of its own blocks, always at most `PLAIN_CHUNK_BYTES`, never starts
+splitting into several of these on every repaint). Measured (Linux, release, 40 keystrokes at
+60 ms each, `TACHYON_FRAME_LOG`): worst frame typing into the middle of `fence-15mb.md`
+28.7 ms → 15.8 ms, `log-15mb.md` 49.2 ms → 9.4 ms; at the end of the file, 61.0 ms → 13.5 ms and
+41.4 ms → 8.7 ms - no frame over the 16.7 ms budget after the fix, where most were over it before.
+Normal-file typing (a 1 MiB well-structured document), a 5 MiB paste and `cargo bench -p
+tachyon-doc`'s keystroke p99 are unaffected (both within measurement noise of before).
 
 ## Concurrency
 

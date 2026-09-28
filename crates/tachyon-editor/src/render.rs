@@ -11,7 +11,7 @@ use gpui::{
     StyledImage as _, StyledText, TextLayout, UnderlineStyle, Window, canvas, div, fill, img, list,
     prelude::*, px, relative, size,
 };
-use tachyon_doc::plain_chunk_lens;
+use tachyon_doc::raw_segment_lens;
 use tachyon_md::{BlockKind, LineInfo, LineKind, Marker, ParsedBlock};
 
 use crate::editor::{Editor, KEY_CONTEXT, TextTarget};
@@ -21,12 +21,14 @@ const INDENT: f32 = 22.;
 
 /// A raw (active) block's source, or a rendered block's line list, is shown as one piece up to
 /// this many bytes/lines. Above it, [`Editor::render_raw`] splits the source with
-/// [`plain_chunk_lens`] (the same chunking `DocMode::Plain` uses) and [`Editor::render_rendered`]
-/// windows `ir.lines`, so a Markdown block that collapses into one enormous unit - a huge fenced
-/// code block, or a whole paragraph with no blank lines - never hands GPUI megabytes of text or
-/// tens of thousands of child elements to shape and lay out at once, active or not. Below this,
-/// both behave exactly as before (one `StyledText`/one child per line): the split only changes
-/// anything for a block this large.
+/// [`raw_segment_lens`] (smaller than [`DocMode::Plain`]'s own chunking: shaping the one segment
+/// a keystroke touches must stay cheap regardless of how large the rest of the block is - see
+/// [`raw_segment_lens`]'s own doc comment) and [`Editor::render_rendered`] windows `ir.lines`, so
+/// a Markdown block that collapses into one enormous unit - a huge fenced code block, or a whole
+/// paragraph with no blank lines - never hands GPUI megabytes of text or tens of thousands of
+/// child elements to shape and lay out at once, active or not. Below this, both behave exactly
+/// as before (one `StyledText`/one child per line): the split only changes anything for a block
+/// this large.
 pub(crate) const RAW_SPLIT_THRESHOLD: usize = tachyon_doc::PLAIN_CHUNK_BYTES * 2;
 
 /// Same idea as [`RAW_SPLIT_THRESHOLD`] for [`Editor::render_rendered`]'s per-line loop: below
@@ -543,9 +545,11 @@ impl Editor {
 
     /// The active block's (or, in `DocMode::Plain`, any block's) source, caret and selection.
     /// Above [`RAW_SPLIT_THRESHOLD`], splits it into several stacked [`render_raw_segment`]
-    /// pieces with [`plain_chunk_lens`] instead of one - the same reason `DocMode::Plain` itself
-    /// never shows more than that much of one pathological line at once, just reached through
-    /// the active-block view of a huge Markdown block. Hit testing, the caret and highlights all
+    /// pieces with [`raw_segment_lens`] instead of one - small enough that re-shaping the one
+    /// segment a keystroke touches stays well under a frame regardless of the block's own size -
+    /// the same reason `DocMode::Plain` itself never shows more than that much of one
+    /// pathological line at once, just reached through the active-block view of a huge Markdown
+    /// block. Hit testing, the caret and highlights all
     /// stay correct across the split: `TextTarget::Raw { base }` already carries whichever
     /// range's own start, unchanged by how many pieces one block is drawn in, and `marks`/
     /// `code_tokens` already clip to whatever range they are asked about.
@@ -569,7 +573,7 @@ impl Editor {
                 cached_lens.clone()
             }
             _ => {
-                let lens = plain_chunk_lens(&rope, range.clone());
+                let lens = raw_segment_lens(&rope, range.clone());
                 self.raw_chunk_cache = Some((range.clone(), version, lens.clone()));
                 lens
             }
