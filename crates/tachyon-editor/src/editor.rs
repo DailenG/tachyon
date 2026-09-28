@@ -483,8 +483,11 @@ impl Editor {
         }
         self.theme = self.theme.restyled(reported);
         // The native title bar is DWM's, not GPUI's: it keeps the mode set when the window
-        // opened until told otherwise.
+        // opened until told otherwise. The tray icon's context menu is process-wide, not
+        // per-window, but it only ever shows one theme at a time, so the last window to follow
+        // the system appearance still leaves it in the right state.
         tachyon_platform::set_title_bar_dark(window, reported);
+        tachyon_platform::set_popup_menu_dark(reported);
         cx.notify();
     }
 

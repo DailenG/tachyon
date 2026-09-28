@@ -89,7 +89,7 @@ impl Settings {
     }
 
     /// Whether the theme is dark, given what the system prefers.
-    pub(crate) fn dark(&self, system_dark: bool) -> bool {
+    pub fn dark(&self, system_dark: bool) -> bool {
         match self.theme {
             ThemeChoice::System => system_dark,
             ThemeChoice::Dark => true,
@@ -117,8 +117,8 @@ impl Editor {
 }
 
 /// Applies changed settings to every open window: the theme, and (Windows) the native title
-/// bar's dark/light mode, which is not GPUI's to draw and so does not follow `apply_settings`'s
-/// own repaint.
+/// bar's and popup menus' dark/light mode, neither of which is GPUI's to draw and so does not
+/// follow `apply_settings`'s own repaint.
 fn apply_to_windows(cx: &mut App) {
     for window in cx.windows() {
         if let Some(editor) = window.downcast::<Editor>() {
@@ -127,6 +127,7 @@ fn apply_to_windows(cx: &mut App) {
                 let settings = cx.try_global::<Settings>().cloned().unwrap_or_default();
                 let dark = settings.dark(is_dark(window.appearance()));
                 tachyon_platform::set_title_bar_dark(window, dark);
+                tachyon_platform::set_popup_menu_dark(dark);
             });
         }
     }

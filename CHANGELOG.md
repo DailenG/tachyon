@@ -121,6 +121,10 @@ All notable user-visible changes are recorded here. The format follows
 
 ### Fixed
 
+- Windows: the tray icon's context menu ("New window", "Quit Tachyon") now follows Tachyon's
+  resolved theme instead of always rendering light, matching the native title bar
+  (`set_popup_menu_dark`; an undocumented `uxtheme.dll` mode switch, Windows 10 1903+, the same one
+  Windows Terminal and Notepad++ use, since `TrackPopupMenuEx` has no documented dark-mode option).
 - Typing right after pasting a large text no longer stalls a frame: the typed text is queued and
   inserted right after the paste lands, instead of the whole paste being inserted on the
   keystroke's frame (25-72 ms for 5 MB).

@@ -196,7 +196,16 @@ unsaved changes: the primary keeps a backup of every unsaved document and reopen
 next start (hot exit, [ADR 0006](adr/0006-hot-exit.md); `tachyon_editor::Backups`).
 On Windows a resident primary shows a tray icon (`tachyon_platform::Tray`: a hidden window with
 its own message loop on a `tray` thread, events forwarded to GPUI over a channel); clicking it
-opens a window. The icon (`crates/tachyon-platform/assets/tachyon.ico`, generated from the brand
+opens a window, and its context menu ("New window", "Quit Tachyon") is built from plain
+`MF_STRING` items with real text, so screen readers and other UI Automation clients can read it
+like any other menu (`SetForegroundWindow` before `TrackPopupMenuEx`, `PostMessage(WM_NULL)`
+after: the documented pattern for a tray menu that keeps working, and closes, on repeated shows).
+It also follows Tachyon's resolved theme, like the title bar below: `set_popup_menu_dark` records
+the choice cheaply wherever a window or the settings resolve it, and the tray thread applies it
+(`SetPreferredAppMode` / `FlushMenuThemes`, undocumented `uxtheme.dll` ordinals with no supported
+alternative, Windows 10 1903+) right before the next `TrackPopupMenuEx`, since the preference is
+per-thread and the menu shows on the tray's own thread. The icon
+(`crates/tachyon-platform/assets/tachyon.ico`, generated from the brand
 art in `assets/brand/` by `cargo xtask icons`) is embedded in the binary for the tray and set on every window at its DPI's
 sizes; `crates/tachyon/build.rs` also writes it, with version information, as resources of the
 executable (a `.res` file the MSVC linker takes directly, so no resource compiler is needed),
@@ -223,7 +232,8 @@ gates it: Wayland maps windows opened hidden, so Linux has none. Ready windows h
 and close animations turned off (`disable_window_transitions`), so they appear, and draw, as soon
 as they are shown. Every window's native title bar is set to Tachyon's resolved theme
 (`set_title_bar_dark`, DWM's immersive dark mode) before it first paints, and again when the
-theme changes (settings saved, or the system appearance with `theme = "system"`).
+theme changes (settings saved, or the system appearance with `theme = "system"`); the tray's
+context menu is kept in step the same way (see above).
 
 `TACHYON_FRAME_LOG=<path>` makes the editor append one line per frame to `<path>`: its busy time,
 render time, editor work by kind (edit, clipboard, paste, parse), and each key's time from arrival

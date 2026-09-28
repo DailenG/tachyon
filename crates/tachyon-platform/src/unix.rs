@@ -139,6 +139,10 @@ pub fn set_title_bar_dark(_window: &impl raw_window_handle::HasWindowHandle, _da
     false
 }
 
+/// No popup menu to recolour here yet: Tachyon has none on Linux or macOS (the tray icon, the
+/// only one so far, is Windows-only).
+pub fn set_popup_menu_dark(_dark: bool) {}
+
 pub fn attach_parent_console() {}
 
 pub fn write_clipboard_html(

@@ -3,13 +3,21 @@
 //! The icon ships inside the binary as an `.ico` with 32-bit DIB images (no PNG, so creating an
 //! icon never loads an image codec). `cargo xtask icons` regenerates it from the brand art in
 //! `assets/brand/` and checks that every image is a DIB.
+//!
+//! The icon's context menu follows Tachyon's resolved theme (`set_popup_menu_dark`,
+//! `apply_dark_menu_theme`): there is no documented way to ask `TrackPopupMenuEx` for a dark
+//! menu, so this reaches for the same undocumented `uxtheme.dll` mode switch Windows Terminal and
+//! Notepad++ use.
 
 use std::ptr;
-use std::sync::{Mutex, mpsc};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{LazyLock, Mutex, mpsc};
 use std::thread::JoinHandle;
 
+use windows_sys::Wdk::System::SystemServices::RtlGetVersion;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
-use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress, LoadLibraryW};
+use windows_sys::Win32::System::SystemInformation::OSVERSIONINFOW;
 use windows_sys::Win32::UI::HiDpi::{GetDpiForSystem, GetDpiForWindow, GetSystemMetricsForDpi};
 use windows_sys::Win32::UI::Shell::{
     NIF_ICON, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_SETVERSION, NIN_SELECT,
@@ -244,8 +252,121 @@ fn add_icon(hwnd: HWND, state: &State) -> bool {
     added && unsafe { Shell_NotifyIconW(NIM_SETVERSION, &data) } != 0
 }
 
+/// `uxtheme.dll`'s ordinal 135 (undocumented: no header declares it, and it has no exported name,
+/// only this ordinal): `int SetPreferredAppMode(int mode)`. Setting it makes windows and common
+/// controls created afterwards *on the calling thread* - including a popup menu about to be shown
+/// with `TrackPopupMenuEx` - paint dark or light instead of following the system's setting. This
+/// is the same undocumented call Windows Terminal and Notepad++ make for their own dark menus;
+/// there is no supported, documented alternative.
+const ORD_SET_PREFERRED_APP_MODE: usize = 135;
+/// `uxtheme.dll`'s ordinal 136: `void FlushMenuThemes()`. Repaints menu theme data the system may
+/// already have cached from before `SetPreferredAppMode` changed; every public description of this
+/// pair calls it immediately afterwards, so this does the same.
+const ORD_FLUSH_MENU_THEMES: usize = 136;
+
+/// `SetPreferredAppMode`'s `PreferredAppMode` enum: 2 forces dark, 3 forces light. 1 ("allow
+/// dark", i.e. follow the system) is never used here: Tachyon's theme is an explicit choice
+/// (`Theme::for_window` - settings, or the system only when `theme = "system"`), not "whatever the
+/// system just changed to".
+const FORCE_DARK: i32 = 2;
+const FORCE_LIGHT: i32 = 3;
+
+type SetPreferredAppMode = unsafe extern "system" fn(i32) -> i32;
+type FlushMenuThemes = unsafe extern "system" fn();
+
+/// The real Windows build number. `GetVersionExW` (and `GetVersion`) report an older, shimmed
+/// version once an executable has no manifest asserting support for the running Windows release,
+/// so `SetPreferredAppMode`'s availability (Windows 10 1903, build 18362) is checked with
+/// `RtlGetVersion` instead: ntdll.dll always exports it and never shims it.
+fn windows_build_number() -> u32 {
+    // SAFETY: every all-zero bit pattern is a valid OSVERSIONINFOW.
+    let mut info: OSVERSIONINFOW = unsafe { std::mem::zeroed() };
+    info.dwOSVersionInfoSize = size_of::<OSVERSIONINFOW>() as u32;
+    // SAFETY: `info` is a plain struct `RtlGetVersion` fills in place; `dwOSVersionInfoSize` was
+    // just set, as the call needs it to know which version of the struct was passed.
+    unsafe { RtlGetVersion(&mut info) };
+    info.dwBuildNumber
+}
+
+/// Resolves [`ORD_SET_PREFERRED_APP_MODE`] and [`ORD_FLUSH_MENU_THEMES`], the first time a menu
+/// needs to be dark or light rather than at process start: only [`apply_dark_menu_theme`] calls
+/// this, and only [`context_menu`] calls that, right before a menu is ever shown. `None` before
+/// Windows 10 1903 (earlier builds either lack the ordinal or export a different, incompatible
+/// function there - `AllowDarkModeForApp`, which takes a `bool` - under the same number) or if
+/// `uxtheme.dll` ever stops exporting them. The two addresses are kept as `usize` (the same trick
+/// [`icon`]'s cache uses for `HICON`) so the `LazyLock` is `Send` and `Sync` without an `unsafe
+/// impl`; `module` is never freed, so they stay valid for the rest of the process.
+fn dark_menu_api() -> Option<(SetPreferredAppMode, FlushMenuThemes)> {
+    static API: LazyLock<Option<(usize, usize)>> = LazyLock::new(|| {
+        if windows_build_number() < 18362 {
+            return None;
+        }
+        let name = wide("uxtheme.dll");
+        // SAFETY: a well-known system DLL name, NUL-terminated UTF-16; if it is somehow missing,
+        // the call just returns null.
+        let module = unsafe { LoadLibraryW(name.as_ptr()) };
+        if module.is_null() {
+            return None;
+        }
+        // SAFETY: an ordinal under 0x10000 passed where `GetProcAddress` expects a name means
+        // "look this export up by ordinal instead" (the documented `MAKEINTRESOURCEA`
+        // convention) - the only way to reach an export that has no name in the table.
+        let set_mode = unsafe { GetProcAddress(module, ORD_SET_PREFERRED_APP_MODE as *const u8) };
+        // SAFETY: as above.
+        let flush = unsafe { GetProcAddress(module, ORD_FLUSH_MENU_THEMES as *const u8) };
+        match (set_mode, flush) {
+            (Some(set_mode), Some(flush)) => Some((set_mode as usize, flush as usize)),
+            _ => None,
+        }
+    });
+    API.map(|(set_mode, flush)| {
+        // SAFETY: `set_mode` came from `GetProcAddress` just above, resolved once and never
+        // invalidated; called with the signature uxtheme.dll's own (never public) declaration
+        // gives this ordinal, which every description of this undocumented API agrees on.
+        let set_preferred_app_mode =
+            unsafe { std::mem::transmute::<usize, SetPreferredAppMode>(set_mode) };
+        // SAFETY: as above, for `flush` and `FlushMenuThemes`'s ordinal.
+        let flush_menu_themes = unsafe { std::mem::transmute::<usize, FlushMenuThemes>(flush) };
+        (set_preferred_app_mode, flush_menu_themes)
+    })
+}
+
+/// The dark/light choice popup menus shown after this apply. Set by `set_popup_menu_dark`
+/// (re-exported from `crate::windows`), called wherever a window or the settings resolve
+/// Tachyon's theme (`Theme::for_window`, `apply_to_windows`, `follow_appearance`); read by
+/// [`apply_dark_menu_theme`] right before [`context_menu`] shows one. A plain atomic store -
+/// resolving and calling into uxtheme.dll happens only at the read site, not here, so a theme
+/// change costs nothing until a menu is actually about to show.
+static POPUP_MENU_DARK: AtomicBool = AtomicBool::new(false);
+
+/// Records the dark/light choice the tray's context menu should show next. Cheap (an atomic
+/// store): see [`POPUP_MENU_DARK`] for why the uxtheme calls themselves wait until the menu shows.
+pub fn set_popup_menu_dark(dark: bool) {
+    POPUP_MENU_DARK.store(dark, Ordering::Relaxed);
+}
+
+/// Applies [`POPUP_MENU_DARK`] to this thread's next popup menu: `SetPreferredAppMode`, then
+/// `FlushMenuThemes` so a menu theme already cached from before is dropped. The undocumented
+/// dark-mode preference is per-thread, which is why this runs on the tray window's own thread,
+/// right before `TrackPopupMenuEx` in [`context_menu`], rather than wherever the theme was last
+/// decided (typically GPUI's main thread). A no-op before Windows 10 1903 or if `uxtheme.dll`
+/// does not export the ordinals ([`dark_menu_api`]).
+fn apply_dark_menu_theme() {
+    let Some((set_preferred_app_mode, flush_menu_themes)) = dark_menu_api() else { return };
+    let mode = if POPUP_MENU_DARK.load(Ordering::Relaxed) { FORCE_DARK } else { FORCE_LIGHT };
+    // SAFETY: `set_preferred_app_mode` takes and returns a `PreferredAppMode` `i32`; called on
+    // this thread, right before showing a popup menu, as the undocumented API requires.
+    unsafe { set_preferred_app_mode(mode) };
+    // SAFETY: `flush_menu_themes` takes no arguments; called right after `SetPreferredAppMode`, as
+    // every description of the pair agrees it must be, so no already-cached menu theme survives.
+    unsafe { flush_menu_themes() };
+}
+
 /// Shows the context menu at screen position (`x`, `y`) and returns the chosen command, or 0.
 fn context_menu(hwnd: HWND, x: i32, y: i32) -> usize {
+    // Before the menu exists at all, so it is created with the right theme's system brushes
+    // (there is no way to retheme an existing menu, only to influence the next one created).
+    apply_dark_menu_theme();
     // SAFETY: creates an empty menu, destroyed below.
     let menu = unsafe { CreatePopupMenu() };
     if menu.is_null() {
@@ -346,5 +467,14 @@ mod tests {
         assert_eq!(ico_image(18).map(width), Some(20), "the next size up, scaled down");
         assert_eq!(ico_image(30).map(width), Some(32));
         assert_eq!(ico_image(128).map(width), Some(64), "the largest when none is large enough");
+    }
+
+    #[test]
+    fn windows_build_number_is_plausible() {
+        // The reference and CI machines are Windows 10 or 11; both report a build number well
+        // past `SetPreferredAppMode`'s (18362), and well short of a value that would suggest the
+        // struct was filled in wrong.
+        let build = windows_build_number();
+        assert!((10000..100_000).contains(&build), "implausible build number {build}");
     }
 }
