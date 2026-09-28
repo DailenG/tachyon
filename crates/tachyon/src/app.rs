@@ -4,9 +4,9 @@ use std::time::Instant;
 
 use futures::StreamExt as _;
 use gpui::{
-    App, Bounds, Context, Global, KeyBinding, PathPromptOptions, Pixels, QuitMode, SharedString,
-    Size, TitlebarOptions, WindowAppearance, WindowBounds, WindowHandle, WindowOptions, actions,
-    prelude::*, px, size,
+    App, Bounds, Context, Global, KeyBinding, PathPromptOptions, Pixels, Point, QuitMode,
+    SharedString, Size, TitlebarOptions, WindowAppearance, WindowBounds, WindowHandle,
+    WindowOptions, actions, point, prelude::*, px, size,
 };
 use tachyon_doc::Document;
 use tachyon_editor::{Editor, Theme};
@@ -172,7 +172,15 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
             cx.set_global(tachyon_editor::RecentFiles::new(recent));
         }
         cx.set_global(tachyon_editor::RecentFilesOs {
-            update_jump_list: tachyon_platform::update_jump_list,
+            // A private instance (`TACHYON_INSTANCE_ID` set, e.g. by a benchmark or a test) has
+            // its own recent-files list (see the `RecentFiles::new` call just above), but the
+            // jump list is scoped to the whole app, not to one instance: writing it here would
+            // overwrite the real jump list with this instance's own, unrelated recent files.
+            update_jump_list: if crate::is_default_instance() {
+                tachyon_platform::update_jump_list
+            } else {
+                |_| {}
+            },
             note_recently_used: tachyon_platform::note_recently_used,
         });
         cx.set_global(tachyon_editor::HtmlClipboard(|window, html, text| {
@@ -301,9 +309,65 @@ const WINDOW_SIZE: Size<Pixels> = size(px(900.), px(1000.));
 /// screen and its bottom edge under the taskbar. The Windows 11 frame is about 31 px.
 const FRAME_ALLOWANCE: Pixels = px(48.);
 
-/// `WINDOW_SIZE`, shrunk to fit with its frame in the primary display's work area, and centred
-/// there.
-fn initial_bounds(cx: &App) -> Bounds<Pixels> {
+/// One title-bar height: how far down and right each new window cascades from the last one.
+const CASCADE_STEP: Pixels = px(32.);
+
+/// Windows opened so far (real ones from `open_window`, and a hidden prepared-ahead one from
+/// `prepare_ready_window`), oldest first, for `initial_bounds`'s cascade: the next window offsets
+/// from the most recently opened one that is still open. Never pruned on close by itself; a
+/// closed handle is dropped the next time `last_window_origin` walks past it looking for a
+/// survivor, so closing windows costs nothing extra.
+struct WindowCascade(Vec<WindowHandle<Editor>>);
+
+impl Global for WindowCascade {}
+
+/// Remembers `handle` as the most recently opened window, for the next one's cascade origin.
+fn track_window(handle: WindowHandle<Editor>, cx: &mut App) {
+    if cx.has_global::<WindowCascade>() {
+        cx.global_mut::<WindowCascade>().0.push(handle);
+    } else {
+        cx.set_global(WindowCascade(vec![handle]));
+    }
+}
+
+/// The screen position of the most recently opened window that is still open, or `None` if
+/// there is not one (nothing has opened yet, or every window opened so far has since closed).
+fn last_window_origin(cx: &mut App) -> Option<Point<Pixels>> {
+    loop {
+        let handle = *cx.try_global::<WindowCascade>()?.0.last()?;
+        if let Ok(origin) = handle.update(cx, |_, window, _| window.bounds().origin) {
+            return Some(origin);
+        }
+        cx.global_mut::<WindowCascade>().0.pop();
+    }
+}
+
+/// Where a new window of `size` should go: `CASCADE_STEP` down and right from `last` (the most
+/// recently opened window still open), or `base` - the centred position `initial_bounds` also
+/// falls back to for the very first window - if `last` is `None` or the offset would put the
+/// window outside `work_area` (it wraps back to `base` rather than walking further off-screen).
+/// Pure and independent of any live display or window, so it is unit-tested directly
+/// (`tests::cascade_origin_*`) without opening one.
+fn cascade_origin(
+    last: Option<Point<Pixels>>,
+    base: Point<Pixels>,
+    size: Size<Pixels>,
+    work_area: Bounds<Pixels>,
+) -> Point<Pixels> {
+    let Some(last) = last else { return base };
+    let next = point(last.x + CASCADE_STEP, last.y + CASCADE_STEP);
+    let fits = next.x >= work_area.origin.x
+        && next.y >= work_area.origin.y
+        && next.x + size.width <= work_area.origin.x + work_area.size.width
+        && next.y + size.height <= work_area.origin.y + work_area.size.height;
+    if fits { next } else { base }
+}
+
+/// `WINDOW_SIZE`, shrunk to fit with its frame in the primary display's work area. The very
+/// first window (nothing yet tracked in `WindowCascade`, so `last_window_origin` is a plain
+/// global lookup - no cost added before its first frame) is centred there; every later one
+/// cascades from the last still-open one (`cascade_origin`).
+fn initial_bounds(cx: &mut App) -> Bounds<Pixels> {
     let Some(display) = cx.primary_display() else {
         return Bounds::centered(None, WINDOW_SIZE, cx);
     };
@@ -312,7 +376,9 @@ fn initial_bounds(cx: &App) -> Bounds<Pixels> {
         WINDOW_SIZE.width.min(visible.size.width - FRAME_ALLOWANCE),
         WINDOW_SIZE.height.min(visible.size.height - FRAME_ALLOWANCE),
     );
-    Bounds::centered_at(visible.center(), fitted)
+    let centered = Bounds::centered_at(visible.center(), fitted);
+    let last = last_window_origin(cx);
+    Bounds { origin: cascade_origin(last, centered.origin, fitted, visible), size: fitted }
 }
 
 /// How long start-up waits for the settings file to be read (it is small and local).
@@ -321,9 +387,9 @@ const SETTINGS_WAIT: std::time::Duration = std::time::Duration::from_millis(15);
 /// How long start-up waits for the system appearance (see `query_system_appearance`).
 const APPEARANCE_WAIT: std::time::Duration = std::time::Duration::from_millis(15);
 
-fn window_options(title: SharedString, show: bool, cx: &App) -> WindowOptions {
+fn window_options(title: SharedString, show: bool, bounds: Bounds<Pixels>) -> WindowOptions {
     WindowOptions {
-        window_bounds: Some(WindowBounds::Windowed(initial_bounds(cx))),
+        window_bounds: Some(WindowBounds::Windowed(bounds)),
         titlebar: Some(TitlebarOptions { title: Some(title), ..Default::default() }),
         app_id: Some(APP_ID.to_owned()),
         show,
@@ -350,7 +416,8 @@ fn initial_document(source: &Source, cx: &App) -> Document {
 }
 
 fn open_window(source: Source, cx: &mut App) -> Option<WindowHandle<Editor>> {
-    let options = window_options(source.title(), true, cx);
+    let bounds = initial_bounds(cx);
+    let options = window_options(source.title(), true, bounds);
     let result = cx.open_window(options, move |window, cx| {
         tachyon_platform::set_window_icon(window);
         // Set before the window's first frame paints, so DWM never shows the OS dark-mode
@@ -368,7 +435,10 @@ fn open_window(source: Source, cx: &mut App) -> Option<WindowHandle<Editor>> {
         })
     });
     match result {
-        Ok(handle) => Some(handle),
+        Ok(handle) => {
+            track_window(handle, cx);
+            Some(handle)
+        }
         Err(e) => {
             eprintln!("tachyon: failed to open window: {e:#}");
             None
@@ -462,7 +532,7 @@ fn prepare_ready_window(cx: &mut App) {
                 return;
             }
             let bounds = initial_bounds(cx);
-            let options = window_options("Tachyon".into(), false, cx);
+            let options = window_options("Tachyon".into(), false, bounds);
             match cx.open_window(options, |window, cx| cx.new(|cx| Editor::new("", window, cx))) {
                 Ok(handle) => {
                     // A hidden window only gets its final size when shown,
@@ -480,6 +550,7 @@ fn prepare_ready_window(cx: &mut App) {
                         tachyon_platform::set_title_bar_dark(window, dark);
                         tachyon_platform::set_popup_menu_dark(dark);
                     });
+                    track_window(handle, cx);
                     cx.set_global(ReadyWindow(Some(handle)));
                 }
                 Err(e) => eprintln!("tachyon: could not prepare a window ({e:#})"),
@@ -648,4 +719,55 @@ fn serve_forwarded_launches(listener: Listener, cx: &mut App) {
         }
     })
     .detach();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const WORK_AREA: Bounds<Pixels> = Bounds {
+        origin: point(px(0.), px(0.)),
+        size: Size { width: px(1920.), height: px(1080.) },
+    };
+    const WIN_SIZE: Size<Pixels> = size(px(900.), px(1000.));
+    const BASE: Point<Pixels> = point(px(510.), px(40.));
+
+    #[test]
+    fn cascade_origin_centres_the_very_first_window() {
+        assert_eq!(cascade_origin(None, BASE, WIN_SIZE, WORK_AREA), BASE);
+    }
+
+    #[test]
+    fn cascade_origin_steps_down_and_right_from_the_last_window() {
+        let last = point(px(100.), px(40.));
+        let expected = point(last.x + CASCADE_STEP, last.y + CASCADE_STEP);
+        assert_eq!(cascade_origin(Some(last), BASE, WIN_SIZE, WORK_AREA), expected);
+    }
+
+    #[test]
+    fn cascade_origin_wraps_back_to_the_centred_position_past_the_work_area_edge() {
+        // One step further would push the 900x1000 window past the 1920x1080 work area.
+        let last = point(px(1000.), px(50.));
+        assert_eq!(cascade_origin(Some(last), BASE, WIN_SIZE, WORK_AREA), BASE);
+
+        let last = point(px(100.), px(50.));
+        assert_eq!(cascade_origin(Some(last), BASE, WIN_SIZE, WORK_AREA), BASE);
+    }
+
+    #[test]
+    fn cascade_origin_wraps_above_a_work_area_that_does_not_start_at_the_origin() {
+        // A work area offset by a taskbar or a second monitor to its left/above.
+        let work_area = Bounds {
+            origin: point(px(1920.), px(40.)),
+            size: Size { width: px(1920.), height: px(1040.) },
+        };
+        let last = point(px(1920.), px(40.));
+        let expected = point(last.x + CASCADE_STEP, last.y + CASCADE_STEP);
+        assert_eq!(cascade_origin(Some(last), BASE, WIN_SIZE, work_area), expected);
+
+        // Cascading from well left of the work area's own top-left wraps, rather than landing
+        // outside it.
+        let last = point(px(1000.), px(40.));
+        assert_eq!(cascade_origin(Some(last), BASE, WIN_SIZE, work_area), BASE);
+    }
 }

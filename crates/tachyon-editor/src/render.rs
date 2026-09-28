@@ -348,7 +348,11 @@ impl Editor {
                 .pl(self.theme.scaled(px(8. + 14. * f32::from(item.indent))))
                 .overflow_hidden()
                 .when(selected, |d| d.bg(theme.accent).text_color(theme.text.on_accent))
-                .child(div().flex_none().child(item.label.clone()))
+                .child(div().flex_none().child(if item.marked {
+                    format!("\u{2713} {}", item.label)
+                } else {
+                    item.label.clone()
+                }))
                 .children(item.detail.clone().map(|detail| {
                     div()
                         .text_color(detail_color)

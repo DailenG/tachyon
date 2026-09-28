@@ -58,7 +58,11 @@ snapshot and returns owned data. The hot path has no shared `Mutex`.
 **Buffer (`tachyon-text`).** A `ropey::Rope` (O(log n) edits, O(1) snapshot clones), a version
 counter, a bounded edit log (`edits_since`) for rebasing stale background results, and undo
 history. Undo groups are sealed explicitly by the editor (pauses, cursor jumps); the buffer holds
-no clock or grouping policy. Line endings are normalized to LF on load and on insert, and the
+no clock or grouping policy. Each undo group carries its own ever-increasing id, kept as the group
+moves between the undo and redo stacks (`Buffer::history_position`); `Editor::is_modified` remembers
+the id current at the last save and compares against it, so undo/redo landing back on that exact
+group - not merely "no edit since" - clears the dirty marker, in O(1) with no text comparison.
+Line endings are normalized to LF on load and on insert, and the
 dominant original ending is restored on save. IME and GPUI's input handler use UTF-16 ranges;
 conversion goes byte → char → UTF-16 in O(log n).
 

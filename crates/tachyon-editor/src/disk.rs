@@ -172,7 +172,6 @@ impl Editor {
                 editor.set_loaded(*loaded, cx);
                 editor.disk_stamp = Some(current);
                 editor.file = Some(path);
-                editor.saved_version = editor.doc.buffer().version();
                 editor.move_to(caret, false, cx);
             });
         })

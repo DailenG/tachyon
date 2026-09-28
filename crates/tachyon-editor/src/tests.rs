@@ -330,6 +330,40 @@ fn save_writes_the_file_with_its_line_endings(cx: &mut TestAppContext) {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+#[gpui::test]
+fn undo_and_redo_back_to_the_saved_text_clears_is_modified(cx: &mut TestAppContext) {
+    let (editor, cx) = open("para\n", cx);
+    assert!(!editor.read_with(cx, |e, _| e.is_modified()));
+
+    cx.simulate_keystrokes("ctrl-end");
+    cx.simulate_input("!");
+    assert!(editor.read_with(cx, |e, _| e.is_modified()));
+
+    // Undo back to exactly the text last saved (here, loaded) clears the dirty marker: it is
+    // not enough to check "no edit happened since", or this would still show dirty.
+    cx.simulate_keystrokes("secondary-z");
+    assert_eq!(text(&editor, cx), "para\n");
+    assert!(!editor.read_with(cx, |e, _| e.is_modified()), "undo restored the saved text");
+
+    // Redo back away from the saved text is dirty again, and redoing once more - landing back
+    // on the saved position - clears it again.
+    cx.simulate_keystrokes("secondary-shift-z");
+    assert_eq!(text(&editor, cx), "para\n!");
+    assert!(editor.read_with(cx, |e, _| e.is_modified()));
+
+    cx.simulate_keystrokes("secondary-z");
+    assert!(!editor.read_with(cx, |e, _| e.is_modified()), "undo again restores the saved text");
+
+    // Retyping the same characters by hand instead of redoing them is a new edit: it lands on
+    // the same text but a different point in the undo history, so it stays dirty.
+    cx.simulate_input("!");
+    assert_eq!(text(&editor, cx), "para\n!");
+    assert!(
+        editor.read_with(cx, |e, _| e.is_modified()),
+        "a hand-retyped edit still counts as modified"
+    );
+}
+
 #[test]
 fn atomic_write_replaces_content_and_leaves_no_temp_file() {
     let dir = std::env::temp_dir().join(format!("tachyon-atomic-{}", std::process::id()));
@@ -1633,6 +1667,36 @@ fn command_palette_shows_shortcuts_from_the_keymap(cx: &mut TestAppContext) {
     // macOS), not GPUI's `ctrl-shift-O`.
     let expected = if cfg!(target_os = "macos") { "Cmd+Shift+O" } else { "Ctrl+Shift+O" };
     assert_eq!(shortcut.as_deref(), Some(expected), "read from the actual key_bindings()");
+}
+
+/// Filters the palette to the three "Theme: ..." rows and returns their labels in list order,
+/// with `initial` set as the current theme (so a different one carries the checkmark each time).
+/// The checkmark must never change this order - see `Item::marked`'s doc comment for the bug
+/// this guards: folding the mark into the matched text made whichever row currently carried it
+/// sort after the other two, so the same arrow-key count picked a different theme depending on
+/// which one was already active.
+fn theme_row_order(initial: crate::ThemeChoice, cx: &mut TestAppContext) -> Vec<String> {
+    cx.update(|cx| {
+        cx.set_global(crate::Settings { theme: initial, zoom: 1., hot_exit: true, tips: true });
+    });
+    let (editor, cx) = open("text\n", cx);
+    cx.simulate_keystrokes("secondary-shift-p");
+    cx.simulate_input("theme");
+    editor.read_with(cx, |e, _| {
+        let picker = e.picker.as_ref().expect("open");
+        picker.matches.iter().map(|&i| picker.items[i].label.clone()).collect()
+    })
+}
+
+#[gpui::test]
+fn command_palette_theme_rows_keep_the_same_order_whichever_theme_is_current(
+    cx: &mut TestAppContext,
+) {
+    let expected = ["Theme: Dark", "Theme: Light", "Theme: System"];
+    for choice in [crate::ThemeChoice::Dark, crate::ThemeChoice::Light, crate::ThemeChoice::System]
+    {
+        assert_eq!(theme_row_order(choice, cx), expected, "current theme: {choice:?}");
+    }
 }
 
 #[gpui::test]

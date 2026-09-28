@@ -142,7 +142,9 @@ fn key_name(key: &str) -> String {
 
 /// Builds the palette's rows from `COMMANDS`: each action's live shortcut from the keymap, and
 /// each setting's current value marked (a checkmark on the active theme; the live value in Hot
-/// exit's own name).
+/// exit's own name). The checkmark is a separate `Item::marked` flag, never folded into `label`
+/// itself: see that field's doc comment for why (folding it in would make the three theme rows
+/// rank differently, and so reorder, depending only on which one happens to be current).
 fn command_items(cx: &App) -> Vec<Item> {
     let keymap = cx.key_bindings();
     let keymap = keymap.borrow();
@@ -150,20 +152,27 @@ fn command_items(cx: &App) -> Vec<Item> {
     COMMANDS
         .iter()
         .map(|command| {
-            let (label, shortcut) = match command.effect {
+            let (label, marked, shortcut) = match command.effect {
                 CommandEffect::Action(action_name) => {
-                    (command.name.to_owned(), shortcut_for(&keymap, action_name))
+                    (command.name.to_owned(), false, shortcut_for(&keymap, action_name))
                 }
                 CommandEffect::Theme(choice) => {
-                    let mark = if settings.theme == choice { "\u{2713} " } else { "" };
-                    (format!("{mark}{}", command.name), None)
+                    (command.name.to_owned(), settings.theme == choice, None)
                 }
                 CommandEffect::ToggleHotExit => (
                     format!("{}: {}", command.name, if settings.hot_exit { "On" } else { "Off" }),
+                    false,
                     None,
                 ),
             };
-            Item { label, detail: None, indent: 0, shortcut, pick: Pick::Command(command.effect) }
+            Item {
+                label,
+                detail: None,
+                indent: 0,
+                shortcut,
+                marked,
+                pick: Pick::Command(command.effect),
+            }
         })
         .collect()
 }
