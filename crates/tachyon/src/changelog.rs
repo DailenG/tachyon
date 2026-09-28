@@ -1,5 +1,7 @@
 // Cuts one version's section out of `CHANGELOG.md`'s text: its own `## [X.Y.Z]` heading line up
-// to, but not including, the next `## [` line (or the end of the file). `build.rs` embeds the
+// to, but not including, the next line starting `## ` (any level-two heading, not only a
+// bracketed version - a following `## Migration notes` or the like ends the section too), or the
+// end of the file. `build.rs` embeds the
 // running version's section into the binary (see `whats_new::NOTES`) by `include!`-ing this
 // file's source rather than depending on this crate: a build script runs before the crate it
 // belongs to exists as a built artifact, so it cannot simply `use` it. The function lives here,
@@ -21,15 +23,15 @@ pub(crate) fn extract_section<'a>(changelog: &'a str, version: &str) -> Option<&
 }
 
 /// Finds `heading` as a line prefix (so `## [1.0.0] - 2026-09-28` matches `## [1.0.0]`), then
-/// returns the text from that line up to the next line starting with `## [`, or the end of the
-/// text if there is none.
+/// returns the text from that line up to the next line starting with `## ` (any level-two
+/// heading), or the end of the text if there is none.
 fn find_section<'a>(changelog: &'a str, heading: &str) -> Option<&'a str> {
     let mut offset = 0;
     let mut start = None;
     for line in changelog.split_inclusive('\n') {
         match start {
             None if line.starts_with(heading) => start = Some(offset),
-            Some(section_start) if line.starts_with("## [") => {
+            Some(section_start) if line.starts_with("## ") => {
                 return Some(&changelog[section_start..offset]);
             }
             _ => {}
@@ -93,5 +95,32 @@ mod tests {
         let section = extract_section(CHANGELOG, "1.0.0").expect("found");
         assert!(section.starts_with("## [1.0.0] - 2026-09-28"), "{section:?}");
         assert!(section.trim_end().ends_with("- old thing"), "{section:?}");
+    }
+
+    #[test]
+    fn stops_at_any_level_two_heading_not_only_bracketed_ones() {
+        let changelog = "\
+# Changelog
+
+## [1.1.0] - 2026-10-01
+
+### Added
+
+- new thing
+
+## Migration notes
+
+Some prose that is not a version section at all.
+
+## [1.0.0] - 2026-09-28
+
+### Added
+
+- old thing
+";
+        let section = extract_section(changelog, "1.1.0").expect("found");
+        assert!(section.starts_with("## [1.1.0] - 2026-10-01"), "{section:?}");
+        assert!(section.contains("- new thing"));
+        assert!(!section.contains("Migration notes"), "stopped before the next heading: {section:?}");
     }
 }

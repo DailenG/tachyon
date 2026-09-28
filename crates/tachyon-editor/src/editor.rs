@@ -432,10 +432,14 @@ impl Editor {
         self.doc.buffer().history_position() != self.saved_history_position
     }
 
-    /// Window title: `title_override` if one was set, else the file name (or "Tachyon" for a
-    /// scratch buffer), with a leading dot while there are unsaved changes.
+    /// Window title: `title_override` if one was set and the document has no file yet, else the
+    /// file name (or "Tachyon" for a scratch buffer), with a leading dot while there are unsaved
+    /// changes. Save As on an overridden document (the What's new window) gives it a file, so
+    /// this reverts to the ordinary rule from then on rather than keeping a stale fixed title.
     pub fn title(&self) -> String {
-        if let Some(title) = &self.title_override {
+        if self.file.is_none()
+            && let Some(title) = &self.title_override
+        {
             return title.clone();
         }
         let name = self
