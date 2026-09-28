@@ -66,11 +66,10 @@
       <p class="hero-flavor">A tachyon is a hypothetical particle that outruns light. This one just outruns your editor.</p>
       <p class="tagline">Tachyon opens into a resident instance in 20&ndash;35&nbsp;ms, paints every keystroke inside a single frame, and edits gigabyte-scale files without a stall. Built in Rust on GPUI, rendering straight to the GPU: DirectX on Windows, Vulkan on Linux, Metal on macOS.</p>
       <div class="hero-actions">
-        <a class="btn btn-primary" href="https://github.com/DailenG/tachyon/releases/latest">Download latest release</a>
+        <a class="btn btn-primary" href="https://github.com/DailenG/tachyon/releases/latest">Download Tachyon 1.0</a>
         <a class="btn btn-secondary" href="https://github.com/DailenG/tachyon">View on GitHub</a>
         <a class="btn btn-ghost" href="#source">Build from source →</a>
       </div>
-      <p class="hero-note"><strong>No release is published yet</strong> — the download link above will resolve once v0.1.0 ships. Until then, <a href="#source">build it from source</a> in a couple of minutes.</p>
       <p class="live-timing" id="live-timing" hidden></p>
     </div>
   </section>
@@ -148,7 +147,7 @@
       <div class="section-head">
         <span class="kicker">On this machine</span>
         <h2>What it actually looks like</h2>
-        <p>Real captures of the build in this repository, taken on Linux just now &mdash; same binary, same editor, no mockups.</p>
+        <p>Real captures of Tachyon 1.0 on Linux, rendered at 2x &mdash; same binary, same editor, no mockups.</p>
       </div>
       <div class="theme-compare">
         <input type="radio" name="theme-shot" id="shot-dark" checked>
@@ -182,6 +181,13 @@
                srcset="assets/screenshots/plain-text-log.webp 1x, assets/screenshots/plain-text-log@2x.webp 2x"
                alt="A 4,000-line synthetic log file open in plain-text mode: literal monospaced text, no Markdown rendering applied anywhere.">
           <figcaption>A 4,000-line log opens in plain-text mode: no syntax hiding, no Markdown parsing overhead.</figcaption>
+        </figure>
+        <figure>
+          <img width="560" height="360" loading="lazy"
+               src="assets/screenshots/command-palette.webp"
+               srcset="assets/screenshots/command-palette.webp 1x, assets/screenshots/command-palette@2x.webp 2x"
+               alt="The command palette open over a document, filtered by a short query to a few commands, each row showing its keyboard shortcut.">
+          <figcaption>The command palette: every command and setting, with its shortcut, filtered as you type.</figcaption>
         </figure>
       </div>
     </div>
@@ -287,6 +293,11 @@
       </div>
       <div class="feature-grid">
         <div class="feature-card">
+          <h3>Command palette</h3>
+          <p>Every command and setting in one filterable list, each with its shortcut. Quick open jumps straight to a recent file.</p>
+          <kbd>Ctrl+Shift+P</kbd> <kbd>Ctrl+P</kbd>
+        </div>
+        <div class="feature-card">
           <h3>Find &amp; replace</h3>
           <p>Replace All rewrites every match as a single undo step, even across hundreds of thousands of hits.</p>
           <kbd>Ctrl+F</kbd> <kbd>Ctrl+H</kbd>
@@ -298,7 +309,7 @@
         </div>
         <div class="feature-card">
           <h3>Open recent</h3>
-          <p>Pick from your last 30 files, filtered as you type.</p>
+          <p>Pick from your last 30 files, filtered as you type. On Windows they're also in the taskbar jump list.</p>
           <kbd>Ctrl+R</kbd>
         </div>
         <div class="feature-card">
@@ -313,7 +324,7 @@
         </div>
         <div class="feature-card">
           <h3>Settings</h3>
-          <p>Theme, zoom and hot-exit live in a plain <code>settings.toml</code>.</p>
+          <p>Theme, zoom, hot exit and tips live in a plain <code>settings.toml</code>; the palette changes them too.</p>
           <kbd>Ctrl+,</kbd>
         </div>
         <div class="feature-card">
@@ -348,7 +359,7 @@
         </div>
         <div class="feature-card">
           <h3>Windows tray icon</h3>
-          <p>A resident Tachyon lives in the tray: new window, or quit, without hunting for a taskbar entry.</p>
+          <p>A resident Tachyon lives in the tray: new window, About, or quit, without hunting for a taskbar entry.</p>
         </div>
       </div>
     </div>
@@ -360,7 +371,6 @@
         <span class="kicker">Get it</span>
         <h2>Install Tachyon</h2>
       </div>
-      <p class="install-note"><strong>No release has been published yet.</strong> The buttons below point at <a href="https://github.com/DailenG/tachyon/releases/latest">the latest GitHub release</a> and will start working the moment v0.1.0 ships. Today, building from source (bottom of this section) takes about as long as reading this page.</p>
       <div class="install-grid">
         <div class="install-card">
           <h3>Windows</h3>
