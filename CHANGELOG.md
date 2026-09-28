@@ -142,6 +142,15 @@ All notable user-visible changes are recorded here. The format follows
 
 ### Changed
 
+- Clicking below the last block now puts the caret at the document's end instead of leaving it
+  wherever it was; clicking beside or between blocks (margins, window gutters, gaps) now goes to
+  the nearest block, at the position closest to the click, instead of doing nothing. `Escape`,
+  when no find bar, picker or prompt is open, now leaves edit mode: every block renders (the
+  active block's own raw view returns to rendered) and the caret stops painting, though it keeps
+  its offset; the next click, keystroke, caret movement or edit resumes editing right there.
+  `Escape` also collapses a selection to a caret. Plain text has no raw/rendered distinction, so
+  `Escape` does nothing there.
+
 - New light and dark palettes from the design direction: navy-tinted surfaces and deep-navy text,
   one brand-blue accent, and syntax colors that all meet 4.5:1 contrast (muted text and code
   comments were below it on the editing card and code backgrounds).

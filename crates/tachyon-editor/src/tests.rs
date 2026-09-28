@@ -486,6 +486,102 @@ fn double_click_selects_a_word(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn clicking_below_the_last_block_puts_the_caret_at_the_end(cx: &mut TestAppContext) {
+    let (editor, cx) = open(THREE_PARAGRAPHS, cx);
+    let last = editor.read_with(cx, |e, _| e.document().blocks().len() - 1);
+    // `window_item_bounds` is one-frame-stale (see its own doc comment): paint a second frame
+    // so it reflects the blocks this frame actually drew, not the empty range from the first.
+    editor.update(cx, |e, cx| e.move_to(0, false, cx));
+    cx.run_until_parked();
+    let bounds = editor
+        .read_with(cx, |e, _| e.window_item_bounds.get(&last).copied())
+        .expect("last block rendered");
+    let point = gpui::point(bounds.left() + gpui::px(10.), bounds.bottom() + gpui::px(20.));
+
+    cx.simulate_click(point, gpui::Modifiers::none());
+    cx.run_until_parked();
+
+    assert_eq!(selection(&editor, cx), THREE_PARAGRAPHS.len()..THREE_PARAGRAPHS.len());
+    assert_eq!(editor.read_with(cx, |e, _| e.active_block()), Some(last));
+}
+
+#[gpui::test]
+fn clicking_in_the_left_margin_activates_the_nearest_rendered_block(cx: &mut TestAppContext) {
+    let (editor, cx) = open(THREE_PARAGRAPHS, cx);
+    editor.update(cx, |e, cx| e.move_to(find("alpha"), false, cx));
+    cx.run_until_parked();
+    assert_eq!(editor.read_with(cx, |e, _| e.active_block()), Some(0));
+
+    // Block 1 ("gamma delta") is rendered, not active: a click in its row's left margin, well
+    // outside the centered content column, should land on it at its (only) line.
+    let bounds = editor
+        .read_with(cx, |e, _| e.window_item_bounds.get(&1).copied())
+        .expect("second block rendered");
+    let point = gpui::point(gpui::px(2.), bounds.top() + bounds.size.height / 2.);
+    cx.simulate_click(point, gpui::Modifiers::none());
+    cx.run_until_parked();
+
+    assert_eq!(editor.read_with(cx, |e, _| e.active_block()), Some(1));
+    assert_eq!(selection(&editor, cx), find("gamma")..find("gamma"));
+}
+
+#[gpui::test]
+fn escape_leaves_edit_mode_and_a_typed_key_resumes_it_at_the_kept_position(
+    cx: &mut TestAppContext,
+) {
+    let doc = "one\n\ntwo\n";
+    let (editor, cx) = open(doc, cx);
+    let caret = doc.find("two").expect("fixture");
+    editor.update(cx, |e, cx| e.move_to(caret, false, cx));
+    cx.run_until_parked();
+    assert_eq!(editor.read_with(cx, |e, _| e.active_block()), Some(1));
+
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    assert_eq!(
+        editor.read_with(cx, |e, _| e.active_block()),
+        None,
+        "every block renders while not editing"
+    );
+    assert_eq!(selection(&editor, cx), caret..caret, "the caret keeps its offset");
+
+    cx.simulate_input("X");
+    cx.run_until_parked();
+    assert_eq!(text(&editor, cx), "one\n\nXtwo\n", "typed at the kept position");
+    assert_eq!(editor.read_with(cx, |e, _| e.active_block()), Some(1), "reactivated");
+}
+
+#[gpui::test]
+fn escape_with_the_find_bar_open_closes_only_the_bar(cx: &mut TestAppContext) {
+    let (editor, cx) = open("one\n\ntwo\n", cx);
+    cx.simulate_keystrokes("secondary-f");
+    cx.run_until_parked();
+    assert!(editor.read_with(cx, |e, _| e.find.is_some()));
+
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    assert!(editor.read_with(cx, |e, _| e.find.is_none()), "the bar closed");
+    assert_eq!(editor.read_with(cx, |e, _| e.active_block()), Some(0), "still editing");
+}
+
+#[gpui::test]
+fn arrow_key_after_escape_moves_from_the_kept_position(cx: &mut TestAppContext) {
+    let doc = "one two\n";
+    let (editor, cx) = open(doc, cx);
+    editor.update(cx, |e, cx| e.move_to(3, false, cx));
+    cx.run_until_parked();
+
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    assert_eq!(editor.read_with(cx, |e, _| e.active_block()), None);
+
+    cx.simulate_keystrokes("right");
+    cx.run_until_parked();
+    assert_eq!(selection(&editor, cx), 4..4, "moved right from the kept offset");
+    assert_eq!(editor.read_with(cx, |e, _| e.active_block()), Some(0), "resumed editing");
+}
+
+#[gpui::test]
 fn page_down_and_up_move_by_about_a_screen(cx: &mut TestAppContext) {
     let text: String = (0..400).map(|i| format!("Line {i}\n")).collect();
     let (editor, cx) = open(&text, cx);

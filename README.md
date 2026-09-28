@@ -72,6 +72,7 @@ start as fast as a scratchpad and edit like Typora: one pane, inline WYSIWYG, no
 | Undo / redo | `Ctrl+Z` / `Ctrl+Shift+Z` |
 | Select all | `Ctrl+A` |
 | Document start / end | `Ctrl+Home` / `Ctrl+End` |
+| Leave editing (click, type or move the caret to resume) | `Escape` |
 
 ## Performance budgets
 

@@ -194,6 +194,12 @@ pub struct Editor {
     appearance_unconfirmed: bool,
     /// Block (and leaf within it) shown raw, as last laid out.
     active: Option<(BlockId, Option<usize>)>,
+    /// Whether the caret's block renders raw. Left by `Editor::cancel` without losing the
+    /// caret: `Editor::active_block`/`Editor::update_active` then report no active block, so
+    /// every block renders and the caret is not painted. The next click, keystroke, caret
+    /// movement or edit turns it back on (`Editor::move_to`, `Editor::after_edit`),
+    /// re-entering at the caret's kept offset.
+    pub(crate) editing: bool,
     /// Layout of the active block's raw text as last painted, with the
     /// document offset of its first byte.
     pub(crate) active_layout: Option<(TextLayout, usize)>,
@@ -319,6 +325,7 @@ impl Editor {
             appearance_unconfirmed: settings.theme == crate::ThemeChoice::System
                 && hint.is_some_and(|dark| dark != reported),
             active: None,
+            editing: true,
             active_layout: None,
             parse_task: None,
             pending_paste: None,
@@ -367,6 +374,7 @@ impl Editor {
         self.marked = None;
         self.active = None;
         self.active_layout = None;
+        self.editing = true;
         self.parse_task = None;
         self.list.reset(self.doc.blocks().len());
         self.update_active();
@@ -470,8 +478,13 @@ impl Editor {
     }
 
     /// Index of the block holding the caret; it is shown raw, entirely or
-    /// (in lists, quotes and footnotes) just the leaf under the caret.
+    /// (in lists, quotes and footnotes) just the leaf under the caret. `None` while not
+    /// editing (`Editor::cancel` left edit mode): every block then renders, though the caret
+    /// keeps its offset.
     pub fn active_block(&self) -> Option<usize> {
+        if !self.editing {
+            return None;
+        }
         self.doc.block_at(self.head())
     }
 
@@ -557,6 +570,7 @@ impl Editor {
 
     pub(crate) fn move_to(&mut self, offset: usize, select: bool, cx: &mut Context<Self>) {
         self.flush_pending_paste(cx);
+        self.editing = true;
         let offset = offset.min(self.doc.len());
         if select {
             let tail = self.tail();
@@ -675,7 +689,7 @@ impl Editor {
         self.move_to(target, select, cx);
     }
 
-    fn update_active(&mut self) {
+    pub(crate) fn update_active(&mut self) {
         let index = self.active_block();
         let id =
             index.map(|i| (self.doc.blocks()[i].id(), self.active_leaf().map(|(leaf, _)| leaf)));
@@ -832,6 +846,7 @@ impl Editor {
     }
 
     fn after_edit(&mut self, cx: &mut Context<Self>) {
+        self.editing = true;
         self.schedule_backup(cx);
         self.goal_x = None;
         self.refresh_find(cx);
@@ -994,6 +1009,101 @@ impl Editor {
         if self.selecting {
             self.move_to(offset, true, cx);
         }
+    }
+
+    /// A click that reached this handler missed every block's own text - `with_mouse` stops
+    /// propagation once it handles one, so this only ever runs for a margin, a gap between
+    /// blocks, the window's side gutters, or the space below the document. Below the *last*
+    /// block of the whole document, puts the caret at the end (like [`Editor::document_end`]);
+    /// otherwise finds the block nearest the click by its on-screen bounds
+    /// (`window_item_bounds`, from the last completed frame - nothing tracks per-line bounds
+    /// outside the active block's own [`TextLayout`]) and the position nearest the click inside
+    /// it (`nearest_offset_in_block`), then handles it exactly like an ordinary click there.
+    pub(crate) fn mouse_down_in_margin(
+        &mut self,
+        position: Point<Pixels>,
+        modifiers: gpui::Modifiers,
+        click_count: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.doc.blocks().is_empty() {
+            return self.mouse_down(0, modifiers, click_count, window, cx);
+        }
+        let mut nearest: Option<(usize, Pixels)> = None;
+        let mut bottom_most: Option<(usize, Pixels)> = None;
+        for (&index, bounds) in &self.window_item_bounds {
+            let distance = if position.y < bounds.top() {
+                bounds.top() - position.y
+            } else if position.y > bounds.bottom() {
+                position.y - bounds.bottom()
+            } else {
+                px(0.)
+            };
+            if nearest.is_none_or(|(_, d)| distance < d) {
+                nearest = Some((index, distance));
+            }
+            if bottom_most.is_none_or(|(_, b)| bounds.bottom() > b) {
+                bottom_most = Some((index, bounds.bottom()));
+            }
+        }
+        if let Some((index, bottom)) = bottom_most
+            && index + 1 == self.doc.blocks().len()
+            && position.y >= bottom
+        {
+            return self.mouse_down(self.doc.len(), modifiers, click_count, window, cx);
+        }
+        let offset = match nearest {
+            Some((index, _)) => self.nearest_offset_in_block(index, position),
+            None => self.doc.len(),
+        };
+        self.mouse_down(offset, modifiers, click_count, window, cx);
+    }
+
+    /// The position closest to `position` inside block `index`: the source line nearest the
+    /// click's y (a row-height estimate from the block's own recorded top) and, within that
+    /// line, the character nearest its x (an average glyph width estimate) - a rendered,
+    /// non-active block keeps no per-glyph layout the way the active block's own [`TextLayout`]
+    /// does, and shaping one just to hit-test a rare margin click would cost as much as drawing
+    /// it. Falls back to the block's start if it has no recorded bounds or is empty (should not
+    /// happen for an index `mouse_down_in_margin` found bounds for).
+    fn nearest_offset_in_block(&self, index: usize, position: Point<Pixels>) -> usize {
+        let range = self.doc.block_range(index);
+        if range.is_empty() {
+            return range.start;
+        }
+        let Some(bounds) = self.window_item_bounds.get(&index).copied() else {
+            return range.start;
+        };
+        let code = matches!(
+            self.doc.blocks()[index].parsed().kind,
+            BlockKind::CodeBlock { .. } | BlockKind::Html
+        );
+        let text_size = if code { self.theme.code_size } else { self.theme.text_size };
+        let line_height = text_size * if code { 1.45 } else { 1.6 };
+        let rope = self.doc.buffer().rope();
+        let first_line = rope.byte_to_line(range.start);
+        let last_line = rope.byte_to_line(range.end.saturating_sub(1).max(range.start));
+        let line_offset = ((position.y - bounds.top()).max(px(0.)) / line_height) as usize;
+        let target_line = first_line + line_offset.min(last_line - first_line);
+        let line_start = rope.line_to_byte(target_line).max(range.start);
+        let mut line_end = rope.line_to_byte(target_line + 1).min(range.end);
+        if line_end > line_start && rope.byte(line_end - 1) == b'\n' {
+            line_end -= 1;
+        }
+        let text_start_x = bounds.left() + self.theme.scaled(px(16.));
+        let column = ((position.x - text_start_x).max(px(0.)) / (text_size * 0.55)) as usize;
+        let line_text = rope.byte_slice(line_start..line_end).to_string();
+        let mut offset = line_end;
+        let mut byte = line_start;
+        for (seen, ch) in line_text.chars().enumerate() {
+            if seen == column {
+                offset = byte;
+                break;
+            }
+            byte += ch.len_utf8();
+        }
+        offset
     }
 
     // ---- actions --------------------------------------------------------
@@ -1424,6 +1534,7 @@ impl Editor {
         self.marked = None;
         self.active = None;
         self.active_layout = None;
+        self.editing = true;
         self.notice = None;
         self.list.reset(self.doc.blocks().len());
         self.update_active();
