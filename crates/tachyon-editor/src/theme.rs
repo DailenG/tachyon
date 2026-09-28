@@ -49,7 +49,8 @@ pub struct Surfaces {
     pub code: Hsla,
 }
 
-/// Text colors. Each meets 4.5:1 on every surface (see the contrast test).
+/// Text colors. Each meets 4.5:1 on every surface (see the contrast test), except `tip`, which
+/// is deliberately fainter (see its own doc comment).
 #[derive(Clone, Copy, Debug)]
 pub struct TextColors {
     pub primary: Hsla,
@@ -58,6 +59,22 @@ pub struct TextColors {
     pub link: Hsla,
     /// Text on a solid `accent` fill (selected picker row, prompt button, checked task).
     pub on_accent: Hsla,
+    /// The rotating tip drawn behind the document (`Settings::tips`; see `render::tip_overlay`):
+    /// `surface.canvas` blended towards `muted` by `TIP_BLEND`, computed once here at theme
+    /// build time rather than with a runtime alpha. Deliberately fainter than `muted` - it is
+    /// decorative, always painted on `canvas` and never required reading - so it is not held to
+    /// the 4.5:1 minimum the contrast test checks every other text color against.
+    pub tip: Hsla,
+}
+
+/// How far `TextColors::tip` sits from `canvas` towards `muted`: enough to read as a soft
+/// watermark, not enough to compete with `muted` text or the document itself.
+const TIP_BLEND: f32 = 0.4;
+
+/// `canvas` blended towards `muted` by `TIP_BLEND`. `Hsla::blend` keeps `self`'s alpha, and
+/// `canvas` is opaque, so the result is opaque too - no per-frame alpha compositing.
+fn tip_color(canvas: Hsla, muted: Hsla) -> Hsla {
+    canvas.blend(muted.opacity(TIP_BLEND))
 }
 
 /// 1 px boundaries.
@@ -167,6 +184,7 @@ impl Theme {
                 muted: rgb(0x42566c).into(),
                 link: rgb(0x1356a4).into(),
                 on_accent: rgb(0xffffff).into(),
+                tip: tip_color(rgb(0xfafbfe).into(), rgb(0x42566c).into()),
             },
             border: Borders {
                 subtle: rgb(0xb5c2d0).into(),
@@ -208,6 +226,7 @@ impl Theme {
                 muted: rgb(0xabbdd0).into(),
                 link: rgb(0x8bc3ff).into(),
                 on_accent: rgb(0x0e1623).into(),
+                tip: tip_color(rgb(0x0e1623).into(), rgb(0xabbdd0).into()),
             },
             border: Borders {
                 subtle: rgb(0x40526a).into(),
@@ -428,5 +447,22 @@ mod tests {
         let mut theme = Theme::light();
         theme.text.muted = theme.surface.code;
         assert!(failures(&theme).iter().any(|f| f.starts_with("text.muted on code")));
+    }
+
+    #[test]
+    fn the_tip_color_is_a_partial_blend_towards_muted() {
+        for theme in [Theme::light(), Theme::dark()] {
+            let (canvas, muted, tip) =
+                (opaque(theme.surface.canvas), opaque(theme.text.muted), opaque(theme.text.tip));
+            assert_ne!(tip, canvas, "dark={}: indistinguishable from the background", theme.dark);
+            assert_ne!(tip, muted, "dark={}: as strong as muted text", theme.dark);
+            let (canvas_to_tip, canvas_to_muted) = (contrast(tip, canvas), contrast(muted, canvas));
+            assert!(
+                canvas_to_tip > 1.5 && canvas_to_tip < canvas_to_muted,
+                "dark={}: tip contrast {canvas_to_tip:.2} should sit between barely-there and \
+                 muted's {canvas_to_muted:.2}",
+                theme.dark
+            );
+        }
     }
 }

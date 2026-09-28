@@ -18,6 +18,7 @@ mod prompt;
 mod render;
 mod settings;
 mod theme;
+mod tips;
 
 pub use crate::about::{About, AboutView, AppInfo, open_about};
 pub use crate::backup::{Backups, HotExit, Restored};

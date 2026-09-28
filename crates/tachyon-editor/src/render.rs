@@ -184,6 +184,7 @@ impl Render for Editor {
                 cx.listener(|editor, _, _, _| editor.selecting = false),
             )
             .children(self.mode_notice())
+            .children(self.tip_overlay())
             .child(
                 list(
                     self.list.clone(),
@@ -514,6 +515,38 @@ impl Editor {
                 .border_b_1()
                 .border_color(theme.border.subtle)
                 .child(notice)
+                .into_any_element(),
+        )
+    }
+
+    /// The rotating tip (`Settings::tips`; picked once per window, see `Editor::refresh_tip`),
+    /// in `theme.text.tip`, centred in the content column near the bottom of the window. Added
+    /// to `render`'s tree before the list below, so the list's own blocks paint over it wherever
+    /// the document has content there, and it only shows through the empty space around and
+    /// below them - it stays visible whether the document is empty or not, since it is never the
+    /// only thing in that space. Decorative: no id and no mouse handler, so it is neither
+    /// hit-tested nor selectable.
+    fn tip_overlay(&self) -> Option<AnyElement> {
+        let tip = self.tip.clone()?;
+        let theme = &self.theme;
+        Some(
+            div()
+                .absolute()
+                .bottom_6()
+                .left_0()
+                .right_0()
+                .flex()
+                .justify_center()
+                .child(
+                    div()
+                        .w_full()
+                        .max_w(theme.content_width)
+                        .px_4()
+                        .text_center()
+                        .text_size(theme.text_size)
+                        .text_color(theme.text.tip)
+                        .child(tip),
+                )
                 .into_any_element(),
         )
     }

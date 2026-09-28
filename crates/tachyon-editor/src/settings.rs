@@ -23,11 +23,13 @@ pub struct Settings {
     pub zoom: f32,
     /// Keep unsaved documents when quitting (ADR 0006).
     pub hot_exit: bool,
+    /// Show a faint rotating tip behind the document (`render::tip_overlay`).
+    pub tips: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { theme: ThemeChoice::System, zoom: 1., hot_exit: true }
+        Settings { theme: ThemeChoice::System, zoom: 1., hot_exit: true, tips: true }
     }
 }
 
@@ -45,6 +47,9 @@ zoom = 1.0
 
 # Keep unsaved documents when quitting, and reopen them at the next start.
 hot_exit = true
+
+# Show a faint rotating tip behind the document.
+tips = true
 ";
 
 impl Settings {
@@ -81,6 +86,11 @@ impl Settings {
                     "true" => settings.hot_exit = true,
                     "false" => settings.hot_exit = false,
                     _ => problems.push(format!("{number}: hot_exit is true or false")),
+                },
+                "tips" => match value {
+                    "true" => settings.tips = true,
+                    "false" => settings.tips = false,
+                    _ => problems.push(format!("{number}: tips is true or false")),
                 },
                 other => problems.push(format!("{number}: unknown setting `{other}`")),
             }
@@ -208,15 +218,18 @@ mod tests {
     #[test]
     fn values_comments_and_problems() {
         let (settings, problems) = Settings::parse(
-            "theme = \"light\"  # always\nzoom = 1.25\nhot_exit = false\nzoom = 9\ncolour = red\nnonsense\n",
+            "theme = \"light\"  # always\nzoom = 1.25\nhot_exit = false\ntips = false\nzoom = 9\ncolour = red\nnonsense\n",
         );
-        assert_eq!(settings, Settings { theme: ThemeChoice::Light, zoom: 1.25, hot_exit: false });
+        assert_eq!(
+            settings,
+            Settings { theme: ThemeChoice::Light, zoom: 1.25, hot_exit: false, tips: false }
+        );
         assert_eq!(
             problems,
             [
-                "4: zoom is a number from 0.5 to 3.0",
-                "5: unknown setting `colour`",
-                "6: expected `key = value`",
+                "5: zoom is a number from 0.5 to 3.0",
+                "6: unknown setting `colour`",
+                "7: expected `key = value`",
             ]
         );
     }
