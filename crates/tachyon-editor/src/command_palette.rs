@@ -96,13 +96,12 @@ fn theme_value(choice: ThemeChoice) -> &'static str {
 }
 
 /// The settings file's value syntax for one of `COMMANDS`' own content-width presets (quoted,
-/// matching `Settings::parse`); exact float comparison is safe since both sides come from the
-/// same literal constants above.
+/// matching `Settings::parse`). Exact float patterns are safe: both sides are the same literals.
 fn content_width_value(width: ContentWidth) -> &'static str {
     match width {
-        ContentWidth::Px(value) if value == 680. => "\"680px\"",
-        ContentWidth::Px(value) if value == 1100. => "\"1100px\"",
-        ContentWidth::Percent(value) if value == 100. => "\"100%\"",
+        ContentWidth::Px(680.) => "\"680px\"",
+        ContentWidth::Px(1100.) => "\"1100px\"",
+        ContentWidth::Percent(100.) => "\"100%\"",
         _ => "\"820px\"",
     }
 }
