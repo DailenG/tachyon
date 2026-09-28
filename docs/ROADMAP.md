@@ -390,20 +390,43 @@ block is virtualization's whole unit. See `docs/ARCHITECTURE.md`'s "Markdown mem
       every block scrolled past, now evicted) cost 2.51 ms; the screenshot shows the restored
       top-of-document content (headings, lists, a fenced block, a table, a block quote, links)
       rendered correctly, not blank or stale
-- [ ] Two smaller, pre-existing costs remain, flagged rather than silently left out (see
-      `docs/ARCHITECTURE.md`'s "Not done, and why"): typing into the active block of
-      `fence-15mb.md` or `log-15mb.md` (one ~15 MiB block) occasionally costs 20-58 ms - shaping a
-      freshly-built `StyledText` for the touched ~16-32 KiB raw segment on every keystroke, and
-      (for a giant block with no interior blank line) `Document::stale_block` re-deriving
-      pre-segmenter boundaries with a fresh copy-and-scan of the whole stale block each keystroke.
-      Both are bounded by segment/chunk size rather than file size and are strictly better than
-      before this phase (baseline never produced a typing frame at all for these files - true
-      unresponsiveness, not merely slow - and log-15mb.md's typing cost there, on the rare frame
-      it did produce between other operations, was 267-344 ms), but are not yet under budget on
-      every frame; a follow-up should look at caching `render_raw_segment`'s shaped output per
-      segment (keyed like `raw_chunk_cache`/`rendered_heights_cache`) and giving
-      `Document::stale_block`'s `boundaries()` the same rope-chunk-walking treatment
-      `plain_chunk_len_capped` got above, rather than its current full copy-and-scan
+- [x] The two smaller, pre-existing costs flagged after the previous pass (see
+      `docs/ARCHITECTURE.md`'s "Typing in a huge single block"): typing into the active block of
+      `fence-15mb.md` or `log-15mb.md` (one ~15 MiB block) occasionally cost 20-61 ms - shaping a
+      freshly-built `StyledText` for the touched raw segment (up to `RAW_SPLIT_THRESHOLD`, sized
+      like a `DocMode::Plain` chunk, 16 KiB) on every keystroke, and (for a giant block with no
+      interior blank line) `Document::stale_block` re-deriving pre-segmenter boundaries with a
+      fresh copy-and-scan of the whole stale block each keystroke. Fixed as the follow-up
+      suggested: `Document::boundaries` bounds its scan to a window around the edit instead of the
+      whole block, using the block's own first line to tell a fence (which can never gain a new
+      boundary) from anything else (which can only gain one near the edit) - ADR 0005's segmenter
+      invariant makes this safe: a block already large enough to reach that path parses
+      identically alone, so it had no interior boundary before the edit or it would already have
+      split then; and that scan, like the whole-range fallback for a merge of several blocks,
+      walks the rope's own chunks instead of copying it into a `String` first
+      (`tachyon_md::presegment_chunks`/`ends_in_fence_chunks`), the treatment `plain_chunk_len_capped`
+      got in the previous pass. `Editor::render_raw` now splits an oversized active block into
+      `raw_segment_lens` segments (4 KiB, a quarter of `DocMode::Plain`'s own chunk size) instead
+      of 16 KiB ones, so re-shaping the one segment a keystroke touches - always a cache miss for
+      GPUI's own text-layout cache, since its content just changed - stays cheap regardless of the
+      block's size; `RAW_SPLIT_THRESHOLD` itself is untouched, so a `DocMode::Plain` block never
+      crosses it. A new test bounds an edit's presegmented bytes directly (not a timing
+      assertion): `tachyon-doc::tests::edits_into_a_huge_single_block_presegment_a_bounded_window`
+      asserts under 256 KiB presegmented per edit for 20 consecutive keystrokes into both a 512 KiB
+      and an 8 MiB single block of each shape, and
+      `a_huge_single_block_still_converges_correctly_after_a_bounded_edit` checks the bounded path
+      never miscounts a boundary (an edit that introduces a blank line still matches a full parse
+      once reparsed, at the start, middle and end of the block). `PROPTEST_CASES=20000` on
+      `incremental`/`corpus` and the rest of the workspace suite still pass; `cargo bench -p
+      tachyon-doc` keystroke p99 is unchanged within noise (paragraph 47.0 → 54.0 µs, code block
+      51.8 → 50.7 µs, streaming at end 41.9 → 40.7 µs; budget 500 µs). Live (Linux, release, 40
+      keystrokes at 60 ms each, `TACHYON_FRAME_LOG`, `systemd-run --user --scope -p MemoryMax=6G
+      -p MemorySwapMax=0`), worst frame typing into the middle of the file: `fence-15mb.md`
+      28.7 → 15.8 ms, `log-15mb.md` 49.2 → 9.4 ms; at the end: 61.0 → 13.5 ms and 41.4 → 8.7 ms -
+      no frame over the 16.7 ms budget after the fix (most were over it before, one and a half to
+      three and a half times over). A normal 1 MiB well-structured document's typing and a 5 MiB
+      paste are unaffected (worst frames within measurement noise of before: 3.4 → 1.5 ms and
+      17.2 → 7.0 ms respectively, both already well under budget).
 - [ ] Fix 4 (share `BlockIr::text` with the rope for verbatim regions) not attempted this phase:
       a real API change to `BlockIr`/`ParsedBlock`, a pervasive, already-widely-consumed type,
       rather than a contained one; design recorded in `docs/ARCHITECTURE.md` for a follow-up
@@ -412,7 +435,9 @@ block is virtualization's whole unit. See `docs/ARCHITECTURE.md`'s "Markdown mem
 15-20 MiB Markdown file shaped like the pathological cases (one fenced block, one no-blank-line
 paragraph, one unwrapped line) opens with no frame over 16.7 ms and peak RSS proportional to the
 file, not a multi-GB/multi-second outlier (baseline: up to 5.9 GB peak and a 5.5-second single
-frame on open; fixed: 271-478 MB peak, every open frame under 16.7 ms); `cargo bench -p
-tachyon-doc` budgets unchanged. Typing into an already-15 MiB single block remains above budget on
-some frames, flagged above for a follow-up rather than claimed fixed.
+frame on open; fixed: 271-478 MB peak, every open frame under 16.7 ms); typing into an
+already-huge single block also stays within budget (baseline: 20-61 ms per keystroke; fixed: no
+frame over 16.7 ms in 40 keystrokes at either the middle or the end of a 15 MiB single block, both
+shapes); `cargo bench -p tachyon-doc` budgets unchanged. Met, apart from Fix 4 (`BlockIr::text`
+sharing the rope), recorded above as a design for a follow-up rather than attempted this phase.
 

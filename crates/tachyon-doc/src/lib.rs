@@ -22,6 +22,29 @@ use ropey::Rope;
 use tachyon_md::{self as md, DefTable, ParsedBlock};
 use tachyon_text::{Buffer, Edit, EditError, PreparedText};
 
+#[cfg(test)]
+use std::cell::Cell;
+
+// Test-only instrumentation for `Document::boundaries`: how many bytes of rope content it has
+// handed to a presegment scan (full, bounded-window or fence-peek) since the last
+// `take_presegment_bytes` call. Lets a test assert that an edit into a huge single block does
+// bounded work without timing anything (see `tests::edits_into_a_huge_single_block_...`).
+#[cfg(test)]
+thread_local! {
+    static PRESEGMENT_BYTES: Cell<usize> = const { Cell::new(0) };
+}
+
+#[cfg(test)]
+fn record_presegment_bytes(n: usize) {
+    PRESEGMENT_BYTES.with(|c| c.set(c.get() + n));
+}
+
+/// Resets and returns the running total [`record_presegment_bytes`] has recorded.
+#[cfg(test)]
+pub(crate) fn take_presegment_bytes() -> usize {
+    PRESEGMENT_BYTES.with(|c| c.replace(0))
+}
+
 /// Jobs whose window is at most this many bytes are cheap enough to run on
 /// the UI thread (tens of microseconds).
 pub const SYNC_PARSE_LIMIT: usize = 32 * 1024;
@@ -41,6 +64,23 @@ pub const UNPARSED_EDGE: usize = 32 * 1024;
 
 /// Minimum size of provisional blocks near the ends of the changed range.
 pub const UNPARSED_EDGE_CHUNK: usize = 1024;
+
+/// Above this size with no reusable inserted-text boundaries (an ordinary keystroke; only
+/// [`PreparedInsert`]'s paste path carries those), [`Document::boundaries`] bounds its scan to a
+/// window around the edit instead of the whole range: see its own doc comment.
+const BOUNDARY_FULL_SCAN_LIMIT: usize = 256 * 1024;
+
+/// How far to each side of the edit (and its own inserted text) [`Document::boundaries`]
+/// presegments when it falls back to a bounded scan: enough to catch a blank line the edit
+/// creates near either edge, while keeping the scan a small, fixed cost regardless of how large
+/// the rest of the block is.
+const BOUNDARY_SCAN_MARGIN: usize = 64 * 1024;
+
+/// How far [`block_shape`] looks for the end of a block's first line before giving up on
+/// telling whether it opens a fence: real Markdown lines are nowhere near this long, so this
+/// only ever gives up on one pathologically long line, which a bounded scan could not help
+/// either way.
+const BOUNDARY_FENCE_PEEK_LIMIT: usize = 8 * 1024;
 
 /// Window size for streaming a large dirty range back in pieces with
 /// [`Document::parse_job_near`]: a few milliseconds of parsing, so the text
@@ -102,6 +142,24 @@ pub const PLAIN_CHUNK_BYTES: usize = 16 * 1024;
 /// line - the file is one enormous line, the reported cause of a 6-second frame and 3 GB peak on
 /// a 20 MB single-line file - never grows a chunk past a small, bounded shaping cost.
 pub const PLAIN_FORCED_CUT_BYTES: usize = 8 * 1024;
+
+/// [`raw_segment_lens`]'s target byte size, playing [`PLAIN_CHUNK_BYTES`]'s role for
+/// `Editor::render_raw`'s split of an oversized *active* block instead of [`DocMode::Plain`]'s
+/// own chunking: shaping one segment on every keystroke should cost a small, fixed amount
+/// regardless of how large the rest of the block is (measured: 20-58 ms/keystroke into a
+/// many-megabyte single block, shaping a full `PLAIN_CHUNK_BYTES` segment every time). Kept
+/// well under `PLAIN_CHUNK_BYTES` deliberately: `RAW_SPLIT_THRESHOLD` (`tachyon-editor`) stays at
+/// `PLAIN_CHUNK_BYTES * 2` so a `DocMode::Plain` block, always at most `PLAIN_CHUNK_BYTES`, never
+/// crosses it and starts splitting into several of these on every repaint.
+const RAW_SEGMENT_TARGET_BYTES: usize = 4 * 1024;
+
+/// [`raw_segment_lens`]'s target line count, in the same ratio to [`RAW_SEGMENT_TARGET_BYTES`]
+/// as [`PLAIN_CHUNK_LINES`] is to [`PLAIN_CHUNK_BYTES`].
+const RAW_SEGMENT_TARGET_LINES: usize = 64;
+
+/// [`raw_segment_lens`]'s forced-cut distance, half its target byte size like
+/// [`PLAIN_FORCED_CUT_BYTES`] is half of [`PLAIN_CHUNK_BYTES`].
+const RAW_SEGMENT_FORCED_CUT_BYTES: usize = 2 * 1024;
 
 /// Below this many lines *and* below [`PLAIN_MIN_CHUNK_BYTES`] bytes (a quarter of
 /// [`PLAIN_CHUNK_LINES`]), a plain block that fits in one chunk on its own is too small to stand
@@ -921,7 +979,7 @@ impl Document {
         let new_total = self.buffer.len();
         if self.blocks.is_empty() {
             if new_total > 0 {
-                let block = self.stale_block(0..new_total, None, cuts.map(|c| (0, c)));
+                let block = self.stale_block(0..new_total, None, true, 0, edit.new_len, cuts);
                 self.splice(0..0, block);
                 self.mark_dirty(0..new_total);
             }
@@ -940,13 +998,20 @@ impl Document {
         self.defs_dirty |= self.blocks[first..=last]
             .iter()
             .any(|b| !b.parsed.defs.is_empty() || !b.parsed.footnotes.is_empty());
+        let single_source = first == last;
         let start = self.starts[first];
         let len = self.starts[last + 1] - start - edit.range.len() + edit.new_len;
         let replacement = if len == 0 {
             Vec::new()
         } else {
-            let cuts = cuts.map(|cuts| (edit.range.start - start, cuts));
-            self.stale_block(start..start + len, Some(self.blocks[first].clone()), cuts)
+            self.stale_block(
+                start..start + len,
+                Some(self.blocks[first].clone()),
+                single_source,
+                edit.range.start - start,
+                edit.new_len,
+                cuts,
+            )
         };
         self.splice(first..last + 1, replacement);
         self.mark_dirty(start..start + len);
@@ -1017,19 +1082,24 @@ impl Document {
         self.splice(first..last + 1, new_blocks);
     }
 
-    /// Blocks for a changed range `range` (current coordinates): one stale
-    /// block keeping `keep`'s identity, or provisional unparsed blocks when
-    /// the range is large. `inserted`: where in `range` inserted text starts,
-    /// and its pre-segmenter boundaries.
+    /// Blocks for a changed range `range` (current coordinates): one stale block keeping
+    /// `keep`'s identity, or provisional unparsed blocks when the range is large.
+    /// `single_source`: whether `range` is exactly the one pre-existing block the edit touched,
+    /// with nothing else merged in (see [`Document::boundaries`]). `edit_at`/`edit_len`: where
+    /// in `range` the edit's own new text lies. `cuts`: that new text's own pre-segmenter
+    /// boundaries, if already known ([`PreparedInsert`]).
     fn stale_block(
         &mut self,
         range: Range<usize>,
         keep: Option<Block>,
-        inserted: Option<(usize, &[usize])>,
+        single_source: bool,
+        edit_at: usize,
+        edit_len: usize,
+        cuts: Option<&[usize]>,
     ) -> Vec<Block> {
         let len = range.len();
         if len > UNPARSED_SPLIT_THRESHOLD {
-            let boundaries = self.boundaries(range, inserted);
+            let boundaries = self.boundaries(range, single_source, edit_at, edit_len, cuts);
             // Chunks of at least UNPARSED_CHUNK bytes (UNPARSED_EDGE_CHUNK
             // near the ends), cut only where the pre-segmenter allows (never
             // inside fenced code): small enough that showing one raw is
@@ -1058,20 +1128,72 @@ impl Document {
         }
     }
 
-    /// Pre-segmenter boundaries of `range`, relative to its start. Boundaries
-    /// computed for inserted text alone are reused when they mean the same
-    /// in place: the insert starts a line and nothing before it in `range`
-    /// leaves a fence open. Boundaries in the text after the insert are left
-    /// out (fewer, larger provisional blocks; still correct).
-    fn boundaries(&self, range: Range<usize>, inserted: Option<(usize, &[usize])>) -> Vec<usize> {
+    /// Pre-segmenter boundaries of `range`, relative to its start. `single_source`: whether
+    /// `range` is exactly the one pre-existing block the edit touched, with nothing else merged
+    /// in - only then can the fast path below assume the whole range shares one fence state (a
+    /// merge of several original blocks may include one that is itself a fence, or a container
+    /// able to wrap one).
+    ///
+    /// Boundaries computed for the edit's own inserted text (`cuts`, from [`PreparedInsert`]) are
+    /// reused when they mean the same in place: the insert starts a line and nothing before it
+    /// in `range` leaves a fence open. Boundaries in the text after the insert are left out
+    /// (fewer, larger provisional blocks; still correct).
+    ///
+    /// Otherwise, above [`BOUNDARY_FULL_SCAN_LIMIT`], presegmenting the whole range - even
+    /// copy-free - costs real time on every keystroke into a block that large (`Document::edit`
+    /// never carries `cuts`: only [`PreparedInsert`]'s paste path does). A `single_source` block
+    /// parses identically alone (ADR 0005's segmenter invariant), so one already big enough to
+    /// reach here had *no* interior boundary before this edit (else it would have been split
+    /// then): a fence never re-opens inside one CommonMark block once closed, and a non-fence,
+    /// non-container block (a paragraph, heading, table, thematic break, definition or HTML
+    /// block) never opens one at all - a line that could would always end that block for real -
+    /// so which of those `range` is can be told from its own first line alone
+    /// ([`block_shape`]), and any *new* boundary this edit creates can only appear near where it
+    /// happened: the rest of `range` is provably unchanged since the last time this same
+    /// argument applied to it. A fenced `range` gets no boundaries at all (every interior blank
+    /// line is inside it); anything else safe to assume fence-free is presegmented in just a
+    /// window around the edit. A container (a list item or block quote, whose own nested content
+    /// can open a fence at a column a top-level line never could) or a first line too long to
+    /// read within [`BOUNDARY_FENCE_PEEK_LIMIT`] falls back to the full scan below.
+    fn boundaries(
+        &self,
+        range: Range<usize>,
+        single_source: bool,
+        edit_at: usize,
+        edit_len: usize,
+        cuts: Option<&[usize]>,
+    ) -> Vec<usize> {
         let rope = self.buffer.rope();
-        if let Some((at, cuts)) = inserted {
-            let prefix = rope.byte_slice(range.start..range.start + at).to_string();
-            if (prefix.is_empty() || prefix.ends_with('\n')) && !md::ends_in_fence(&prefix) {
-                return cuts.iter().map(|cut| at + cut).collect();
+        if let Some(cuts) = cuts {
+            let prefix_end = range.start + edit_at;
+            let starts_line = edit_at == 0 || rope.byte(prefix_end - 1) == b'\n';
+            #[cfg(test)]
+            record_presegment_bytes(prefix_end - range.start);
+            if starts_line
+                && !md::ends_in_fence_chunks(rope.byte_slice(range.start..prefix_end).chunks(), 0)
+            {
+                return cuts.iter().map(|cut| edit_at + cut).collect();
             }
         }
-        md::presegment(&rope.byte_slice(range).to_string())
+        if single_source && range.len() > BOUNDARY_FULL_SCAN_LIMIT {
+            match block_shape(rope, &range) {
+                BlockShape::Fence => return Vec::new(),
+                BlockShape::Plain => {
+                    let lo = edit_at.saturating_sub(BOUNDARY_SCAN_MARGIN);
+                    let hi = (edit_at + edit_len + BOUNDARY_SCAN_MARGIN).min(range.len());
+                    #[cfg(test)]
+                    record_presegment_bytes(hi - lo);
+                    return md::presegment_chunks(
+                        rope.byte_slice(range.start + lo..range.start + hi).chunks(),
+                        lo,
+                    );
+                }
+                BlockShape::Unknown => {}
+            }
+        }
+        #[cfg(test)]
+        record_presegment_bytes(range.len());
+        md::presegment_chunks(rope.byte_slice(range.clone()).chunks(), 0)
     }
 
     fn mark_dirty(&mut self, range: Range<usize>) {
@@ -1489,6 +1611,64 @@ fn has_blank_line(rope: &Rope, from: usize, before: usize) -> bool {
     false
 }
 
+/// What [`Document::boundaries`]'s bounded-scan fast path can assume about a `single_source`
+/// block's interior fence state, judged from its own first line alone (`range.start` truly is
+/// this block's own start whenever `single_source` holds, and stays so across every stale
+/// transition an edit inside it makes, since none of them ever touch byte 0 of the block).
+enum BlockShape {
+    /// `range`'s first line opens a fence. ADR 0005's segmenter invariant means a
+    /// `single_source` block parses identically alone, so one whose first line opens a fence
+    /// never closes and reopens one inside itself - closing it for real would end the block.
+    /// Every interior blank line is therefore inside that fence, so `range` can never gain a
+    /// boundary.
+    Fence,
+    /// `range`'s first line neither opens a fence nor could start a construct (a list item, a
+    /// block quote) whose own nested content might open one at a raw column a top-level line
+    /// never could. Fence state is `None` throughout `range`, so a bounded window anywhere in it
+    /// is safe to presegment on its own.
+    Plain,
+    /// Anything else: a container, or a first line too long to read within
+    /// [`BOUNDARY_FENCE_PEEK_LIMIT`]. [`Document::boundaries`] falls back to the full scan.
+    Unknown,
+}
+
+fn block_shape(rope: &Rope, range: &Range<usize>) -> BlockShape {
+    let peek_limit = (range.start + BOUNDARY_FENCE_PEEK_LIMIT).min(range.end);
+    let Some(nl) = find_newline(rope, range.start, peek_limit) else { return BlockShape::Unknown };
+    let first_line = rope.byte_slice(range.start..nl + 1).to_string();
+    if md::ends_in_fence(&first_line) {
+        return BlockShape::Fence;
+    }
+    if opens_container(&first_line) {
+        return BlockShape::Unknown;
+    }
+    BlockShape::Plain
+}
+
+/// Whether `line`, after up to three leading spaces (the same indentation `presegment`'s own
+/// fence detection allows), starts a list item or a block quote marker.
+fn opens_container(line: &str) -> bool {
+    let indent = line.bytes().take_while(|&b| b == b' ').count();
+    if indent > 3 {
+        return false;
+    }
+    let rest = &line[indent..];
+    let bytes = rest.as_bytes();
+    match bytes.first() {
+        Some(b'>') => true,
+        Some(b'-' | b'+' | b'*') => {
+            bytes.get(1).is_none_or(|b| matches!(b, b' ' | b'\t' | b'\r' | b'\n'))
+        }
+        Some(b'0'..=b'9') => {
+            let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+            digits <= 9
+                && matches!(bytes.get(digits), Some(b'.' | b')'))
+                && bytes.get(digits + 1).is_none_or(|b| matches!(b, b' ' | b'\t' | b'\r' | b'\n'))
+        }
+        _ => false,
+    }
+}
+
 /// The nearest char boundary at or before `byte_idx` (ropey panics on a slice or byte read that
 /// splits a character). UTF-8 continuation bytes have their top two bits `10`.
 fn floor_char_boundary(rope: &Rope, mut byte_idx: usize) -> usize {
@@ -1525,7 +1705,14 @@ fn floor_char_boundary(rope: &Rope, mut byte_idx: usize) -> usize {
 /// ~200,000-line scan into a 300 ms frame - proportional to line count times tree depth, not to
 /// bytes scanned. `floor_char_boundary` (also `O(log n)`) only runs when a forced cut is actually
 /// about to happen (a line already past `PLAIN_FORCED_CUT_BYTES` with no `\n`), not per line.
-fn plain_chunk_len_capped(rope: &Rope, start: usize, cap: usize) -> usize {
+fn plain_chunk_len_capped(
+    rope: &Rope,
+    start: usize,
+    cap: usize,
+    target_bytes: usize,
+    target_lines: usize,
+    forced_cut_bytes: usize,
+) -> usize {
     if start >= cap {
         return 0;
     }
@@ -1535,7 +1722,7 @@ fn plain_chunk_len_capped(rope: &Rope, start: usize, cap: usize) -> usize {
     for piece in rope.byte_slice(start..cap).chunks() {
         let mut offset = 0usize;
         while offset < piece.len() {
-            let force_at = (line_start + PLAIN_FORCED_CUT_BYTES).min(cap);
+            let force_at = (line_start + forced_cut_bytes).min(cap);
             if abs >= force_at {
                 return floor_char_boundary(rope, force_at) - start;
             }
@@ -1547,10 +1734,7 @@ fn plain_chunk_len_capped(rope: &Rope, start: usize, cap: usize) -> usize {
                     }
                     lines += 1;
                     let len_so_far = nl + 1 - start;
-                    if len_so_far >= PLAIN_CHUNK_BYTES
-                        || lines >= PLAIN_CHUNK_LINES
-                        || nl + 1 >= cap
-                    {
+                    if len_so_far >= target_bytes || lines >= target_lines || nl + 1 >= cap {
                         return len_so_far;
                     }
                     offset += rel + 1;
@@ -1570,7 +1754,7 @@ fn plain_chunk_len_capped(rope: &Rope, start: usize, cap: usize) -> usize {
     // Reached `cap` with the last line still unterminated: force a cut only if it is itself
     // already past the threshold, exactly like the loop above; otherwise the whole remainder (at
     // most `cap - start`, itself always a valid cut point) is one chunk.
-    let force_at = (line_start + PLAIN_FORCED_CUT_BYTES).min(cap);
+    let force_at = (line_start + forced_cut_bytes).min(cap);
     if abs >= force_at { floor_char_boundary(rope, force_at) - start } else { cap - start }
 }
 
@@ -1582,10 +1766,43 @@ fn plain_chunk_len_capped(rope: &Rope, start: usize, cap: usize) -> usize {
 /// by `tachyon-editor` to bound how much of one oversized Markdown block is laid out at once
 /// (`range` is that block's own byte range, `plain_chunk_len_capped`'s `cap` its end), hence `pub`.
 pub fn plain_chunk_lens(rope: &Rope, range: Range<usize>) -> Vec<usize> {
+    chunk_lens_targeting(rope, range, PLAIN_CHUNK_BYTES, PLAIN_CHUNK_LINES, PLAIN_FORCED_CUT_BYTES)
+}
+
+/// Like [`plain_chunk_lens`], but targeting [`RAW_SEGMENT_TARGET_BYTES`]/
+/// [`RAW_SEGMENT_TARGET_LINES`] instead of [`DocMode::Plain`]'s own chunk size:
+/// `Editor::render_raw` uses this, once a block is already over `RAW_SPLIT_THRESHOLD` and being
+/// split, so re-shaping the one segment a keystroke actually touches costs a small, fixed amount
+/// regardless of how large the rest of the block is, instead of up to a whole `PLAIN_CHUNK_BYTES`
+/// segment's worth of monospace text every time.
+pub fn raw_segment_lens(rope: &Rope, range: Range<usize>) -> Vec<usize> {
+    chunk_lens_targeting(
+        rope,
+        range,
+        RAW_SEGMENT_TARGET_BYTES,
+        RAW_SEGMENT_TARGET_LINES,
+        RAW_SEGMENT_FORCED_CUT_BYTES,
+    )
+}
+
+fn chunk_lens_targeting(
+    rope: &Rope,
+    range: Range<usize>,
+    target_bytes: usize,
+    target_lines: usize,
+    forced_cut_bytes: usize,
+) -> Vec<usize> {
     let mut lens = Vec::new();
     let mut at = range.start;
     while at < range.end {
-        let len = plain_chunk_len_capped(rope, at, range.end);
+        let len = plain_chunk_len_capped(
+            rope,
+            at,
+            range.end,
+            target_bytes,
+            target_lines,
+            forced_cut_bytes,
+        );
         lens.push(len);
         at += len;
     }
@@ -1640,7 +1857,14 @@ fn split_evenly_into(rope: &Rope, range: Range<usize>, lens: &mut Vec<usize>) {
     if mid <= range.start || mid >= range.end {
         let mut at = range.start;
         while at < range.end {
-            let len = plain_chunk_len_capped(rope, at, range.end);
+            let len = plain_chunk_len_capped(
+                rope,
+                at,
+                range.end,
+                PLAIN_CHUNK_BYTES,
+                PLAIN_CHUNK_LINES,
+                PLAIN_FORCED_CUT_BYTES,
+            );
             lens.push(len);
             at += len;
         }

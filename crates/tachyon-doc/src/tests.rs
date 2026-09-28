@@ -647,3 +647,84 @@ fn evict_leaves_stale_and_oversized_blocks_alone() {
         "a block over EVICT_MAX_LEN is left resident, even outside keep"
     );
 }
+
+/// Typing into a single top-level block with no interior blank line (one huge fenced code
+/// block, or one huge paragraph) used to copy and presegment the *whole* stale block on every
+/// keystroke (`Document::boundaries`'s own doc comment): a 15 MiB file like that cost 20-58 ms
+/// per key. This bounds the *work*, not a timing measurement: however large the block, one edit
+/// presegments only a small, fixed neighbourhood of it, for several edits in a row and for both
+/// shapes ADR 0005 calls out (a fence, and a no-blank-line paragraph).
+#[test]
+fn edits_into_a_huge_single_block_presegment_a_bounded_window() {
+    const BOUND: usize = 256 * 1024;
+
+    let fence = |total: usize| {
+        let mut body = String::from("```\n");
+        while body.len() < total {
+            body.push_str("the quick brown fox jumps over the lazy dog\n");
+        }
+        body.push_str("```\n");
+        body
+    };
+    let paragraph = |total: usize| {
+        let mut body = String::new();
+        while body.len() < total {
+            body.push_str("the quick brown fox jumps over the lazy dog and keeps going\n");
+        }
+        body
+    };
+
+    for total in [512 * 1024usize, 8 * 1024 * 1024] {
+        for body in [fence(total), paragraph(total)] {
+            let mut doc = Document::new(&body);
+            assert_eq!(doc.blocks().len(), 1, "no blank line: one top-level block");
+            let mut at = body.len() / 2;
+            while !doc.buffer().text().is_char_boundary(at) {
+                at -= 1;
+            }
+            for _ in 0..20 {
+                take_presegment_bytes();
+                doc.edit(at..at, "x").unwrap();
+                let bytes = take_presegment_bytes();
+                assert!(
+                    bytes <= BOUND,
+                    "typing into a {total}-byte single block presegmented {bytes} bytes for one \
+                     edit (bound {BOUND})"
+                );
+                at += 1;
+            }
+        }
+    }
+}
+
+/// The bounded fast path above must never miscount a boundary: introducing a blank line inside
+/// what was one huge fenced block or paragraph still ends up matching a full parse once
+/// reparsed, for an edit at the very start, the middle and the very end of the block.
+#[test]
+fn a_huge_single_block_still_converges_correctly_after_a_bounded_edit() {
+    for body in [
+        {
+            let mut s = String::from("```\n");
+            for i in 0..3000 {
+                s.push_str(&format!("line {i}\n"));
+            }
+            s.push_str("```\n");
+            s
+        },
+        {
+            let mut s = String::new();
+            for i in 0..3000 {
+                s.push_str(&format!("paragraph line {i} continues\n"));
+            }
+            s
+        },
+    ] {
+        for at in [4usize, body.len() / 2, body.len()] {
+            let mut doc = Document::new(&body);
+            assert_eq!(doc.blocks().len(), 1);
+            doc.edit(at..at, "\n\nnew paragraph after a blank line\n").unwrap();
+            doc.reparse_now();
+            assert_matches_full_parse(&doc);
+        }
+    }
+}

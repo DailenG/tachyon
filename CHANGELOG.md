@@ -161,6 +161,22 @@ All notable user-visible changes are recorded here. The format follows
 
 ### Fixed
 
+- Typing into the active block of a Markdown file shaped like one giant fenced code block or one
+  no-blank-line paragraph (many megabytes, no blank line anywhere to split it) no longer costs
+  20-61 ms on the keystroke's frame. `Document::stale_block` no longer copies and rescans the
+  whole stale block on every keystroke to look for a new pre-segmenter boundary: a block that
+  large already had none before the edit (ADR 0005's segmenter invariant), so which of "definitely
+  a fence" (no boundary is ever possible) or "definitely not" (any new boundary can only appear
+  near the edit) it is is told from its own first line, and only a small window around the edit is
+  rescanned either way - and that rescan itself now walks the rope's own chunks instead of copying
+  the range into a `String` first. `Editor::render_raw` also splits an oversized active block into
+  ~4 KiB segments instead of ~16 KiB ones, so re-shaping the one segment a keystroke touches stays
+  cheap regardless of the block's own size. Measured (Linux, release, a 15 MiB single-block file,
+  40 keystrokes at 60 ms each): worst frame at the middle 28.7 ms → 15.8 ms (fenced) and
+  49.2 ms → 9.4 ms (paragraph); at the end of the file 61.0 ms → 13.5 ms (fenced) and
+  41.4 ms → 8.7 ms (paragraph); no frame over budget after the fix, versus most frames over it
+  before. Normal-file typing, a 5 MB paste and `cargo bench -p tachyon-doc`'s keystroke p99 are
+  unaffected.
 - Table grid lines are 1 px: neighbouring cells drew two lines side by side (2 px at 100 %, and
   visibly heavier than card and field borders at 150 %).
 - Windows: the tray icon's context menu ("New window", "Quit Tachyon") now follows Tachyon's
