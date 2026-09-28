@@ -34,6 +34,17 @@ pub fn set_title_bar_dark(window: &impl raw_window_handle::HasWindowHandle, dark
     imp::set_title_bar_dark(window, dark)
 }
 
+/// Sets whether popup menus shown after this call follow Tachyon's resolved theme (the same
+/// `dark` given to [`set_title_bar_dark`]) instead of the OS dark-mode setting. Windows: the tray
+/// icon's context menu, the only popup menu Tachyon has so far, applied lazily - the next time a
+/// menu is actually shown, not by this call itself - through an undocumented `uxtheme.dll`
+/// mode-switch (`SetPreferredAppMode` / `FlushMenuThemes`, ordinals 135 and 136), the same one
+/// Windows Terminal and Notepad++ use, since `TrackPopupMenuEx` has no documented way to ask for
+/// a dark menu. A no-op before Windows 10 1903 (build 18362) and everywhere else.
+pub fn set_popup_menu_dark(dark: bool) {
+    imp::set_popup_menu_dark(dark);
+}
+
 /// Whether the primary instance stays running after its last window closes unless told otherwise
 /// (docs/adr/0004). On by default where resident launches have been measured and a terminal is
 /// not tied to the process: Windows release builds are GUI-subsystem executables. On Linux and

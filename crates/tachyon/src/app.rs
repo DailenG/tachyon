@@ -5,8 +5,8 @@ use std::time::Instant;
 use futures::StreamExt as _;
 use gpui::{
     App, Bounds, Context, Global, KeyBinding, PathPromptOptions, Pixels, QuitMode, SharedString,
-    Size, TitlebarOptions, WindowBounds, WindowHandle, WindowOptions, actions, prelude::*, px,
-    size,
+    Size, TitlebarOptions, WindowAppearance, WindowBounds, WindowHandle, WindowOptions, actions,
+    prelude::*, px, size,
 };
 use tachyon_doc::Document;
 use tachyon_editor::{Editor, Theme};
@@ -230,6 +230,10 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
         // windowless until the first launch arrives, which brings the restored documents along.
         let sources = if resident && cli.background && cli.opens_nothing() {
             cx.set_global(PendingRestore(restored));
+            // No window will open to carry the theme to the tray's context menu (Windows) the
+            // way `open_window` and `prepare_ready_window` do, so it is resolved here instead,
+            // the one time this path is windowless.
+            tachyon_platform::set_popup_menu_dark(resolved_dark(cx));
             Vec::new()
         } else if !restored.is_empty() && cli.opens_nothing() {
             restored
@@ -290,8 +294,12 @@ fn open_window(source: Source, cx: &mut App) -> Option<WindowHandle<Editor>> {
         tachyon_platform::set_window_icon(window);
         // Set before the window's first frame paints, so DWM never shows the OS dark-mode
         // setting's colour for an instant: Tachyon keeps the native title bar, and it should
-        // follow the theme the editor is about to render with, not the system's.
-        tachyon_platform::set_title_bar_dark(window, Theme::for_window(window, cx).dark);
+        // follow the theme the editor is about to render with, not the system's. The tray's
+        // context menu (Windows) follows the same value, so a new window's theme choice also
+        // becomes the menu's next time it shows.
+        let dark = Theme::for_window(window, cx).dark;
+        tachyon_platform::set_title_bar_dark(window, dark);
+        tachyon_platform::set_popup_menu_dark(dark);
         cx.new(|cx| {
             let mut editor = Editor::with_document(initial_document(&source, cx), window, cx);
             fill(&mut editor, source, cx);
@@ -402,6 +410,7 @@ fn prepare_ready_window(cx: &mut App) {
                         // shown, so its title bar never flips visibly to match Tachyon's theme.
                         let dark = Theme::for_window(window, cx).dark;
                         tachyon_platform::set_title_bar_dark(window, dark);
+                        tachyon_platform::set_popup_menu_dark(dark);
                     });
                     cx.set_global(ReadyWindow(Some(handle)));
                 }
@@ -467,6 +476,26 @@ struct TrayIcon {
 }
 
 impl Global for TrayIcon {}
+
+/// Whether Tachyon's resolved theme is dark, by the same rule `Theme::for_window` applies, but
+/// usable with no window: a resident instance can stay windowless in the background
+/// (`--background` with nothing to open) until the first launch arrives, and the tray's context
+/// menu (Windows) can show before that. Prefers the `AppearanceHint` set before GPUI's first
+/// window exists, else asks the platform directly (`App::window_appearance`, unlike
+/// `Window::appearance`, needs no window). `Settings::dark`'s match is duplicated here rather
+/// than called: it is `pub(crate)` to `tachyon-editor`, reachable only through a window's
+/// `Theme::for_window` elsewhere in this file.
+fn resolved_dark(cx: &App) -> bool {
+    let hint = cx.try_global::<tachyon_editor::AppearanceHint>().map(|hint| hint.dark);
+    let system = hint.unwrap_or_else(|| {
+        matches!(cx.window_appearance(), WindowAppearance::Dark | WindowAppearance::VibrantDark)
+    });
+    match cx.try_global::<tachyon_editor::Settings>().map(|settings| settings.theme) {
+        Some(tachyon_editor::ThemeChoice::Dark) => true,
+        Some(tachyon_editor::ThemeChoice::Light) => false,
+        Some(tachyon_editor::ThemeChoice::System) | None => system,
+    }
+}
 
 /// Shows the tray icon: clicking it opens a window, its menu opens a window or quits.
 fn show_tray(cx: &mut App) {
