@@ -324,10 +324,14 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
         // point, so in practice neither wait is anywhere near the full budget.
         let deadline = Instant::now() + SETTINGS_WAIT;
         let settings = settings_read
-            .and_then(|read| read.recv_timeout(deadline.saturating_duration_since(Instant::now())).ok())
+            .and_then(|read| {
+                read.recv_timeout(deadline.saturating_duration_since(Instant::now())).ok()
+            })
             .unwrap_or_default();
         let session_windows: Vec<tachyon_editor::WindowState> = session_read
-            .and_then(|read| read.recv_timeout(deadline.saturating_duration_since(Instant::now())).ok())
+            .and_then(|read| {
+                read.recv_timeout(deadline.saturating_duration_since(Instant::now())).ok()
+            })
             .unwrap_or_default();
         let restore_session = settings.restore_session;
         let primary_backups = primary_backups.filter(|_| settings.hot_exit);
@@ -387,10 +391,11 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
         // false): the notice then belongs on whatever opens first instead - the CLI's own
         // sources, or (with nothing given either) the sample window `Source::from_cli` falls
         // back to.
-        if !had_session_openings && let Some(notice) = missing_files_notice(&missing) {
-            if let Some(first) = openings.first_mut() {
-                first.notice = Some(notice);
-            }
+        if !had_session_openings
+            && let Some(notice) = missing_files_notice(&missing)
+            && let Some(first) = openings.first_mut()
+        {
+            first.notice = Some(notice);
         }
         // Opens the first window right away; every other one - the rest of a restored session,
         // or several CLI files - waits for its first frame (`on_next_frame`, below), so creating
@@ -800,23 +805,21 @@ fn prepare_ready_window(cx: &mut App) {
     .detach();
 }
 
-/// The ready window, filled with `source`; `source` and `notice` back if there is none (a
-/// session-restored window never reaches this: see `show_window`).
-fn take_ready_window(
-    source: Source,
-    notice: Option<SharedString>,
-    cx: &mut App,
-) -> Result<WindowHandle<Editor>, (Source, Option<SharedString>)> {
+/// The ready window, filled with `opening`'s source; `opening` back if there is none. Boxed,
+/// since an `Opening` is large and this `Err` is the common path whenever no window is ready. A
+/// session-restored window never reaches this: see `show_window`.
+fn take_ready_window(opening: Opening, cx: &mut App) -> Result<WindowHandle<Editor>, Box<Opening>> {
     if !ready_windows_enabled(cx) || !has_ready_window(cx) {
-        return Err((source, notice));
+        return Err(Box::new(opening));
     }
     let Some(handle) = cx.global_mut::<ReadyWindow>().0.take() else {
-        return Err((source, notice));
+        return Err(Box::new(opening));
     };
     // Closed behind our back (e.g. by the OS): open a window normally.
     if handle.update(cx, |_, _, _| ()).is_err() {
-        return Err((source, notice));
+        return Err(Box::new(opening));
     }
+    let Opening { source, notice, .. } = opening;
     let doc = initial_document(&source, cx);
     let title = source.title();
     let _ = handle.update(cx, |editor, window, cx| {
@@ -827,19 +830,17 @@ fn take_ready_window(
     Ok(handle)
 }
 
-/// Opens `opening` in the ready window if there is one and it carries no session state to place
-/// precisely (a session-restored window always opens at its own recorded bounds - `open_window`
-/// - skipping the ready-window reuse this exists for, the one case where that trades away the
-/// resident-mode speedup for correct placement), else in a new window, and brings it to the
-/// front.
+/// Opens `opening` and brings it to the front: in the ready window if there is one, else in a
+/// new window. A session-restored window (one with recorded state) always opens in a new window
+/// at its own recorded bounds (`open_window`), giving up the ready window's resident-mode speedup
+/// for correct placement.
 fn show_window(opening: Opening, cx: &mut App) -> Option<WindowHandle<Editor>> {
     let handle = if opening.state.is_some() {
         open_window(opening, cx)
     } else {
-        let Opening { source, notice, .. } = opening;
-        match take_ready_window(source, notice, cx) {
+        match take_ready_window(opening, cx) {
             Ok(handle) => Some(handle),
-            Err((source, notice)) => open_window(Opening { source, state: None, notice }, cx),
+            Err(opening) => open_window(*opening, cx),
         }
     }?;
     // Covers the one path the initial-sources loop in `run` cannot: a `--background` primary
@@ -987,7 +988,10 @@ fn missing_files_notice(missing: &[PathBuf]) -> Option<SharedString> {
     }
     let names: Vec<String> = missing.iter().map(|p| p.display().to_string()).collect();
     let noun = if missing.len() == 1 { "a file" } else { "files" };
-    Some(SharedString::from(format!("Could not find {noun} from the last session: {}", names.join(", "))))
+    Some(SharedString::from(format!(
+        "Could not find {noun} from the last session: {}",
+        names.join(", ")
+    )))
 }
 
 /// Writes the session file - each open window's file or backup id, bounds, maximized state,
@@ -1268,9 +1272,7 @@ mod tests {
         assert!(fitted.origin.x >= WORK_AREA.origin.x);
         assert!(fitted.origin.y >= WORK_AREA.origin.y);
         assert!(fitted.origin.x + fitted.size.width <= WORK_AREA.origin.x + WORK_AREA.size.width);
-        assert!(
-            fitted.origin.y + fitted.size.height <= WORK_AREA.origin.y + WORK_AREA.size.height
-        );
+        assert!(fitted.origin.y + fitted.size.height <= WORK_AREA.origin.y + WORK_AREA.size.height);
     }
 
     #[test]

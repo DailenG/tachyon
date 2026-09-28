@@ -118,9 +118,9 @@ pub fn read_session(path: &Path) -> Vec<WindowState> {
 fn parse_session(text: &str) -> Vec<WindowState> {
     let mut records = text.split('\0');
     let header = records.next().unwrap_or("");
-    let version = header
-        .lines()
-        .find_map(|line| line.strip_prefix("version =").map(str::trim).and_then(|v| v.parse().ok()));
+    let version = header.lines().find_map(|line| {
+        line.strip_prefix("version =").map(str::trim).and_then(|v| v.parse().ok())
+    });
     if version != Some(SESSION_VERSION) {
         return Vec::new();
     }
@@ -189,7 +189,11 @@ impl Editor {
     /// `Editor::slot`; `Editor::should_close`'s own `backup_now`, run moments later as each
     /// window closes, is what actually writes it, so this only needs to fix the path the
     /// session file will name); a clean, file-backed document is recorded by its path directly.
-    pub fn session_state(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<WindowState> {
+    pub fn session_state(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<WindowState> {
         self.flush_pending_paste(cx);
         let target = if self.is_modified() {
             Target::Backup(self.slot(cx)?)
@@ -216,9 +220,16 @@ impl Editor {
     /// notice takes the one line a window gets). Caret and scroll are then clamped to the
     /// document's current length (and, for the caret, a char boundary): both may be stale if the
     /// text changed since the session was written.
-    pub fn restore_view(&mut self, caret: usize, scroll: usize, mode: DocMode, cx: &mut Context<Self>) {
+    pub fn restore_view(
+        &mut self,
+        caret: usize,
+        scroll: usize,
+        mode: DocMode,
+        cx: &mut Context<Self>,
+    ) {
         if self.doc.mode() != mode
-            && !(mode == DocMode::Markdown && self.doc.len() as u64 > tachyon_doc::MARKDOWN_SIZE_LIMIT)
+            && !(mode == DocMode::Markdown
+                && self.doc.len() as u64 > tachyon_doc::MARKDOWN_SIZE_LIMIT)
         {
             self.retag_to(mode, cx);
         }
@@ -278,10 +289,7 @@ mod tests {
 
     #[test]
     fn a_path_with_embedded_newlines_round_trips() {
-        let odd = WindowState {
-            target: Target::File(PathBuf::from("/odd\nname.md")),
-            ..sample()
-        };
+        let odd = WindowState { target: Target::File(PathBuf::from("/odd\nname.md")), ..sample() };
         let text = format!("version = {SESSION_VERSION}\n\0{}", serialize_window(&odd));
         assert_eq!(parse_session(&text), vec![odd]);
     }
@@ -348,7 +356,8 @@ mod tests {
 
     #[test]
     fn writes_and_reads_back_through_a_real_file() {
-        let dir = std::env::temp_dir().join(format!("tachyon-session-test-rw-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("tachyon-session-test-rw-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("session.txt");
         let windows = vec![sample()];
