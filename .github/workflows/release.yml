@@ -106,7 +106,10 @@ jobs:
       - run: cargo xtask dist --no-build
       # Unconditional, like the archive above: an unsigned MSIX still exercises the packaging
       # steps on a fork or a secrets-less dry run. --version and --appinstaller-base are only
-      # set for a workflow_dispatch run testing App Installer's update detection.
+      # set for a workflow_dispatch run testing App Installer's update detection; a real tag
+      # push leaves both unset, so cargo xtask msix defaults to the workspace version with a
+      # trailing ".0" (the stable channel's build number, see
+      # docs/adr/0007-versions-and-release-channels.md).
       - name: Package the MSIX installer
         if: matrix.os == 'windows-latest'
         shell: bash

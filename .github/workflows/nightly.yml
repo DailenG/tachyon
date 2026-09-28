@@ -1,0 +1,188 @@
+name: Nightly
+
+# Builds and publishes a rolling "nightly" prerelease from main, so an installed nightly MSIX
+# picks up every merge automatically. See docs/adr/0007-versions-and-release-channels.md for the
+# version scheme (MSIX version X.Y.Z.<this workflow's run number>) and why that keeps a nightly
+# install strictly ahead of the matching stable release without touching App Installer's
+# "releases/latest" URL, which stable users go through instead (excludes prereleases).
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/**"
+      - "xtask/**"
+      - "packaging/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/nightly.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: short
+
+jobs:
+  # Windows only: the nightly channel exists to exercise MSIX auto-update, which only runs there.
+  build:
+    name: Build and package (windows-latest)
+    runs-on: windows-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      signing: ${{ steps.signing.outputs.available }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked --package tachyon
+      - name: Check Azure Trusted Signing secrets
+        id: signing
+        shell: bash
+        run: |
+          if [ -n "${{ secrets.AZURE_CLIENT_ID }}" ] && [ -n "${{ secrets.AZURE_TENANT_ID }}" ] && \
+             [ -n "${{ secrets.AZURE_CLIENT_SECRET }}" ] && [ -n "${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}" ] && \
+             [ -n "${{ secrets.AZURE_TRUSTED_SIGNING_PROFILE }}" ] && [ -n "${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Azure Trusted Signing secrets are not set; skipping signing and skipping the nightly release publish (an unsigned nightly would auto-update installs silently, so it is not published)."
+          fi
+      # Signs target/release/tachyon.exe in place; the MSIX below packs the signed binary.
+      - name: Sign tachyon.exe (Azure Trusted Signing)
+        if: steps.signing.outputs.available == 'true'
+        uses: Azure/trusted-signing-action@208f8af4bf26cf2af8597424e3cb5582801523ba # v2.0.0
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.AZURE_TRUSTED_SIGNING_PROFILE }}
+          files-folder: ${{ github.workspace }}/target/release
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+      - name: Verify Authenticode signature
+        if: steps.signing.outputs.available == 'true'
+        shell: bash
+        run: pwsh -File .github/scripts/verify-signature.ps1 -Path target/release/tachyon.exe
+      # MSIX version X.Y.Z.B: X.Y.Z is the workspace version, B is this workflow's run number
+      # (monotonic, and reset only if the workflow file itself is recreated), never the workspace
+      # version's own patch counter. See docs/adr/0007-versions-and-release-channels.md.
+      - name: Compute the nightly MSIX version
+        id: version
+        shell: bash
+        run: |
+          version=$(awk '
+            /^\[workspace\.package\]/ { f = 1; next }
+            /^\[/ { f = 0 }
+            f && /^version = / { gsub(/version = "|"/, ""); print; exit }
+          ' Cargo.toml)
+          echo "version=${version}.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+      - name: Package the MSIX installer
+        shell: bash
+        run: |
+          cargo xtask msix \
+            --version "${{ steps.version.outputs.version }}" \
+            --appinstaller-base "https://github.com/DailenG/tachyon/releases/download/nightly"
+      - name: Sign the MSIX installer (Azure Trusted Signing)
+        if: steps.signing.outputs.available == 'true'
+        uses: Azure/trusted-signing-action@208f8af4bf26cf2af8597424e3cb5582801523ba # v2.0.0
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.AZURE_TRUSTED_SIGNING_PROFILE }}
+          files-folder: ${{ github.workspace }}/target/dist
+          files-folder-filter: msix
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+      - name: Verify the MSIX installer's signature
+        if: steps.signing.outputs.available == 'true'
+        shell: bash
+        run: |
+          msix=$(ls target/dist/Tachyon_*.msix)
+          pwsh -File .github/scripts/verify-signature.ps1 -Path "$msix"
+      - uses: actions/upload-artifact@v7
+        if: steps.signing.outputs.available == 'true'
+        with:
+          name: nightly-msix
+          path: |
+            target/dist/Tachyon_*.msix
+            target/dist/Tachyon.appinstaller
+          if-no-files-found: error
+          retention-days: 1
+
+  # Skipped entirely when the Azure secrets are absent (see the warning above): an unsigned build
+  # is never published to the nightly channel, since App Installer would apply it silently.
+  publish:
+    name: Publish the nightly release
+    needs: build
+    if: needs.build.outputs.signing == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with:
+          name: nightly-msix
+          path: dist
+      - name: Checksum the assets
+        run: |
+          cd dist
+          sha256sum -- Tachyon_*.msix Tachyon.appinstaller > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: Write release notes
+        run: |
+          cat > notes.md <<EOF
+          Rolling nightly build, MSIX version ${{ needs.build.outputs.version }}.
+
+          Commit: https://github.com/DailenG/tachyon/commit/${{ github.sha }}
+          Build: ${{ github.run_number }}
+
+          Commit history: https://github.com/DailenG/tachyon/commits/main
+
+          Install: download and open [Tachyon.appinstaller](https://github.com/DailenG/tachyon/releases/download/nightly/Tachyon.appinstaller).
+          An already-installed nightly (or a stable 0.1.0.0 install) updates in place on next launch.
+          EOF
+      # Moves (or creates) the `nightly` tag at this commit first: a release's tag is a real git
+      # ref, so `gh release edit --target` cannot move it once it exists, only creating it fresh
+      # can choose its commit.
+      - name: Point the nightly tag at this commit
+        run: git push --force origin "${{ github.sha }}:refs/tags/nightly"
+      - name: Create or update the nightly release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view nightly >/dev/null 2>&1; then
+            gh release edit nightly --title "Nightly" --notes-file notes.md --prerelease
+          else
+            gh release create nightly --prerelease --title "Nightly" --notes-file notes.md
+          fi
+      # The MSIX filename carries its version, so unlike Tachyon.appinstaller and SHA256SUMS.txt
+      # (same name every run, handled by --clobber below) the previous run's .msix is never
+      # overwritten by an upload; delete it explicitly so the release keeps exactly one.
+      - name: Delete the previous nightly's MSIX asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view nightly --json assets --jq '.assets[].name' | grep -E '^Tachyon_.*\.msix$' | while read -r name; do
+            gh release delete-asset nightly "$name" --yes
+          done
+      - name: Upload the nightly assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload nightly --clobber dist/Tachyon_*.msix dist/Tachyon.appinstaller dist/SHA256SUMS.txt

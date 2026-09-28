@@ -274,6 +274,14 @@ accounts only the project owner has.
       cannot swap a package whose process is still running), documented in the README and
       ARCHITECTURE rather than automated, since Windows has no supported way to force a clean
       full-trust app to restart for an update in progress
+- [x] Nightly channel: [`.github/workflows/nightly.yml`](../.github/workflows/nightly.yml) builds
+      and signs a Windows MSIX from every push to `main` that touches packaged code, versioned
+      `X.Y.Z.<run number>` so each nightly is strictly newer than the last and than the matching
+      stable release ([ADR 0007](adr/0007-versions-and-release-channels.md)), and publishes it to
+      a single rolling `nightly` prerelease that `Tachyon.appinstaller` at
+      `releases/download/nightly/` always points at; publishing is skipped, with a warning, when
+      the signing secrets are absent. Stable's `releases/latest` excludes prereleases, so this
+      channel never affects a stable install.
 - [x] Project website on GitHub Pages from `site/`, deployed by
       [`.github/workflows/pages.yml`](../.github/workflows/pages.yml)
 - [ ] *(owner)* macOS code signing and notarization, and where releases beyond GitHub are

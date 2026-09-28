@@ -65,6 +65,11 @@ All notable user-visible changes are recorded here. The format follows
   locations as the `.zip` build; `--autostart on` targets the execution alias instead of the
   versioned install path when run from an MSIX install, so it survives updates. The release
   workflow signs and verifies the MSIX the same way as `tachyon.exe`.
+- Versioning: the MSIX version is now `X.Y.Z.B`, with stable releases keeping `B = 0` and a new
+  nightly channel ([`.github/workflows/nightly.yml`](.github/workflows/nightly.yml)) using its
+  own always-increasing build number instead, so every merge to `main` produces a signed MSIX
+  strictly newer than the last nightly and the current stable release; an installed nightly picks
+  it up automatically ([ADR 0007](docs/adr/0007-versions-and-release-channels.md)).
 - Local images are shown in rendered text (paths relative to the document, absolute or `file:`);
   remote images still show their alt text.
 - Settings (`Ctrl+,` opens `settings.toml`): theme (system, dark or light), zoom of new windows,
