@@ -150,11 +150,13 @@ shows literal text - no syntax hiding, no block-swap distinction). `mode_for_ext
 the path's extension (`.md`, `.markdown`, `.mdown`, `.mkd`, `.mkdn`, `.mdx` → Markdown; anything
 else, including no extension → Plain); `Ctrl+Shift+M` (`Editor::toggle_text_mode`) retags the same
 buffer (text, undo and version untouched: `Document::retagged` only re-tiles it into blocks for
-the new mode) rather than reloading, so the toggle is instant and undoable text stays undoable.
-Toggling *to* Markdown is refused, with a notice, above `MARKDOWN_SIZE_LIMIT` (16 MiB, extrapolated
-from Phase 2's 220 ms/10 MiB full-parse cost); a Markdown file that large opens as `Plain`
-automatically with the same notice (`disk::load_document`), since nothing about that decision
-needs a background path if it never has to run in the first place.
+the new mode) rather than reloading, so the toggle is instant and undoable text stays undoable -
+`Editor::retag_to` is the shared mechanics behind both that toggle and a session restore's own
+recorded mode (`session::restore_view`, below). Toggling *to* Markdown is refused, with a notice,
+above `MARKDOWN_SIZE_LIMIT` (16 MiB, extrapolated from Phase 2's 220 ms/10 MiB full-parse cost); a
+Markdown file that large opens as `Plain` automatically with the same notice
+(`disk::load_document`), since nothing about that decision needs a background path if it never
+has to run in the first place.
 
 **Chunking.** A `Plain` document tiles into blocks of `PLAIN_CHUNK_LINES` (256) lines or
 `PLAIN_CHUNK_BYTES` (16 KiB), whichever comes first, cut after a `\n` - except a line with no
@@ -498,6 +500,31 @@ resident, and Quit (`Ctrl+Q`, `tachyon --quit` forwarded over the instance chann
 icon's menu) always ends the process after the windows have closed. Quit does not ask about
 unsaved changes: the primary keeps a backup of every unsaved document and reopens them at its
 next start (hot exit, [ADR 0006](adr/0006-hot-exit.md); `tachyon_editor::Backups`).
+
+**Session restore** (issue #79, [ADR 0009](adr/0009-session-restore.md);
+`tachyon_editor::session`, `app::write_session_now`/`app::restore_sources`), on top of hot exit:
+Quit also writes `state_dir()/session-<instance>.txt` before the windows close - each window's
+file path or hot-exit backup id, bounds, maximized state, caret, scroll and mode, in the order it
+was opened (`WindowCascade`) - when `Settings::restore_session` (default on) allows it, atomically
+(a temp file, then rename, like every other state file here). It is read on its own background
+thread, sharing settings' own 15 ms wait rather than doubling it (both threads start before GPUI
+does). A primary with no files on the command line matches the recorded windows, in order,
+against what actually exists now - a file against the filesystem, a backup id against what
+`Backups::restore` finds on disk - and reopens them in the same order and place, bounds clamped to
+the current display's work area (`app::fit_to_work_area`, since monitors change between
+sessions); any hot-exit backup the session did not know about (a crash, or the setting turned on
+since) still comes back afterward, unconditionally - session restore only adds to hot exit's own
+guarantee, never narrows it. A missing file is skipped and named in a one-line notice on the
+first restored window (the same `Editor::notice` banner the oversized-Markdown fallback uses). A
+launch **with** files restores the session first, then opens and focuses the new files (opened,
+and so focused, last in the same pass). Only the first window of a startup batch opens before its
+own first frame; every other one - the rest of a restored session, or several CLI files - waits
+for that frame (the same `on_next_frame` hook `check_whats_new` already uses), since creating
+another platform window synchronously costs 40-60 ms on Windows and previously ran before the
+first window ever painted. `--background` carries a restored session the same way it already
+carries bare hot-exit backups (`PendingRestore`). Off (`restore_session = false`), the session
+file is neither written nor read, and behaviour is exactly hot exit alone, as before this feature.
+
 On Windows a resident primary shows a tray icon (`tachyon_platform::Tray`: a hidden window with
 its own message loop on a `tray` thread, events forwarded to GPUI over a channel); clicking it
 opens a window, and its context menu ("New window", "About Tachyon", "Quit Tachyon") is built
@@ -598,9 +625,12 @@ launch's first frame (and at resident start), sized in advance, and filled with 
 document and shown when the next launch arrives. Creating a window there costs 40-60 ms and
 showing a newly created one resizes its render targets; a ready window appears with its content
 ≈ 27 ms after the launch arrives (ADR 0004). `tachyon_platform::keeps_hidden_windows_hidden()`
-gates it: Wayland maps windows opened hidden, so Linux has none. Ready windows have DWM's open
-and close animations turned off (`disable_window_transitions`), so they appear, and draw, as soon
-as they are shown. Every window's native title bar is set to Tachyon's resolved theme
+gates it: Wayland maps windows opened hidden, so Linux has none. A session-restored window
+(`app::show_window`) always skips this reuse - its own recorded bounds, not whatever the ready
+window happened to be sized for, decide where it opens - so the speedup only applies to an
+ordinary later launch, not the one that brings a restored session back. Ready windows have DWM's
+open and close animations turned off (`disable_window_transitions`), so they appear, and draw, as
+soon as they are shown. Every window's native title bar is set to Tachyon's resolved theme
 (`set_title_bar_dark`, DWM's immersive dark mode) before it first paints, and again when the
 theme changes (settings saved, or the system appearance with `theme = "system"`); the tray's
 context menu is kept in step the same way (see above).
@@ -653,4 +683,3 @@ Azure Trusted Signing (`Azure/trusted-signing-action`, pinned to a commit SHA) o
 `windows-latest` leg that builds them, verifies both with `Get-AuthenticodeSignature`
 (`.github/scripts/verify-signature.ps1`), and uploads the archives, the MSIX and the
 `.appinstaller` to the GitHub Release alongside a `SHA256SUMS.txt`.
-

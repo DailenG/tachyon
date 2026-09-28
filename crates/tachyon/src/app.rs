@@ -86,6 +86,26 @@ impl Source {
     }
 }
 
+/// One window to open, together with any session state to reapply: its recorded bounds and
+/// maximized state (used in place of the ordinary cascade, `open_window`) and view - caret,
+/// scroll, mode - reapplied once the document is in place (`fill`/`apply_view`). `state.target`
+/// itself goes unused here: it was already spent choosing `source` (`restore_sources`). `None`
+/// for an ordinary open with nothing recorded - a CLI file, New Window, a bare hot-exit backup
+/// the session did not know about - which gets the usual cascade and a fresh caret at the top.
+struct Opening {
+    source: Source,
+    state: Option<tachyon_editor::WindowState>,
+    /// A one-line notice ("Could not find ... from the last session") shown once the document
+    /// settles - attached to exactly one `Opening` in a restored batch (`missing_files_notice`).
+    notice: Option<SharedString>,
+}
+
+impl Opening {
+    fn plain(source: Source) -> Self {
+        Opening { source, state: None, notice: None }
+    }
+}
+
 /// How the process ends. A resident primary outlives its windows so later
 /// launches skip process and GPU start-up (docs/adr/0004).
 struct Lifecycle {
@@ -122,6 +142,20 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
         });
         receiver
     });
+    // Session restore (issue #79): the session file is read on its own thread, in parallel with
+    // settings, so both share the one `SETTINGS_WAIT` budget below rather than doubling it.
+    // Whether it is actually *used* depends on `Settings::restore_session`, known only once
+    // `settings` itself arrives - reading it unconditionally here costs nothing extra to decide
+    // that (a small local file), and skips a second round trip through this same thread setup.
+    let session_file = tachyon_platform::state_dir()
+        .map(|dir| dir.join(format!("session-{}.txt", crate::instance_id())));
+    let session_read = listener.as_ref().and_then(|_| session_file.clone()).map(|file| {
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        std::thread::spawn(move || {
+            let _ = sender.send(tachyon_editor::read_session(&file));
+        });
+        receiver
+    });
     let primary_backups = listener
         .as_ref()
         .and_then(|_| tachyon_platform::state_dir())
@@ -146,6 +180,9 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
                 register: tachyon_platform::register_restart,
                 unregister: tachyon_platform::unregister_restart,
             });
+        }
+        if is_primary && let Some(file) = session_file.clone() {
+            cx.set_global(SessionPath(file));
         }
 
         // Before any window opens or a notification could be posted (`App::set_app_identity`'s
@@ -174,11 +211,14 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
             open_paths(vec![file], cx);
         });
         cx.on_action(|_: &NewWindow, cx| {
-            show_window(Source::Blank, cx);
+            show_window(Opening::plain(Source::Blank), cx);
         });
         cx.on_action(|_: &WhatsNew, cx| {
             if !whats_new::NOTES.is_empty() {
-                open_window(Source::WhatsNew { version: whats_new::current_version() }, cx);
+                open_window(
+                    Opening::plain(Source::WhatsNew { version: whats_new::current_version() }),
+                    cx,
+                );
             }
         });
         cx.on_action(|_: &Open, cx| {
@@ -204,8 +244,10 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
         cx.set_global(tachyon_editor::RecentFilesOs {
             // A private instance (`TACHYON_INSTANCE_ID` set, e.g. by a benchmark or a test) has
             // its own recent-files list (see the `RecentFiles::new` call just above), but the
-            // jump list is scoped to the whole app, not to one instance: writing it here would
-            // overwrite the real jump list with this instance's own, unrelated recent files.
+            // jump list is scoped to the whole app, not to one instance's recent files list the
+            // way `RecentFiles` itself is (see `app::run`'s `RecentFilesOs`), so a private
+            // instance updating it would overwrite the real jump list with its own, unrelated
+            // recent files.
             update_jump_list: if crate::is_default_instance() {
                 tachyon_platform::update_jump_list
             } else {
@@ -234,6 +276,9 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
             // Deferred: the action is dispatched from inside a window update,
             // and updating that window again from here would fail.
             cx.defer(|cx| {
+                // Session restore (issue #79): written first, while every window is still open
+                // and, outside that update, readable - the window Quit came from included.
+                write_session_now(cx);
                 let windows = cx.windows();
                 if windows.is_empty() {
                     cx.quit();
@@ -274,9 +319,21 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
             }
         }
 
+        // Settings and the session file share one 15 ms budget rather than each waiting up to
+        // 15 ms of their own: both threads were spawned back to back, above, well before this
+        // point, so in practice neither wait is anywhere near the full budget.
+        let deadline = Instant::now() + SETTINGS_WAIT;
         let settings = settings_read
-            .and_then(|read| read.recv_timeout(SETTINGS_WAIT).ok())
+            .and_then(|read| {
+                read.recv_timeout(deadline.saturating_duration_since(Instant::now())).ok()
+            })
             .unwrap_or_default();
+        let session_windows: Vec<tachyon_editor::WindowState> = session_read
+            .and_then(|read| {
+                read.recv_timeout(deadline.saturating_duration_since(Instant::now())).ok()
+            })
+            .unwrap_or_default();
+        let restore_session = settings.restore_session;
         let primary_backups = primary_backups.filter(|_| settings.hot_exit);
         cx.set_global(settings);
         if let Some(file) = settings_file {
@@ -284,18 +341,32 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
         }
         // Documents left unsaved by the last Quit come back (primary instance only, so two
         // processes never restore the same backups).
-        let restored: Vec<Source> = match &primary_backups {
-            Some(backups) => backups.restore().into_iter().map(Source::Restored).collect(),
+        let restored_backups: Vec<tachyon_editor::Restored> = match &primary_backups {
+            Some(backups) => backups.restore(),
             None => Vec::new(),
         };
         if let Some(backups) = primary_backups {
             cx.set_global(backups);
         }
+        // With `restore_session` off, behaviour is exactly as before this feature: only the
+        // hot-exit backups come back, in the order `Backups::restore` returns them.
+        let mut missing = Vec::new();
+        let mut session_openings: Vec<Opening> = if restore_session {
+            restore_sources(session_windows, restored_backups, &mut missing)
+        } else {
+            restored_backups.into_iter().map(|r| Opening::plain(Source::Restored(r))).collect()
+        };
+        let had_session_openings = !session_openings.is_empty();
+        if let Some(notice) = missing_files_notice(&missing)
+            && had_session_openings
+        {
+            session_openings[0].notice = Some(notice);
+        }
         // A background start with nothing to open (login autostart) stays
         // windowless until the first launch arrives, which brings the restored documents along.
         let about = cli.about;
-        let sources = if resident && cli.background && cli.opens_nothing() {
-            cx.set_global(PendingRestore(restored));
+        let mut openings: Vec<Opening> = if resident && cli.background && cli.opens_nothing() {
+            cx.set_global(PendingRestore(session_openings));
             // No window will open to carry the theme to the tray's context menu (Windows) the
             // way `open_window` and `prepare_ready_window` do, so it is resolved here instead,
             // the one time this path is windowless.
@@ -306,38 +377,69 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
             Vec::new()
         } else if about {
             // `--about` shows the About window, not a document window; restored documents (hot
-            // exit) still come back, the same as any other launch.
-            restored
-        } else if !restored.is_empty() && cli.opens_nothing() {
-            restored
+            // exit, and a full session) still come back, the same as any other launch.
+            session_openings
+        } else if had_session_openings && cli.opens_nothing() {
+            session_openings
         } else {
-            restored.into_iter().chain(Source::from_cli(cli)).collect()
+            session_openings
+                .into_iter()
+                .chain(Source::from_cli(cli).into_iter().map(Opening::plain))
+                .collect()
         };
-        let mut first = true;
-        for source in sources {
-            let Some(handle) = open_window(source, cx) else { continue };
-            if std::mem::take(&mut first) {
-                cx.global_mut::<Startup>().mark("window_open");
-                // Set synchronously, before any forwarded launch reaching `show_window` could
-                // possibly race it (both run on this same executor, but only one at a time): a
-                // second `check_whats_new` for the same process would be harmless (idempotent
-                // once the version file already matches), just redundant.
-                if is_primary {
-                    cx.set_global(WhatsNewChecked);
-                }
-                let _ = handle.update(cx, |_, window, _| {
-                    window.on_next_frame(move |_, cx| {
-                        if cx.global_mut::<Startup>().finish() {
-                            cx.quit();
-                        } else if is_primary {
-                            check_whats_new(cx);
-                            // After the first frame, never before it (issue #80); a no-op unless
-                            // `RestartRegistration` was set above (resident primary only).
-                            tachyon_editor::sync_restart_registration(cx);
-                        }
-                    });
-                });
+        // Only reached when the session/backups batch above was empty (`had_session_openings`
+        // false): the notice then belongs on whatever opens first instead - the CLI's own
+        // sources, or (with nothing given either) the sample window `Source::from_cli` falls
+        // back to.
+        if !had_session_openings
+            && let Some(notice) = missing_files_notice(&missing)
+            && let Some(first) = openings.first_mut()
+        {
+            first.notice = Some(notice);
+        }
+        // Opens the first window right away; every other one - the rest of a restored session,
+        // or several CLI files - waits for its first frame (`on_next_frame`, below), so creating
+        // more platform windows synchronously (40-60 ms each on Windows - docs/adr/0004) never
+        // delays it (docs/adr/0009-session-restore.md).
+        let mut first_handle: Option<WindowHandle<Editor>> = None;
+        let mut deferred: Vec<Opening> = Vec::new();
+        for opening in openings {
+            if first_handle.is_some() {
+                deferred.push(opening);
+                continue;
             }
+            if let Some(handle) = open_window(opening, cx) {
+                first_handle = Some(handle);
+            }
+            // Else: this source failed to open (an OS error); try the next one for the first
+            // window, the same resilience the original single-pass loop had.
+        }
+        if let Some(handle) = first_handle {
+            cx.global_mut::<Startup>().mark("window_open");
+            // Set synchronously, before any forwarded launch reaching `show_window` could
+            // possibly race it (both run on this same executor, but only one at a time): a
+            // second `check_whats_new` for the same process would be harmless (idempotent
+            // once the version file already matches), just redundant.
+            if is_primary {
+                cx.set_global(WhatsNewChecked);
+            }
+            let _ = handle.update(cx, |_, window, _| {
+                window.on_next_frame(move |_, cx| {
+                    if cx.global_mut::<Startup>().finish() {
+                        cx.quit();
+                        return;
+                    }
+                    if is_primary {
+                        check_whats_new(cx);
+                        // After the first frame, never before it (issue #80); a no-op unless
+                        // `RestartRegistration` was set above (resident primary only).
+                        tachyon_editor::sync_restart_registration(cx);
+                    }
+                    for opening in deferred {
+                        open_window(opening, cx);
+                    }
+                });
+            });
         }
         if about {
             tachyon_editor::open_about(cx);
@@ -358,33 +460,38 @@ const FRAME_ALLOWANCE: Pixels = px(48.);
 const CASCADE_STEP: Pixels = px(32.);
 
 /// Windows opened so far (real ones from `open_window`, and a hidden prepared-ahead one from
-/// `prepare_ready_window`), oldest first, for `initial_bounds`'s cascade: the next window offsets
-/// from the most recently opened one that is still open. Never pruned on close by itself; a
-/// closed handle is dropped the next time `last_window_origin` walks past it looking for a
-/// survivor, so closing windows costs nothing extra.
-struct WindowCascade(Vec<WindowHandle<Editor>>);
+/// `prepare_ready_window`), oldest first, each with the origin it opened at: for
+/// `initial_bounds`'s cascade (the next window offsets from the most recently opened one that is
+/// still open) and for the session file's window order (`write_session_now`). Closed windows are
+/// dropped lazily, the next time `last_window_origin` runs, so closing costs nothing extra.
+struct WindowCascade(Vec<(WindowHandle<Editor>, Point<Pixels>)>);
 
 impl Global for WindowCascade {}
 
-/// Remembers `handle` as the most recently opened window, for the next one's cascade origin.
-fn track_window(handle: WindowHandle<Editor>, cx: &mut App) {
+/// Remembers `handle`, opened at `origin`, as the most recently opened window.
+fn track_window(handle: WindowHandle<Editor>, origin: Point<Pixels>, cx: &mut App) {
     if cx.has_global::<WindowCascade>() {
-        cx.global_mut::<WindowCascade>().0.push(handle);
+        cx.global_mut::<WindowCascade>().0.push((handle, origin));
     } else {
-        cx.set_global(WindowCascade(vec![handle]));
+        cx.set_global(WindowCascade(vec![(handle, origin)]));
     }
 }
 
 /// The screen position of the most recently opened window that is still open, or `None` if
 /// there is not one (nothing has opened yet, or every window opened so far has since closed).
+///
+/// A window that cannot be updated right now is not necessarily closed: GPUI takes a window out
+/// of its map while that window is being updated, and a new window is usually opened from an
+/// action the focused window is handling (`Ctrl+N`, a palette row). So a window is dropped only
+/// when it is gone from `App::windows`, and a live one that is busy contributes the origin it
+/// opened at instead of its current one.
 fn last_window_origin(cx: &mut App) -> Option<Point<Pixels>> {
-    loop {
-        let handle = *cx.try_global::<WindowCascade>()?.0.last()?;
-        if let Ok(origin) = handle.update(cx, |_, window, _| window.bounds().origin) {
-            return Some(origin);
-        }
-        cx.global_mut::<WindowCascade>().0.pop();
-    }
+    cx.try_global::<WindowCascade>()?;
+    let open: Vec<_> = cx.windows().iter().map(|window| window.window_id()).collect();
+    let cascade = &mut cx.global_mut::<WindowCascade>().0;
+    cascade.retain(|(handle, _)| open.contains(&handle.window_id()));
+    let (handle, opened_at) = *cascade.last()?;
+    Some(handle.update(cx, |_, window, _| window.bounds().origin).unwrap_or(opened_at))
 }
 
 /// Where a new window of `size` should go: `CASCADE_STEP` down and right from `last` (the most
@@ -426,15 +533,42 @@ fn initial_bounds(cx: &mut App) -> Bounds<Pixels> {
     Bounds { origin: cascade_origin(last, centered.origin, fitted, visible), size: fitted }
 }
 
-/// How long start-up waits for the settings file to be read (it is small and local).
+/// A session-recorded window's bounds, fitted to `work_area`: monitors change between sessions,
+/// so a window recorded on a since-removed or now-smaller display must not open partly or wholly
+/// off screen. Shrinks to fit exactly like `initial_bounds` shrinks `WINDOW_SIZE` (leaving
+/// `FRAME_ALLOWANCE` for the frame - the same allowance applies to a restored window's own
+/// recorded size), then keeps the origin inside the work area. Pure and independent of any live
+/// display, so it is unit-tested directly (`tests::fit_to_work_area_*`).
+fn fit_to_work_area(bounds: Bounds<Pixels>, work_area: Bounds<Pixels>) -> Bounds<Pixels> {
+    let fitted = size(
+        bounds.size.width.min(work_area.size.width - FRAME_ALLOWANCE).max(px(1.)),
+        bounds.size.height.min(work_area.size.height - FRAME_ALLOWANCE).max(px(1.)),
+    );
+    let max_x = (work_area.origin.x + work_area.size.width - fitted.width).max(work_area.origin.x);
+    let max_y =
+        (work_area.origin.y + work_area.size.height - fitted.height).max(work_area.origin.y);
+    let x = bounds.origin.x.max(work_area.origin.x).min(max_x);
+    let y = bounds.origin.y.max(work_area.origin.y).min(max_y);
+    Bounds { origin: point(x, y), size: fitted }
+}
+
+/// `fit_to_work_area` against the current primary display, or `initial_bounds`'s own cascade if
+/// there is none at all.
+fn clamp_to_work_area(bounds: Bounds<Pixels>, cx: &mut App) -> Bounds<Pixels> {
+    let Some(display) = cx.primary_display() else { return initial_bounds(cx) };
+    fit_to_work_area(bounds, display.visible_bounds())
+}
+
+/// How long start-up waits for the settings file to be read (it is small and local) - shared
+/// with the session file (`run`), which is read on its own thread the same way.
 const SETTINGS_WAIT: std::time::Duration = std::time::Duration::from_millis(15);
 
 /// How long start-up waits for the system appearance (see `query_system_appearance`).
 const APPEARANCE_WAIT: std::time::Duration = std::time::Duration::from_millis(15);
 
-fn window_options(title: SharedString, show: bool, bounds: Bounds<Pixels>) -> WindowOptions {
+fn window_options(title: SharedString, show: bool, bounds: WindowBounds) -> WindowOptions {
     WindowOptions {
-        window_bounds: Some(WindowBounds::Windowed(bounds)),
+        window_bounds: Some(bounds),
         titlebar: Some(TitlebarOptions { title: Some(title), ..Default::default() }),
         app_id: Some(APP_ID.to_owned()),
         show,
@@ -461,10 +595,27 @@ fn initial_document(source: &Source, cx: &App) -> Document {
     }
 }
 
-fn open_window(source: Source, cx: &mut App) -> Option<WindowHandle<Editor>> {
+/// The document `opening.source` opens with, at its recorded bounds and maximized state if
+/// `opening.state` is `Some` (clamped to the current work area, `clamp_to_work_area`), else the
+/// ordinary cascade (`initial_bounds`). Its caret, scroll, mode and any notice are reapplied
+/// once the document itself is in place (`fill`/`apply_view`): immediately for a restored
+/// backup, once the read finishes for a file (`load_file`).
+fn open_window(opening: Opening, cx: &mut App) -> Option<WindowHandle<Editor>> {
+    let Opening { source, state, notice } = opening;
     let title = source.title();
-    let bounds = initial_bounds(cx);
-    let options = window_options(title.clone(), true, bounds);
+    let window_bounds = match &state {
+        Some(state) => {
+            let bounds = clamp_to_work_area(state.bounds, cx);
+            if state.maximized {
+                WindowBounds::Maximized(bounds)
+            } else {
+                WindowBounds::Windowed(bounds)
+            }
+        }
+        None => WindowBounds::Windowed(initial_bounds(cx)),
+    };
+    let view = state.map(|s| (s.caret, s.scroll, s.mode));
+    let options = window_options(title.clone(), true, window_bounds);
     let result = cx.open_window(options, move |window, cx| {
         tachyon_platform::set_window_icon(window);
         // Set before the window's first frame paints, so DWM never shows the OS dark-mode
@@ -483,13 +634,13 @@ fn open_window(source: Source, cx: &mut App) -> Option<WindowHandle<Editor>> {
             if let Some(fixed_title) = fixed_title {
                 editor.set_title_override(fixed_title);
             }
-            fill(&mut editor, source, cx);
+            fill(&mut editor, source, view, notice, cx);
             editor
         })
     });
     match result {
         Ok(handle) => {
-            track_window(handle, cx);
+            track_window(handle, window_bounds.get_bounds().origin, cx);
             Some(handle)
         }
         Err(e) => {
@@ -499,24 +650,51 @@ fn open_window(source: Source, cx: &mut App) -> Option<WindowHandle<Editor>> {
     }
 }
 
-/// Reads and parses the file on the background executor so window creation
-/// never waits on disk I/O or a large parse, then hands the document over.
-/// What a new editor gets beyond its initial document: a file loads in the background, a backup is
-/// adopted.
-fn fill(editor: &mut Editor, source: Source, cx: &mut Context<Editor>) {
+/// What a new editor gets beyond its initial document: a file loads in the background, a backup
+/// is adopted - then, for a session-restored window (`view` or `notice` carrying anything),
+/// reapplied once the document is actually in place (`apply_view`).
+fn fill(
+    editor: &mut Editor,
+    source: Source,
+    view: Option<(usize, usize, tachyon_doc::DocMode)>,
+    notice: Option<SharedString>,
+    cx: &mut Context<Editor>,
+) {
     match source {
-        Source::File(path) => load_file(path, cx),
-        Source::Restored(restored) => editor.adopt_backup(restored, cx),
-        Source::Sample | Source::Blank | Source::Clipboard | Source::WhatsNew { .. } => {}
+        Source::File(path) => load_file(path, view, notice, cx),
+        Source::Restored(restored) => {
+            editor.adopt_backup(restored, cx);
+            apply_view(editor, view, notice, cx);
+        }
+        Source::Sample | Source::Blank | Source::Clipboard | Source::WhatsNew { .. } => {
+            apply_view(editor, view, notice, cx);
+        }
+    }
+}
+
+/// Reapplies a session-recorded caret, scroll and mode (`Editor::restore_view`) and any notice
+/// (`Editor::set_notice`), once the document is settled - the shared tail of every branch in
+/// `fill` and `load_file`. Both are no-ops (`None`) for an ordinary open.
+fn apply_view(
+    editor: &mut Editor,
+    view: Option<(usize, usize, tachyon_doc::DocMode)>,
+    notice: Option<SharedString>,
+    cx: &mut Context<Editor>,
+) {
+    if let Some((caret, scroll, mode)) = view {
+        editor.restore_view(caret, scroll, mode, cx);
+    }
+    if let Some(notice) = notice {
+        editor.set_notice(notice, cx);
     }
 }
 
 /// Documents restored at a background start, opened with the first launch.
-struct PendingRestore(Vec<Source>);
+struct PendingRestore(Vec<Opening>);
 
 impl Global for PendingRestore {}
 
-fn take_pending_restore(cx: &mut App) -> Vec<Source> {
+fn take_pending_restore(cx: &mut App) -> Vec<Opening> {
     if cx.has_global::<PendingRestore>() {
         cx.remove_global::<PendingRestore>().0
     } else {
@@ -528,7 +706,12 @@ fn take_pending_restore(cx: &mut App) -> Vec<Source> {
 /// `tachyon_editor::load_document`) on the background executor, so opening a huge file never
 /// blocks window creation or a frame; the window already shows the "Loading ..." placeholder
 /// above until this replaces it.
-fn load_file(path: PathBuf, cx: &mut Context<Editor>) {
+fn load_file(
+    path: PathBuf,
+    view: Option<(usize, usize, tachyon_doc::DocMode)>,
+    notice: Option<SharedString>,
+    cx: &mut Context<Editor>,
+) {
     cx.spawn(async move |editor, cx| {
         let read_path = path.clone();
         let outcome = cx
@@ -539,16 +722,25 @@ fn load_file(path: PathBuf, cx: &mut Context<Editor>) {
             Ok(tachyon_editor::LoadOutcome::Loaded(loaded)) => {
                 editor.set_loaded(*loaded, cx);
                 editor.set_file(path, cx);
+                apply_view(editor, view, notice, cx);
             }
             // Neither is associated with the file: saving must not overwrite it with the
             // message, and Save As still prompts as it would for a fresh scratch buffer.
             Ok(tachyon_editor::LoadOutcome::Refused(message)) => {
                 editor.set_document(Document::new(&format!("{message}\n")), cx);
+                if let Some(notice) = notice {
+                    editor.set_notice(notice, cx);
+                }
             }
-            Err(e) => editor.set_document(
-                Document::new(&format!("Could not read {}: {e}\n", path.display())),
-                cx,
-            ),
+            Err(e) => {
+                editor.set_document(
+                    Document::new(&format!("Could not read {}: {e}\n", path.display())),
+                    cx,
+                );
+                if let Some(notice) = notice {
+                    editor.set_notice(notice, cx);
+                }
+            }
         })
     })
     .detach();
@@ -585,7 +777,7 @@ fn prepare_ready_window(cx: &mut App) {
                 return;
             }
             let bounds = initial_bounds(cx);
-            let options = window_options("Tachyon".into(), false, bounds);
+            let options = window_options("Tachyon".into(), false, WindowBounds::Windowed(bounds));
             match cx.open_window(options, |window, cx| cx.new(|cx| Editor::new("", window, cx))) {
                 Ok(handle) => {
                     // A hidden window only gets its final size when shown,
@@ -603,7 +795,7 @@ fn prepare_ready_window(cx: &mut App) {
                         tachyon_platform::set_title_bar_dark(window, dark);
                         tachyon_platform::set_popup_menu_dark(dark);
                     });
-                    track_window(handle, cx);
+                    track_window(handle, bounds.origin, cx);
                     cx.set_global(ReadyWindow(Some(handle)));
                 }
                 Err(e) => eprintln!("tachyon: could not prepare a window ({e:#})"),
@@ -613,32 +805,43 @@ fn prepare_ready_window(cx: &mut App) {
     .detach();
 }
 
-/// The ready window, filled with `source`; `source` back if there is none.
-fn take_ready_window(source: Source, cx: &mut App) -> Result<WindowHandle<Editor>, Source> {
+/// The ready window, filled with `opening`'s source; `opening` back if there is none. Boxed,
+/// since an `Opening` is large and this `Err` is the common path whenever no window is ready. A
+/// session-restored window never reaches this: see `show_window`.
+fn take_ready_window(opening: Opening, cx: &mut App) -> Result<WindowHandle<Editor>, Box<Opening>> {
     if !ready_windows_enabled(cx) || !has_ready_window(cx) {
-        return Err(source);
+        return Err(Box::new(opening));
     }
-    let Some(handle) = cx.global_mut::<ReadyWindow>().0.take() else { return Err(source) };
+    let Some(handle) = cx.global_mut::<ReadyWindow>().0.take() else {
+        return Err(Box::new(opening));
+    };
     // Closed behind our back (e.g. by the OS): open a window normally.
     if handle.update(cx, |_, _, _| ()).is_err() {
-        return Err(source);
+        return Err(Box::new(opening));
     }
+    let Opening { source, notice, .. } = opening;
     let doc = initial_document(&source, cx);
     let title = source.title();
     let _ = handle.update(cx, |editor, window, cx| {
         window.set_window_title(&title);
         editor.set_document(doc, cx);
-        fill(editor, source, cx);
+        fill(editor, source, None, notice, cx);
     });
     Ok(handle)
 }
 
-/// Opens `source` in the ready window if there is one, else in a new window, and brings it to the
-/// front.
-fn show_window(source: Source, cx: &mut App) -> Option<WindowHandle<Editor>> {
-    let handle = match take_ready_window(source, cx) {
-        Ok(handle) => Some(handle),
-        Err(source) => open_window(source, cx),
+/// Opens `opening` and brings it to the front: in the ready window if there is one, else in a
+/// new window. A session-restored window (one with recorded state) always opens in a new window
+/// at its own recorded bounds (`open_window`), giving up the ready window's resident-mode speedup
+/// for correct placement.
+fn show_window(opening: Opening, cx: &mut App) -> Option<WindowHandle<Editor>> {
+    let handle = if opening.state.is_some() {
+        open_window(opening, cx)
+    } else {
+        match take_ready_window(opening, cx) {
+            Ok(handle) => Some(handle),
+            Err(opening) => open_window(*opening, cx),
+        }
     }?;
     // Covers the one path the initial-sources loop in `run` cannot: a `--background` primary
     // with nothing to open (login autostart) stays windowless until a forwarded launch (which
@@ -654,7 +857,8 @@ fn show_window(source: Source, cx: &mut App) -> Option<WindowHandle<Editor>> {
 /// Opens each path in its own window (Open dialog, files dropped onto a window).
 fn open_paths(paths: Vec<PathBuf>, cx: &mut App) {
     for path in paths.into_iter().filter(|path| !path.is_dir()) {
-        show_window(Source::File(std::path::absolute(&path).unwrap_or(path)), cx);
+        let path = std::path::absolute(&path).unwrap_or(path);
+        show_window(Opening::plain(Source::File(path)), cx);
     }
     cx.activate(true);
 }
@@ -717,11 +921,102 @@ fn check_whats_new(cx: &mut App) {
         }
         if whats_new::should_open_window(check, enabled, has_notes) {
             cx.update(|cx| {
-                open_window(Source::WhatsNew { version: current }, cx);
+                open_window(Opening::plain(Source::WhatsNew { version: current }), cx);
             });
         }
     })
     .detach();
+}
+
+/// Where the session file (issue #79) lives for this instance: set once at start-up when this
+/// process is the primary and has a state directory - the same gating hot exit's own `Backups`
+/// uses (`run`).
+struct SessionPath(PathBuf);
+
+impl Global for SessionPath {}
+
+/// Matches the session file's recorded windows, in order, against what actually exists now: a
+/// file path against the filesystem, a backup id against what `Backups::restore` found on disk
+/// (`restored`, oldest first). Any hot-exit backup left over - not referenced by the session (a
+/// crash before the next Quit, or `restore_session` turned on since the last one) - still comes
+/// back, appended in `Backups::restore`'s own order, exactly as hot exit alone would restore it.
+/// Missing files are pushed onto `missing`, for the caller to turn into a notice
+/// (`missing_files_notice`); a missing backup id has no file to name and is silently skipped -
+/// the same as if `Ctrl+W`'s "Don't Save" had already removed it.
+fn restore_sources(
+    session: Vec<tachyon_editor::WindowState>,
+    mut restored: Vec<tachyon_editor::Restored>,
+    missing: &mut Vec<PathBuf>,
+) -> Vec<Opening> {
+    let mut openings = Vec::new();
+    for window in session {
+        let target = window.target.clone();
+        match target {
+            tachyon_editor::Target::File(path) => {
+                if path.exists() {
+                    openings.push(Opening {
+                        source: Source::File(path),
+                        state: Some(window),
+                        notice: None,
+                    });
+                } else {
+                    missing.push(path);
+                }
+            }
+            tachyon_editor::Target::Backup(slot) => {
+                if let Some(index) = restored.iter().position(|r| r.slot == slot) {
+                    let restored_doc = restored.remove(index);
+                    openings.push(Opening {
+                        source: Source::Restored(restored_doc),
+                        state: Some(window),
+                        notice: None,
+                    });
+                }
+            }
+        }
+    }
+    openings.extend(restored.into_iter().map(|r| Opening::plain(Source::Restored(r))));
+    openings
+}
+
+/// A one-line notice for the files a session restore could not reopen, shown on the first
+/// window a batch opens (`Editor::set_notice`, through `Opening::notice`) - `None` if nothing
+/// was missing.
+fn missing_files_notice(missing: &[PathBuf]) -> Option<SharedString> {
+    if missing.is_empty() {
+        return None;
+    }
+    let names: Vec<String> = missing.iter().map(|p| p.display().to_string()).collect();
+    let noun = if missing.len() == 1 { "a file" } else { "files" };
+    Some(SharedString::from(format!(
+        "Could not find {noun} from the last session: {}",
+        names.join(", ")
+    )))
+}
+
+/// Writes the session file - each open window's file or backup id, bounds, maximized state,
+/// caret, scroll and mode, in the order they were opened (`WindowCascade`) - if the setting
+/// allows it. Called from every path that reaches Quit (`Ctrl+Q`, `tachyon --quit`, the tray's
+/// Quit) before the windows close, and (Windows session end, `WM_ENDSESSION`) from the same
+/// handler hot exit's own `backup_now` runs from. A window with nothing worth remembering (an
+/// empty, unmodified scratch buffer) is skipped (`Editor::session_state`).
+fn write_session_now(cx: &mut App) {
+    if cx.try_global::<tachyon_editor::Settings>().is_none_or(|s| !s.restore_session) {
+        return;
+    }
+    let Some(path) = cx.try_global::<SessionPath>().map(|p| p.0.clone()) else { return };
+    let handles: Vec<WindowHandle<Editor>> = cx
+        .try_global::<WindowCascade>()
+        .map_or_else(Vec::new, |cascade| cascade.0.iter().map(|(handle, _)| *handle).collect());
+    let mut windows = Vec::new();
+    for handle in handles {
+        if let Ok(Some(state)) =
+            handle.update(cx, |editor, window, cx| editor.session_state(window, cx))
+        {
+            windows.push(state);
+        }
+    }
+    let _ = tachyon_editor::write_session(&path, &windows);
 }
 
 /// The resident instance's tray icon (Windows), removed when the app quits.
@@ -734,7 +1029,7 @@ impl Global for TrayIcon {}
 /// Whether Tachyon's resolved theme is dark, by the same rule `Theme::for_window` applies, but
 /// usable with no window: a resident instance can stay windowless in the background
 /// (`--background` with nothing to open) until the first launch arrives, and the tray's context
-/// menu (Windows) can show before that. Prefers the `AppearanceHint` set before GPUI's first
+/// menu (Windows) can show before that. Prefers the `AppearanceHint` set before GPUI's own
 /// window exists, else asks the platform directly (`App::window_appearance`, unlike
 /// `Window::appearance`, needs no window), then applies the `theme` setting (`Settings::dark`).
 fn resolved_dark(cx: &App) -> bool {
@@ -829,12 +1124,12 @@ fn show_tray(cx: &mut App) {
                 TrayMessage::Event(event) => {
                     cx.update(|cx| match event {
                         TrayEvent::Open => {
-                            let restored = take_pending_restore(cx);
-                            if restored.is_empty() {
-                                show_window(Source::Blank, cx);
+                            let pending = take_pending_restore(cx);
+                            if pending.is_empty() {
+                                show_window(Opening::plain(Source::Blank), cx);
                             }
-                            for source in restored {
-                                show_window(source, cx);
+                            for opening in pending {
+                                show_window(opening, cx);
                             }
                             cx.activate(true);
                         }
@@ -848,7 +1143,12 @@ fn show_tray(cx: &mut App) {
                     });
                 }
                 TrayMessage::EndingSession(done) => {
-                    cx.update(backup_every_window_for_session_end);
+                    // Outside any window update, so every window is readable; the session file
+                    // is what a restart after the reboot (issue #80) reopens.
+                    cx.update(|cx| {
+                        backup_every_window_for_session_end(cx);
+                        write_session_now(cx);
+                    });
                     let _ = done.send(());
                 }
             }
@@ -880,14 +1180,17 @@ fn serve_forwarded_launches(listener: Listener, cx: &mut App) {
             }
             cx.update(|cx| {
                 let report = cx.global::<Lifecycle>().report_launches;
-                let restored = take_pending_restore(cx);
-                let sources = if !restored.is_empty() && cli.opens_nothing() {
-                    restored
+                let pending = take_pending_restore(cx);
+                let openings: Vec<Opening> = if !pending.is_empty() && cli.opens_nothing() {
+                    pending
                 } else {
-                    restored.into_iter().chain(Source::from_cli(cli)).collect()
+                    pending
+                        .into_iter()
+                        .chain(Source::from_cli(cli).into_iter().map(Opening::plain))
+                        .collect()
                 };
-                for source in sources {
-                    if let Some(handle) = show_window(source, cx)
+                for opening in openings {
+                    if let Some(handle) = show_window(opening, cx)
                         && report
                     {
                         let _ = handle.update(cx, |_, window, _| {
@@ -954,5 +1257,116 @@ mod tests {
         // outside it.
         let last = point(px(1000.), px(40.));
         assert_eq!(cascade_origin(Some(last), BASE, WIN_SIZE, work_area), BASE);
+    }
+
+    #[test]
+    fn fit_to_work_area_shrinks_and_repositions_a_window_from_a_removed_display() {
+        // Recorded on a display far larger than, and positioned off, today's work area.
+        let recorded = Bounds {
+            origin: point(px(3000.), px(3000.)),
+            size: Size { width: px(2560.), height: px(1440.) },
+        };
+        let fitted = fit_to_work_area(recorded, WORK_AREA);
+        assert!(fitted.size.width <= WORK_AREA.size.width - FRAME_ALLOWANCE);
+        assert!(fitted.size.height <= WORK_AREA.size.height - FRAME_ALLOWANCE);
+        assert!(fitted.origin.x >= WORK_AREA.origin.x);
+        assert!(fitted.origin.y >= WORK_AREA.origin.y);
+        assert!(fitted.origin.x + fitted.size.width <= WORK_AREA.origin.x + WORK_AREA.size.width);
+        assert!(fitted.origin.y + fitted.size.height <= WORK_AREA.origin.y + WORK_AREA.size.height);
+    }
+
+    #[test]
+    fn fit_to_work_area_leaves_a_window_that_already_fits_alone() {
+        let recorded = Bounds { origin: point(px(100.), px(50.)), size: WIN_SIZE };
+        assert_eq!(fit_to_work_area(recorded, WORK_AREA), recorded);
+    }
+
+    #[test]
+    fn fit_to_work_area_keeps_a_negative_origin_on_screen() {
+        // A window recorded on a monitor to the left of/above the primary one, since removed.
+        let recorded = Bounds { origin: point(px(-1200.), px(-400.)), size: WIN_SIZE };
+        let fitted = fit_to_work_area(recorded, WORK_AREA);
+        assert!(fitted.origin.x >= WORK_AREA.origin.x);
+        assert!(fitted.origin.y >= WORK_AREA.origin.y);
+    }
+
+    fn window_state(target: tachyon_editor::Target, caret: usize) -> tachyon_editor::WindowState {
+        tachyon_editor::WindowState {
+            target,
+            bounds: Bounds { origin: point(px(0.), px(0.)), size: WIN_SIZE },
+            maximized: false,
+            caret,
+            scroll: 0,
+            mode: tachyon_doc::DocMode::Markdown,
+        }
+    }
+
+    #[test]
+    fn missing_files_notice_names_missing_files_and_is_none_when_nothing_is_missing() {
+        assert_eq!(missing_files_notice(&[]), None);
+        let notice = missing_files_notice(&[PathBuf::from("/a/gone.md")]).expect("one missing");
+        assert!(notice.contains("gone.md"), "{notice}");
+    }
+
+    #[test]
+    fn restore_sources_reopens_existing_files_skips_missing_ones_and_matches_backups() {
+        let dir =
+            std::env::temp_dir().join(format!("tachyon-restore-sources-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let backups_dir = dir.join("backups");
+        std::fs::create_dir_all(&backups_dir).expect("temp dir");
+
+        let kept = dir.join("kept.md");
+        std::fs::write(&kept, "kept\n").expect("write");
+        let missing_path = dir.join("gone.md"); // never created: "no longer exists".
+
+        let slot = backups_dir.join("00000000000000000000001-0000.md");
+        std::fs::write(&slot, "unsaved text\n").expect("write");
+
+        let session = vec![
+            window_state(tachyon_editor::Target::File(kept.clone()), 10),
+            window_state(tachyon_editor::Target::File(missing_path.clone()), 20),
+            window_state(tachyon_editor::Target::Backup(slot.clone()), 30),
+        ];
+        let restored = tachyon_editor::Backups::new(backups_dir).restore();
+        assert_eq!(restored.len(), 1, "fixture sanity");
+
+        let mut missing = Vec::new();
+        let openings = restore_sources(session, restored, &mut missing);
+
+        assert_eq!(missing, [missing_path], "the missing file is reported");
+        assert_eq!(openings.len(), 2, "the missing file opens no window");
+        assert!(matches!(&openings[0].source, Source::File(p) if *p == kept));
+        assert_eq!(openings[0].state.as_ref().map(|s| s.caret), Some(10));
+        assert!(matches!(&openings[1].source, Source::Restored(r) if r.slot == slot));
+        assert_eq!(openings[1].state.as_ref().map(|s| s.caret), Some(30));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn restore_sources_appends_unreferenced_hot_exit_backups_after_the_session() {
+        let dir = std::env::temp_dir()
+            .join(format!("tachyon-restore-sources-leftover-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        // Two backups on disk that no session ever recorded (a crash before Quit could write
+        // one, or the setting turned on since): both must still come back, hot exit's own
+        // guarantee, independent of session restore.
+        std::fs::write(dir.join("00000000000000000000001-0000.md"), "one\n").expect("write");
+        std::fs::write(dir.join("00000000000000000000002-0000.md"), "two\n").expect("write");
+        let restored = tachyon_editor::Backups::new(dir.clone()).restore();
+        assert_eq!(restored.len(), 2, "fixture sanity");
+
+        let mut missing = Vec::new();
+        let openings = restore_sources(Vec::new(), restored, &mut missing);
+
+        assert!(missing.is_empty());
+        assert_eq!(openings.len(), 2);
+        assert!(openings.iter().all(|o| o.state.is_none()), "no session state for a bare leftover");
+        assert!(matches!(&openings[0].source, Source::Restored(r) if r.text == "one\n"));
+        assert!(matches!(&openings[1].source, Source::Restored(r) if r.text == "two\n"));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

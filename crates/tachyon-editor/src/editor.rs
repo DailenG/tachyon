@@ -944,7 +944,7 @@ impl Editor {
     }
 
     /// Offset of the first block in view.
-    fn viewport_offset(&self) -> usize {
+    pub(crate) fn viewport_offset(&self) -> usize {
         match self.doc.blocks().len() {
             0 => 0,
             n => self.doc.block_range(self.list.logical_scroll_top().item_ix.min(n - 1)).start,
@@ -1681,9 +1681,20 @@ impl Editor {
             cx.notify();
             return;
         }
+        self.retag_to(target, cx);
+        cx.notify();
+    }
+
+    /// Retags the document to `mode` (`Document::retagged`), keeping the caret at the same
+    /// offset (clamped to the new length): the shared mechanics behind `toggle_text_mode` (a
+    /// manual `Ctrl+Shift+M`) and `session::restore_view` (a session-recorded mode). Callers
+    /// check `MARKDOWN_SIZE_LIMIT` themselves first - refusing is a per-caller decision (a
+    /// notice for the manual toggle, a silent skip for a session written before the document
+    /// grew) - this always retags.
+    pub(crate) fn retag_to(&mut self, mode: DocMode, cx: &mut Context<Self>) {
         let caret = self.head().min(self.doc.len());
         let placeholder = std::mem::replace(&mut self.doc, Document::new_plain(""));
-        self.doc = placeholder.retagged(target);
+        self.doc = placeholder.retagged(mode);
         self.doc.take_splices();
         self.selection = 0..0;
         self.reversed = false;
@@ -1696,7 +1707,6 @@ impl Editor {
         self.update_active();
         self.reparse(0, cx);
         self.move_to(caret, false, cx);
-        cx.notify();
     }
 
     pub(crate) fn save(&mut self, _: &Save, window: &mut Window, cx: &mut Context<Self>) {

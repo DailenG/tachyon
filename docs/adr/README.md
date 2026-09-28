@@ -15,3 +15,4 @@ that supersedes the old one.
 | [0006](0006-hot-exit.md) | Hot exit: Quit keeps unsaved documents instead of asking | Accepted |
 | [0007](0007-versions-and-release-channels.md) | Versions and release channels | Accepted |
 | [0008](0008-restart-registration.md) | Restart registration and session-end backup | Accepted |
+| [0009](0009-session-restore.md) | Session restore on top of hot exit | Accepted |

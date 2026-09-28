@@ -246,7 +246,11 @@ impl Editor {
         }
     }
 
-    fn slot(&mut self, cx: &Context<Self>) -> Option<PathBuf> {
+    /// This document's backup slot, allocating one now if it does not have one yet. Used both by
+    /// the periodic and Quit-time writers (`write_backup`, `backup_now`) and, read-only in
+    /// effect, by `session::Editor::session_state` to name the same slot in the session file
+    /// before the write itself lands.
+    pub(crate) fn slot(&mut self, cx: &Context<Self>) -> Option<PathBuf> {
         if self.backup_slot.is_none() {
             self.backup_slot = Some(cx.try_global::<Backups>()?.new_slot());
         }

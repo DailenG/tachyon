@@ -631,6 +631,7 @@ fn a_100_percent_content_width_still_leaves_a_frame_gap(cx: &mut TestAppContext)
             hot_exit: true,
             tips: true,
             whats_new: true,
+            restore_session: true,
             content_width: crate::ContentWidth::Percent(100.),
         })
     });
@@ -1780,6 +1781,7 @@ fn theme_row_order(initial: crate::ThemeChoice, cx: &mut TestAppContext) -> Vec<
             hot_exit: true,
             tips: true,
             whats_new: true,
+            restore_session: true,
             content_width: crate::ContentWidth::default(),
         });
     });
@@ -1833,6 +1835,7 @@ fn command_palette_theme_light_applies_at_once_and_persists_keeping_a_comment(
             hot_exit: true,
             tips: true,
             whats_new: true,
+            restore_session: true,
             content_width: crate::ContentWidth::default(),
         });
         cx.set_global(crate::SettingsFile(file.clone()));
@@ -1872,6 +1875,7 @@ fn command_palette_whats_new_toggle_turns_it_off_and_persists_keeping_other_line
             hot_exit: true,
             tips: true,
             whats_new: true,
+            restore_session: true,
             content_width: crate::ContentWidth::default(),
         });
         cx.set_global(crate::SettingsFile(file.clone()));
@@ -1890,6 +1894,29 @@ fn command_palette_whats_new_toggle_turns_it_off_and_persists_keeping_other_line
     let written = std::fs::read_to_string(&file).expect("read");
     assert!(written.contains("whats_new = false"), "persisted: {written:?}");
     assert!(written.contains("hot_exit = true"), "kept the file's other lines: {written:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[gpui::test]
+fn command_palette_restore_session_toggle_turns_it_off_and_persists(cx: &mut TestAppContext) {
+    let dir = backup_dir("command-palette-restore-session");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let file = dir.join("settings.toml");
+    std::fs::write(&file, crate::DEFAULT_SETTINGS).expect("write");
+    cx.update(|cx| cx.set_global(crate::SettingsFile(file.clone())));
+    let (editor, cx) = open("text\n", cx);
+
+    cx.simulate_keystrokes("secondary-shift-p");
+    cx.simulate_input("restore session");
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+
+    assert!(editor.read_with(cx, |e, _| e.picker.is_none()));
+    let settings = cx.update(|_, cx| cx.global::<crate::Settings>().clone());
+    assert!(!settings.restore_session, "applied at once, not only on save");
+
+    let written = std::fs::read_to_string(&file).expect("read");
+    assert!(written.contains("restore_session = false"), "persisted: {written:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1930,6 +1957,7 @@ fn settings_choose_theme_and_zoom_and_saving_them_applies_at_once(cx: &mut TestA
             hot_exit: true,
             tips: true,
             whats_new: true,
+            restore_session: true,
             content_width: crate::ContentWidth::default(),
         });
         cx.set_global(crate::SettingsFile(file.clone()));
@@ -2008,6 +2036,7 @@ fn prompts_use_the_theme_the_settings_choose(cx: &mut TestAppContext) {
             hot_exit: true,
             tips: true,
             whats_new: true,
+            restore_session: true,
             content_width: crate::ContentWidth::default(),
         })
     });
@@ -2384,6 +2413,7 @@ fn tips_false_in_settings_keeps_the_tip_hidden(cx: &mut TestAppContext) {
             hot_exit: true,
             tips: false,
             whats_new: true,
+            restore_session: true,
             content_width: crate::ContentWidth::default(),
         })
     });
@@ -2415,6 +2445,7 @@ fn saving_tips_false_hides_an_already_shown_tip(cx: &mut TestAppContext) {
             hot_exit: true,
             tips: true,
             whats_new: true,
+            restore_session: true,
             content_width: crate::ContentWidth::default(),
         });
         cx.set_global(crate::SettingsFile(file.clone()));
@@ -2429,4 +2460,54 @@ fn saving_tips_false_hides_an_already_shown_tip(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert_eq!(tip(cx), None, "saved tips = false hides an already-shown tip, live");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[gpui::test]
+fn restore_view_reapplies_caret_and_scroll_then_clamps_when_the_document_is_shorter(
+    cx: &mut TestAppContext,
+) {
+    let long: String = (0..500).map(|i| format!("Paragraph {i}.\n\n")).collect();
+    let (editor, cx) = open(&long, cx);
+    let caret = long.find("Paragraph 200.").expect("fixture");
+    editor.update(cx, |e, cx| {
+        e.restore_view(caret, caret, tachyon_doc::DocMode::Markdown, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(editor.read_with(cx, |e, _| e.head()), caret, "caret restored");
+    let scroll_start = editor
+        .read_with(cx, |e, _| e.document().block_range(e.list.logical_scroll_top().item_ix).start);
+    assert!(scroll_start > 0, "scrolled to the recorded position, not left at the top");
+
+    // The document is now much shorter, as if the session file predates an edit or a reload
+    // (a file changed on disk, a different backup): restoring the same, now out-of-range caret
+    // and scroll must clamp to the new length, not panic or leave the caret out of bounds.
+    let short = "short\n";
+    editor.update(cx, |e, cx| e.set_document(tachyon_doc::Document::new(short), cx));
+    cx.run_until_parked();
+    editor.update(cx, |e, cx| {
+        e.restore_view(caret, caret, tachyon_doc::DocMode::Markdown, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(editor.read_with(cx, |e, _| e.head()), short.len(), "caret clamped to the new end");
+}
+
+#[gpui::test]
+fn restore_view_switches_mode_but_refuses_markdown_above_the_size_limit(cx: &mut TestAppContext) {
+    let (editor, cx) = open("# Title\n\npara\n", cx);
+    editor.update(cx, |e, cx| e.restore_view(0, 0, tachyon_doc::DocMode::Plain, cx));
+    cx.run_until_parked();
+    assert_eq!(editor.read_with(cx, |e, _| e.document().mode()), tachyon_doc::DocMode::Plain);
+    assert_eq!(text(&editor, cx), "# Title\n\npara\n", "retagging keeps the text as is");
+
+    let big = "x".repeat(tachyon_doc::MARKDOWN_SIZE_LIMIT as usize + 1024);
+    let (editor, cx) = open("", cx);
+    editor.update(cx, |e, cx| e.set_document(tachyon_doc::Document::new_plain(&big), cx));
+    cx.run_until_parked();
+    editor.update(cx, |e, cx| e.restore_view(0, 0, tachyon_doc::DocMode::Markdown, cx));
+    cx.run_until_parked();
+    assert_eq!(
+        editor.read_with(cx, |e, _| e.document().mode()),
+        tachyon_doc::DocMode::Plain,
+        "refused above the size limit, the same as a manual toggle"
+    );
 }
