@@ -30,7 +30,7 @@ flowchart LR
 | Crate | Status | Depends on GPUI | Responsibility |
 |---|---|---|---|
 | `tachyon` | exists | yes | Binary: CLI, single-instance claim, startup sequencing, windows |
-| `tachyon-platform` | exists | no | OS integration GPUI lacks: single-instance IPC, autostart, DWM transitions and title-bar mode, the Linux system appearance at start-up (later: hotkey, backdrop) |
+| `tachyon-platform` | exists | no | OS integration GPUI lacks: single-instance IPC, autostart, DWM transitions and title-bar mode, the Windows jump list and freedesktop recently-used list, the Linux system appearance at start-up (later: hotkey, backdrop) |
 | `xtask` | exists | no | `ci`, `bench-startup` |
 | `tachyon-text` | exists | **never** | Rope buffer, edit log, grouped undo, offset mapping, UTF-8↔UTF-16, line endings |
 | `tachyon-md` | exists | **never** | `pulldown-cmark` wrapper → owned block IR with source maps; bare-URL autolinks and code highlighting as IR passes |

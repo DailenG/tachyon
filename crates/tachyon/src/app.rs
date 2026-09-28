@@ -18,6 +18,19 @@ use crate::startup::Startup;
 actions!(tachyon, [Quit, NewWindow, Open, OpenSettings]);
 
 const APP_ID: &str = "tachyon";
+
+/// The Windows AppUserModelID: what groups Tachyon's windows under one taskbar icon and what the
+/// jump list (`tachyon_platform::update_jump_list`) attaches to. Set once, below, through GPUI's
+/// own `App::set_app_identity` rather than calling `SetCurrentProcessExplicitAppUserModelID`
+/// directly from `tachyon-platform`: GPUI already owns this call (`gpui_windows`'s
+/// `WindowsPlatform::set_app_identity`), skips it automatically when the process has MSIX package
+/// identity (which supplies its own AUMID), and there is no separate per-window AUMID anywhere in
+/// GPUI's Windows backend to duplicate or fall out of sync with - one process-wide call is the
+/// whole mechanism. `SetCurrentProcessExplicitAppUserModelID` itself is documented as a single
+/// in-process assignment (no I/O); this is not independently benchmarked here (no Windows
+/// machine in this environment), but `cargo xtask bench-startup` on Windows should show no change
+/// since the call happens after `startup.mark("platform_ready")`, nowhere near the paint budget.
+const APP_USER_MODEL_ID: &str = "DailenG.Tachyon";
 const SAMPLE: &str = include_str!("sample.md");
 
 enum Source {
@@ -110,6 +123,12 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
             resident,
         });
 
+        // Before any window opens or a notification could be posted (`App::set_app_identity`'s
+        // own requirement); negligible cost on Linux and macOS (a string clone into the
+        // platform's own state, not a no-op, but not I/O either), and skipped by GPUI itself on
+        // an MSIX install (package identity already supplies the AUMID there).
+        cx.set_app_identity(APP_USER_MODEL_ID, "Tachyon");
+
         cx.bind_keys([
             KeyBinding::new("secondary-q", Quit, None),
             KeyBinding::new("secondary-n", NewWindow, None),
@@ -152,6 +171,10 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
             let recent = dir.join(format!("recent-{}.txt", crate::instance_id()));
             cx.set_global(tachyon_editor::RecentFiles::new(recent));
         }
+        cx.set_global(tachyon_editor::RecentFilesOs {
+            update_jump_list: tachyon_platform::update_jump_list,
+            note_recently_used: tachyon_platform::note_recently_used,
+        });
         cx.set_global(tachyon_editor::HtmlClipboard(|window, html, text| {
             tachyon_platform::write_clipboard_html(window, html, text)
         }));

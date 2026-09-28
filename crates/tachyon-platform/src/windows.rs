@@ -32,6 +32,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{ASFW_ANY, AllowSetForegroundWi
 
 use crate::protocol;
 
+mod jump_list;
 mod tray;
 pub use tray::{Tray, set_popup_menu_dark, set_window_icon, show_tray};
 
@@ -265,6 +266,16 @@ pub fn set_desktop_entry(_exe: &Path, _enabled: bool) -> io::Result<()> {
         "desktop entries are a Linux and BSD feature; on Windows pin tachyon.exe to Start",
     ))
 }
+
+/// See [`crate::update_jump_list`]: rebuilds the taskbar/Start jump list off the UI thread,
+/// coalesced (see `jump_list`'s module doc comment).
+pub fn update_jump_list(recent: &[PathBuf]) {
+    jump_list::update(recent);
+}
+
+/// See [`crate::note_recently_used`]. No Windows equivalent: the taskbar/Start jump list is
+/// driven by [`update_jump_list`] from the whole recent list instead of one file at a time.
+pub fn note_recently_used(_file: &Path) {}
 
 pub fn clipboard_text_reader() -> Option<fn() -> Option<String>> {
     Some(read_clipboard_text)
