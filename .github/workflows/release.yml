@@ -110,13 +110,17 @@ jobs:
       - name: Package the MSIX installer
         if: matrix.os == 'windows-latest'
         shell: bash
+        # Inputs reach the shell as environment variables, never interpolated into the script.
+        env:
+          MSIX_VERSION: ${{ inputs.msix_version }}
+          APPINSTALLER_BASE: ${{ inputs.appinstaller_base }}
         run: |
           args=()
-          if [ -n "${{ inputs.msix_version }}" ]; then
-            args+=(--version "${{ inputs.msix_version }}")
+          if [ -n "$MSIX_VERSION" ]; then
+            args+=(--version "$MSIX_VERSION")
           fi
-          if [ -n "${{ inputs.appinstaller_base }}" ]; then
-            args+=(--appinstaller-base "${{ inputs.appinstaller_base }}")
+          if [ -n "$APPINSTALLER_BASE" ]; then
+            args+=(--appinstaller-base "$APPINSTALLER_BASE")
           fi
           cargo xtask msix "${args[@]}"
       - name: Sign the MSIX installer (Azure Trusted Signing)
