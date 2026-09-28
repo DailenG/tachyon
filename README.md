@@ -34,6 +34,15 @@ start as fast as a scratchpad and edit like Typora: one pane, inline WYSIWYG, no
 Budgets are requirements, not goals: a change that regresses one needs a recorded decision
 ([ADRs](docs/adr/)).
 
+## Install
+
+Prebuilt archives for Windows, Linux and macOS are attached to each
+[release](https://github.com/DailenG/tachyon/releases): a `.zip` on Windows, a `.tar.gz`
+elsewhere, plus a `SHA256SUMS.txt` to verify the download. Extract it and run `tachyon`
+(`tachyon.exe` on Windows); no installer or separate runtime is required. `tachyon.exe` is signed
+with Azure Trusted Signing; macOS signing and notarization are not done yet, so Gatekeeper will
+warn on first launch.
+
 ## Building
 
 Requires the toolchain pinned in [`rust-toolchain.toml`](rust-toolchain.toml); `rustup` installs it
