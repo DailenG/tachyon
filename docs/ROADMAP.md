@@ -280,3 +280,37 @@ accounts only the project owner has.
 **Exit:** a fresh machine runs Tachyon from the archive with nothing else installed; startup
 budgets unchanged.
 
+## Phase 8: plain-text mode and large-file stability (in progress)
+
+Editing arbitrary large text files (logs, exports, anything that is not Markdown) without the
+block-swap parser's per-keystroke and full-parse costs, and without the memory or freeze risk of
+opening such a file the way Markdown mode does.
+
+- [x] `DocMode::Plain`: every block always literal text (no syntax hiding), chosen by extension
+      (`mode_for_extension`); `Ctrl+Shift+M` retags the same buffer (text, undo and version
+      unaffected) rather than reloading; refused above `MARKDOWN_SIZE_LIMIT` (16 MiB) with a
+      notice, and a Markdown file that large opens as `Plain` automatically with the same notice
+- [x] Plain-text chunking bounded to `PLAIN_CHUNK_BYTES` / `PLAIN_CHUNK_LINES` per block, with a
+      forced display-only cut (`PLAIN_FORCED_CUT_BYTES`, 8 KiB) for a line with no `\n` for a long
+      stretch; arrow-key caret movement crosses such a cut as if the line were one continuous row
+      (`Editor::cross_forced_cut`, `gpui::test`-covered)
+- [x] Streaming load (`Buffer::load`, 1 MiB chunks, never a full-file `String`); invalid UTF-8
+      replaced with U+FFFD (`lossy`) instead of failing to open; files above `PLAIN_HARD_LIMIT`
+      (2 GiB) refused outright instead of risking exhausting memory
+- [x] Save / Save As ask "Save Anyway" / "Cancel" before overwriting a lossily-decoded file
+      (`gpui::test`-covered)
+- [x] Documents above `LARGE_PLAIN_SIZE` (64 MiB) backed up on quit/close only, not after every
+      typing pause; both that backup and an ordinary save build the on-disk text off the UI
+      thread from a cloned rope snapshot
+- [x] Find on a document above `FIND_BACKGROUND_THRESHOLD` (5 MiB) runs on the background
+      executor with a generation counter, so a stale scan cannot clobber a fresher one or feed
+      replace-all a wrong range (`gpui::test`-covered against a synchronous scan)
+- [ ] Live measurements on real large files (peak RSS, time to first content, worst frame on
+      open/scroll/type/find) for a 200 MB log, a 1 GB log, a 20 MB single line, a 50 MB lossy log,
+      and a 3 GB sparse file hitting the `PLAIN_HARD_LIMIT` refusal - not run in this pass: the
+      machine crashed during an earlier stress run, so this pass was kept to unit and
+      `gpui::test` coverage only, with no GUI stress harness and no file over 50 MB
+
+**Exit:** every item above covered by a `gpui::test`; the live measurements run and recorded, with
+no frame over budget on a 200 MB/1 GB document and the crash-triggering scenario (a 20+ MB single
+line) confirmed fixed on real hardware.

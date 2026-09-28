@@ -94,6 +94,107 @@ the very top can clear the bar. The document caret is not painted while the find
 takes typing; the field there paints its own.
 Selections are drawn as highlight backgrounds, so they span raw and rendered blocks alike.
 
+## Plain-text mode
+
+A `Document` has a `DocMode`: `Markdown` (block-swap, as above) or `Plain` (every block always
+shows literal text - no syntax hiding, no block-swap distinction). `mode_for_extension` chooses by
+the path's extension (`.md`, `.markdown`, `.mdown`, `.mkd`, `.mkdn`, `.mdx` → Markdown; anything
+else, including no extension → Plain); `Ctrl+Shift+M` (`Editor::toggle_text_mode`) retags the same
+buffer (text, undo and version untouched: `Document::retagged` only re-tiles it into blocks for
+the new mode) rather than reloading, so the toggle is instant and undoable text stays undoable.
+Toggling *to* Markdown is refused, with a notice, above `MARKDOWN_SIZE_LIMIT` (16 MiB, extrapolated
+from Phase 2's 220 ms/10 MiB full-parse cost); a Markdown file that large opens as `Plain`
+automatically with the same notice (`disk::load_document`), since nothing about that decision
+needs a background path if it never has to run in the first place.
+
+**Chunking.** A `Plain` document tiles into blocks of `PLAIN_CHUNK_LINES` (256) lines or
+`PLAIN_CHUNK_BYTES` (16 KiB), whichever comes first, cut after a `\n` - except a line with no
+`\n` within `PLAIN_FORCED_CUT_BYTES` (8 KiB) of its own start, which is cut there instead: a
+display-only break (`next_plain_chunk_len`/`plain_chunk_lens`). The underlying bytes and the
+block's reported line are unaffected; this only bounds how much of one pathologically long line
+(a 20+ MB single line is the reported case this defends against) the virtualized list ever has to
+shape or lay out at once. `Editor::vertical`'s fallback (`movement::vertical`, real source lines
+via `rope.byte_to_line`) cannot see across such a cut - the whole multi-chunk line looks like line
+0 throughout - so `cross_forced_cut` detects leaving a block that ends (or begins) without a `\n`
+and continues into the neighboring block at the same byte offset from its start instead, before
+falling back to `movement::vertical` for an ordinary line boundary.
+
+That greedy packing runs once, at load (`plain_chunk_lens`) - it anchors every boundary to an
+exact line/byte count from the start of the text, so it is never run again after an edit: shifting
+the line count by anything that is not a multiple of 256 (typing `Enter` is the common case) would
+move every boundary after it, turning a one-line edit into a splice of the whole document (a
+1,000,000-line file cost ~487 ms for one keystroke, the regression this fixed). Instead, the
+chunking invariant is local: a block ends at a line end or a forced cut as above, and is between a
+minimum and a maximum size - at most `PLAIN_CHUNK_LINES`/`PLAIN_CHUNK_BYTES`, at least a quarter of
+each (`PLAIN_MIN_CHUNK_LINES`/`PLAIN_MIN_CHUNK_BYTES`) unless it is the document's own last block
+or immediately follows a forced cut, where a short remainder is expected. `Document::on_edit_plain`
+restores it by touching only the block(s) the edit changed: it re-chunks their combined span with
+`split_evenly` (even line-index splits, not greedy packing - the two ends of an existing span are
+already constrained by whatever surrounds them, and a greedy pack's last, partial chunk cannot
+promise to clear the minimum the way an even split can), and, if that span alone is too small to
+stand on its own, first merges it with the next block (bounded by `PLAIN_MERGE_ATTEMPTS`, though
+one merge is normally enough). Every other block keeps its exact length; an edit elsewhere only
+moves its *absolute offset*, which the prefix-sum recompute after a splice handles without
+touching content. A property test asserts the invariant (bounds, valid cut points, exact tiling)
+after randomized edits, undo and redo of any size, and a separate test asserts that an edit
+splices only a small, constant number of blocks regardless of document size, including `Enter`
+near the top of a 1,000,000-line document.
+
+Because every block in `Plain` mode renders raw (`render_block`'s `DocMode::Plain` arm), more than
+one of them can paint in a frame - unlike Markdown, where only the active block ever does. Only
+the block whose canvas paints a caret position (i.e. actually holds `head`) may write
+`Editor::active_layout`: a later-painted neighbor with no caret in it must not silently steal it,
+or `vertical` misdirects Up/Down using the wrong block's layout and bounds.
+
+**Streaming load.** `Buffer::load` (`tachyon-text`) reads a file in 1 MiB chunks straight into a
+`RopeBuilder`, never materializing the whole file as one `String` first (about half the peak
+memory of `Buffer::new(&text)`); it normalizes line endings across chunk boundaries and replaces
+invalid UTF-8 with U+FFFD, reporting `LoadReport { lossy, looks_binary }` (`looks_binary`: a NUL
+byte in the first 8 KiB) instead of failing to open the file. `disk::load_document` is the single
+place a path becomes a `Document`: it refuses outright (`LoadOutcome::Refused`, never reads) above
+`PLAIN_HARD_LIMIT` (2 GiB - the measured ~4x-file-size peak RSS already puts that at 8+ GiB
+resident), and forces `Plain` (no notice) for lossy or binary-sniffed content regardless of
+extension. `Editor::lossy` records whether the file was decoded lossily; `Save`/`Save As` ask
+"Save Anyway" or "Cancel" first when it is set (`confirm_lossy_then`), since writing would replace
+the original bytes for good, and clear it once a save has gone through losslessly.
+
+**Large documents off the UI thread.** Above `LARGE_PLAIN_SIZE` (64 MiB), the periodic
+typing-pause backup is skipped (`Editor::schedule_backup`) - writing tens or hundreds of megabytes
+1.5 s after every keystroke would itself compete for the UI thread's frame budget even though the
+write runs off it - and the document is backed up only on quit or close instead (`backup_now`,
+never gated by the size), so hot exit still restores it. Both that backup and an ordinary save
+build the text to write (`tachyon_text::saved_text`: line-ending restoration, `O(document size)`)
+inside the background task, from a cloned rope snapshot (`ropey`'s clone is O(1): nodes are
+shared via `Arc`), not on the UI thread before handing it off. Find
+(`Document::find_all`/`find_all_in_rope`) runs inline below `FIND_BACKGROUND_THRESHOLD` (5 MiB) and
+on the background executor at or above it, with a generation counter so a result overtaken by a
+newer search or an edit before it lands is dropped instead of clobbering fresher matches
+(`find.rs`'s module doc comment has the full scheme); `FindState::searching` shows "searching…"
+meanwhile, and actions that need current matches (`step_match`, `replace_current`) queue until a
+fresh scan lands rather than acting on a stale one.
+
+Replace All never uses `find_all`'s capped matches (that cap is only for the display count and
+highlighting): it runs its own uncapped scan (`find_all_in_rope_unbounded`/`replace_all_in_rope`),
+which also builds the replaced text for the span from the first match to the last in the same
+pass, off the UI thread above the same threshold - one `Document::edit`, one undo step, one
+allocation for the span and one for its replacement, regardless of match count (a 200 MB log with
+~530k matches, replacing only the first 10,000 with no notice at all, was the bug this exists to
+fix). That background path also builds a `PreparedInsert` from the replaced text there, so
+applying it (`Editor::replace_selection_with_prepared`) splices an already-built rope in instead
+of building one from a `&str` on the UI thread: measured on a 200 MB plain-text log (~1.08 million
+matches, the whole file rewritten in one edit), that halved the single worst frame (223 ms to
+72 ms) versus the plain `&str` path; the same query against a 5 MB Markdown file (44k matches)
+never exceeds about 15 ms, since Markdown's edit only creates one stale block up front and
+reparses it in the background same as any other large edit - `Plain`'s chunking has no such
+background path (it "always runs inline", see above), so a Replace All spanning nearly all of a
+huge plain document is the one case that still costs a single frame well past the usual budget;
+narrowing that further would mean streaming the chunking itself in the background, which no
+`Plain` edit does today. An edit that arrives mid-scan is never queued or held: it applies
+immediately, and Replace All instead checks its buffer version when the scan lands, discarding
+and rerunning a stale result rather than applying or queuing it - chosen over holding input (like
+the paste queue below) because Replace All's own work is the `O(document size)` scan itself, so
+blocking on it would defeat running it in the background at all.
+
 ## Concurrency
 
 ```mermaid

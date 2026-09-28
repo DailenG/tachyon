@@ -8,6 +8,25 @@ All notable user-visible changes are recorded here. The format follows
 
 ### Added
 
+- Plain-text mode: any file that is not Markdown by extension (`.md`, `.markdown`, `.mdown`,
+  `.mkd`, `.mkdn`, `.mdx`; anything else) opens as literal text, syntax hidden nowhere - `#`, `*`
+  and the rest stay exactly what you typed. `Ctrl+Shift+M` toggles the current document between
+  plain and Markdown, keeping its text and undo history; toggling to Markdown is refused, with a
+  notice, above 16 MiB (a full parse at that size risks a visible stall), and a Markdown file that
+  large opens as plain text automatically with the same notice.
+- Large and unusual files no longer risk crashing or freezing Tachyon. Files are streamed in from
+  disk in 1 MiB chunks instead of read into one `String` first, so opening a huge file no longer
+  doubles its peak memory; invalid UTF-8 is replaced with U+FFFD instead of failing to open
+  (Save / Save As then asks "Save Anyway" or "Cancel" first, since saving would replace the
+  original bytes for good), and files over 2 GiB are refused outright with a message rather than
+  risking exhausting memory. A single pathologically long line (no `\n` for a long stretch, as in
+  some logs and single-line minified files) is split into ≤ 8 KiB display-only chunks so it never
+  costs a full layout at once; the caret still moves through it, with arrow keys, exactly as if it
+  were one continuous line. A document over 64 MiB is backed up (hot exit) only on quit or close,
+  not after every pause in typing, and both backups and saves build the text to write off the UI
+  thread from a cloned snapshot of the buffer. Find on a document over 5 MiB runs on the
+  background executor instead of the keystroke's frame, showing "searching…" until it lands.
+
 - The app icon (tray, windows, taskbar, executable, Linux launcher) is the new Tachyon mark, with
   a bold, single-arrow silhouette at 16–32 px (the full mark's orbit arcs read like a "3" at those
   sizes in the tray, title bar and taskbar; the small tile also gets a crisp, pixel-aligned rim for
@@ -158,6 +177,23 @@ All notable user-visible changes are recorded here. The format follows
 - Editing a line after a paragraph-continuation line could leave a block rendered differently
   from a full reparse (look-behind now reaches the previous blank line).
 - Exit with an error instead of hanging when no display server is available on Linux.
+- Plain-text mode: undoing or redoing more than one change in a single undo group (for example,
+  a burst of typed keystrokes, or "Replace All") no longer costs time proportional to the whole
+  document. Each change in the group is now re-chunked against the buffer state it individually
+  produced, the same as typing, instead of the whole group being applied first and every change
+  in it separately triggering a re-chunk of everything from the edit to the end of the document.
+- Plain-text mode: any edit that changed the line count by an amount that is not a multiple of
+  256 (pressing `Enter`, pasting or deleting lines) re-chunked and re-rendered the entire rest of
+  the document, not just the edited part (487 ms for one `Enter` near the top of a 1,000,000-line
+  log). Chunk boundaries no longer have to match a from-scratch chunking of the whole document;
+  an edit now re-chunks only the block(s) it touched, splitting one that grew past the maximum
+  and merging one that fell under the minimum with its next neighbour, so the cost and the number
+  of blocks touched no longer depend on the document's size.
+- Replace All on a document large enough for background find (over 5 MiB) silently replaced only
+  the first 10,000 matches - the display highlight cap - with no notice, instead of every match
+  (up to ~530,000 on a 200 MB log, or 2.7 million on a 1 GB one). It now scans and replaces every
+  match, off the UI thread, as one undo step; the find bar shows "replacing…" while it runs and
+  "Replaced <count>" once it lands.
 - Forwarded launches are acknowledged by the running instance; a launch is no longer lost when the
   secondary process exits before the primary has read it (seen as a flaky test on Windows CI), and
   a secondary whose primary does not reply starts standalone.

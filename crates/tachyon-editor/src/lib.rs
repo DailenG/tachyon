@@ -18,6 +18,7 @@ mod settings;
 mod theme;
 
 pub use crate::backup::{Backups, HotExit, Restored};
+pub use crate::disk::{LoadOutcome, Loaded, load_document, oversized_markdown_notice};
 pub use crate::editor::{
     ClipboardReader, CloseWindow, Editor, HtmlClipboard, KEY_CONTEXT, OpenPaths, Save, SaveAs,
     key_bindings,

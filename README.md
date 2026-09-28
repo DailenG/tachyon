@@ -11,7 +11,8 @@ start as fast as a scratchpad and edit like Typora: one pane, inline WYSIWYG, no
 - **Parsing:** [`pulldown-cmark`](https://github.com/pulldown-cmark/pulldown-cmark), reparsed
   incrementally per block.
 - **Editing model:** *block swap*. The block under the cursor shows raw Markdown; every other block
-  shows rendered rich text.
+  shows rendered rich text. Files that aren't Markdown by extension open in **plain-text mode**
+  instead (no syntax hiding at all); `Ctrl+Shift+M` toggles a document between the two.
 - **Platforms:** Windows first, then Linux and macOS.
 
 > **Status:** early. Block-swap editing and saving work (the block under the caret is raw
@@ -20,8 +21,9 @@ start as fast as a scratchpad and edit like Typora: one pane, inline WYSIWYG, no
 > the reference Windows machine. Phase 4 added find and replace, a light theme, zoom, links you
 > can follow with `Ctrl+click` and a Windows tray icon; Phase 5 list editing, code highlighting,
 > Go to heading, hot exit and Copy as HTML; Phase 6 reloading of changed files, Open recent,
-> settings and local images. Release archives come from `cargo xtask dist`. See
-> [ROADMAP](docs/ROADMAP.md).
+> settings and local images; Phase 8 plain-text mode for non-Markdown and oversized files, with
+> streaming loads and background find/backup/save for large documents. Release archives come from
+> `cargo xtask dist`. See [ROADMAP](docs/ROADMAP.md).
 
 ## Performance budgets
 

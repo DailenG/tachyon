@@ -15,6 +15,7 @@
 //! This crate must never depend on GPUI.
 
 use std::ops::Range;
+use std::path::Path;
 use std::sync::Arc;
 
 use ropey::Rope;
@@ -48,6 +49,93 @@ pub const PARSE_CHUNK: usize = 128 * 1024;
 
 /// [`Document::find_all`] stops after this many matches.
 pub const MAX_FIND_MATCHES: usize = 10_000;
+
+/// A plain-text chunk targets this many lines or [`PLAIN_CHUNK_BYTES`], whichever comes first
+/// (see [`plain_chunk_lens`]).
+pub const PLAIN_CHUNK_LINES: usize = 256;
+
+/// A plain-text chunk targets this many bytes or [`PLAIN_CHUNK_LINES`] lines, whichever comes
+/// first. Purely a virtualization granularity: the visible list only lays out and shapes the
+/// chunks on screen, never the whole document.
+pub const PLAIN_CHUNK_BYTES: usize = 16 * 1024;
+
+/// A single line with no `\n` for this many bytes is cut anyway (a display-only break: the
+/// underlying text is unchanged). Smaller than [`PLAIN_CHUNK_BYTES`] so a pathologically long
+/// line - the file is one enormous line, the reported cause of a 6-second frame and 3 GB peak on
+/// a 20 MB single-line file - never grows a chunk past a small, bounded shaping cost.
+pub const PLAIN_FORCED_CUT_BYTES: usize = 8 * 1024;
+
+/// Below this many lines *and* below [`PLAIN_MIN_CHUNK_BYTES`] bytes (a quarter of
+/// [`PLAIN_CHUNK_LINES`]), a plain block that fits in one chunk on its own is too small to stand
+/// alone after an edit and merges with the next block instead - unless it is the document's own
+/// last block, or immediately follows a forced cut, where a short remainder is normal (see
+/// [`Document::on_edit_plain`] and [`plain_block_is_small`]).
+const PLAIN_MIN_CHUNK_LINES: usize = PLAIN_CHUNK_LINES / 4;
+
+/// A quarter of [`PLAIN_CHUNK_BYTES`]; see [`PLAIN_MIN_CHUNK_LINES`].
+const PLAIN_MIN_CHUNK_BYTES: usize = PLAIN_CHUNK_BYTES / 4;
+
+/// [`Document::on_edit_plain`] gives up extending its merge into further neighbours after this
+/// many attempts. Never expected to matter - merging one whole neighbour always clears the
+/// minimum unless that neighbour is itself an exempt short remainder right after a forced cut,
+/// and a single source line has only one such remainder - but bounds the work to a small
+/// constant regardless, rather than relying on that argument alone.
+const PLAIN_MERGE_ATTEMPTS: usize = 4;
+
+/// Above this size a Markdown-extension file opens as plain text instead (and the toggle back to
+/// Markdown is refused): `cargo bench -p tachyon-doc` measured a full parse at 220 ms for 10 MiB;
+/// well past that, the parse itself risks becoming the kind of multi-hundred-millisecond stall
+/// this feature exists to avoid, and the parsed block IR (style runs, source maps) costs several
+/// times the source size in memory. 16 MiB keeps that bounded while covering the overwhelming
+/// majority of real Markdown files losslessly.
+pub const MARKDOWN_SIZE_LIMIT: u64 = 16 * 1024 * 1024;
+
+/// Above this size, refuse to open the file at all (a clear message document instead): measured
+/// peak RSS for a plain document is roughly 4x its size (the rope, its edit log, and headroom for
+/// the read buffer and chunk list), so 2 GiB already risks 8+ GiB of resident memory, more than
+/// many machines have to spare for one file.
+pub const PLAIN_HARD_LIMIT: u64 = 2 * 1024 * 1024 * 1024;
+
+/// Above this size, a plain document's hot-exit backup is written only on quit or close, not
+/// after every pause in typing: writing tens or hundreds of megabytes 1.5 s after every edit
+/// would itself compete with the UI thread's budget on a slow disk. (The saved text is always
+/// built from a rope snapshot on the background executor, regardless of size - `Rope::clone` is
+/// O(1), so there is no size below which that hop is not worth taking - so this limit is purely
+/// about how *often* a huge document's backup runs, not where it runs.)
+pub const LARGE_PLAIN_SIZE: u64 = 64 * 1024 * 1024;
+
+/// Above this size, the find bar's scan (`Document::find_all`) moves from the UI thread to the
+/// background executor: measured (`cargo run --release -p tachyon-doc --example find_bench`,
+/// since removed) at ~1.9 ms/MiB for a non-matching query, the worst case (a match ends the scan
+/// early), so the scan itself crosses an 8 ms frame budget around 5 MiB. A `generation` counter
+/// (`FindState`) drops a background result superseded by a newer edit or query before it lands.
+pub const FIND_BACKGROUND_THRESHOLD: u64 = 5 * 1024 * 1024;
+
+/// Extensions (case-insensitive) that open as Markdown; anything else opens as plain text.
+const MARKDOWN_EXTENSIONS: [&str; 6] = ["md", "markdown", "mdown", "mkd", "mkdn", "mdx"];
+
+/// A document's editing and rendering mode. Plain text never runs Markdown parsing, has no
+/// definitions table and never schedules a [`ParseJob`]: its blocks only chunk the text for the
+/// virtualized list, at load with [`plain_chunk_lens`] (greedy: pack each chunk to the maximum).
+/// An edit instead re-chunks only the block(s) it touched, and - if a boundary chunk of that
+/// re-chunk would fall under the minimum - the next block too (see [`Document::on_edit_plain`]):
+/// local by construction, never proportional to the rest of the document.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum DocMode {
+    Markdown,
+    Plain,
+}
+
+/// The mode a file at `path` opens in, judged by its extension alone (case-insensitive): a
+/// recognized Markdown extension, else plain text (including no extension at all). Callers still
+/// need to apply [`MARKDOWN_SIZE_LIMIT`] once the file's size is known.
+pub fn mode_for_extension(path: &Path) -> DocMode {
+    let markdown = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| MARKDOWN_EXTENSIONS.iter().any(|m| ext.eq_ignore_ascii_case(m)));
+    if markdown { DocMode::Markdown } else { DocMode::Plain }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct BlockId(u64);
@@ -137,7 +225,8 @@ pub struct Document {
     /// `starts[i]` is the offset of block `i`; the last entry is the length.
     starts: Vec<usize>,
     defs: Arc<DefTable>,
-    /// Sorted, disjoint (possibly empty) ranges awaiting a reparse.
+    /// Sorted, disjoint (possibly empty) ranges awaiting a reparse. Always empty in
+    /// [`DocMode::Plain`]: chunking never leaves anything to reparse in the background.
     dirty: Vec<Range<usize>>,
     splices: Vec<Splice>,
     outstanding: Option<Outstanding>,
@@ -146,30 +235,76 @@ pub struct Document {
     defs_dirty: bool,
     next_block: u64,
     next_job: u64,
+    mode: DocMode,
 }
 
 impl Document {
-    /// Parses `text` completely (callers may run this off the UI thread; the
+    /// Parses `text` as Markdown completely (callers may run this off the UI thread; the
     /// document is `Send`).
     pub fn new(text: &str) -> Self {
-        let buffer = Buffer::new(text);
-        let (parsed, defs) = md::parse_document(&buffer.text());
+        Self::from_buffer(Buffer::new(text), DocMode::Markdown)
+    }
+
+    /// Builds a plain-text document from `text`: no Markdown parsing, ever, just chunked for the
+    /// virtualized list (see [`plain_chunk_lens`]). For loading a file, prefer
+    /// [`Document::from_buffer`] with a [`Buffer::load`]ed buffer, which never copies the whole
+    /// text into one `String` the way this constructor (and `Buffer::new`) does.
+    pub fn new_plain(text: &str) -> Self {
+        Self::from_buffer(Buffer::new(text), DocMode::Plain)
+    }
+
+    /// Builds a document from an already-loaded buffer (its text, undo history and version are
+    /// kept as is), tiling it into blocks for `mode`.
+    pub fn from_buffer(buffer: Buffer, mode: DocMode) -> Self {
         let mut doc = Document {
             buffer,
             blocks: Arc::new(Vec::new()),
             starts: vec![0],
-            defs: Arc::new(defs),
+            defs: Arc::new(DefTable::default()),
             dirty: Vec::new(),
             splices: Vec::new(),
             outstanding: None,
             defs_dirty: false,
             next_block: 0,
             next_job: 0,
+            mode,
         };
-        let blocks: Vec<Block> = parsed.into_iter().map(|p| doc.new_block(p, false)).collect();
+        let blocks: Vec<Block> = match mode {
+            DocMode::Markdown => {
+                let (parsed, defs) = md::parse_document(&doc.buffer.text());
+                doc.defs = Arc::new(defs);
+                parsed.into_iter().map(|p| doc.new_block(p, false)).collect()
+            }
+            DocMode::Plain => {
+                let len = doc.buffer.len();
+                plain_chunk_lens(doc.buffer.rope(), 0..len)
+                    .into_iter()
+                    .map(|len| doc.new_block(md::plain(len), false))
+                    .collect()
+            }
+        };
         doc.blocks = Arc::new(blocks);
         doc.recompute_starts();
         doc
+    }
+
+    pub fn mode(&self) -> DocMode {
+        self.mode
+    }
+
+    /// Takes the buffer back out (text, undo history and version all kept), discarding the block
+    /// list. Used to rebuild it under a different mode (see [`Document::retagged`]).
+    pub fn into_buffer(self) -> Buffer {
+        self.buffer
+    }
+
+    /// This document's buffer re-tiled under `mode`; the text, undo history and version are
+    /// unaffected, so toggling the Markdown/plain-text display mode does not touch
+    /// modified/saved state. Rebuilds the whole block list, so callers of a possibly expensive
+    /// `mode` (Markdown, whose parse cost is why [`MARKDOWN_SIZE_LIMIT`] exists) may want to run
+    /// this off the UI thread for a large document.
+    pub fn retagged(self, mode: DocMode) -> Self {
+        Self::from_buffer(self.buffer, mode)
     }
 
     pub fn buffer(&self) -> &Buffer {
@@ -216,23 +351,22 @@ impl Document {
     }
 
     /// Byte ranges of `query` in the text, in order, not overlapping, at most
-    /// [`MAX_FIND_MATCHES`]. Smart case: case-insensitive (ASCII letters) unless `query` contains
-    /// an uppercase letter. An empty query matches nothing.
+    /// [`MAX_FIND_MATCHES`]. See [`find_all_in_rope`], which does the work: this is just that
+    /// applied to the document's own rope.
     pub fn find_all(&self, query: &str) -> Vec<Range<usize>> {
-        if query.is_empty() {
-            return Vec::new();
-        }
-        let mut text = self.buffer.rope().to_string();
-        let mut query = std::borrow::Cow::Borrowed(query);
-        if !query.chars().any(char::is_uppercase) {
-            // ASCII-only lowering keeps every byte offset where it was.
-            text.make_ascii_lowercase();
-            query = std::borrow::Cow::Owned(query.to_ascii_lowercase());
-        }
-        text.match_indices(query.as_ref())
-            .take(MAX_FIND_MATCHES)
-            .map(|(at, found)| at..at + found.len())
-            .collect()
+        find_all_in_rope(self.buffer.rope(), query)
+    }
+
+    /// Everything [`Document::find_all`] leaves out for `Replace All`: every match, not just up
+    /// to [`MAX_FIND_MATCHES`], and the replaced span ready to splice in with one
+    /// [`Document::edit`] - one undo step regardless of the match count. See
+    /// [`replace_all_in_rope`], which does the work.
+    pub fn replace_all(
+        &self,
+        query: &str,
+        replacement: &str,
+    ) -> Option<(Range<usize>, String, usize)> {
+        replace_all_in_rope(self.buffer.rope(), query, replacement)
     }
 
     pub fn is_dirty(&self) -> bool {
@@ -273,16 +407,41 @@ impl Document {
         self.buffer.seal_undo_group();
     }
 
+    /// Reverts the last undo group. Reconciles the block list after each
+    /// individual change (`Buffer::undo_step`), not after the whole group:
+    /// `on_edit`/`on_edit_plain` assume the buffer reflects exactly the one
+    /// edit just passed to them, which only holds if each change is applied
+    /// and reconciled before the next one runs. Reconciling once after the
+    /// group was fully applied (its `Buffer::undo`, still used by callers
+    /// that do not need this) made a plain document's re-chunk compare
+    /// against a rope that had already moved past every other change in
+    /// the group, so it never found the old chunk boundary it was looking
+    /// for and rescanned all the way to the end of the document, once per
+    /// change in the group.
     pub fn undo(&mut self) -> Option<Vec<Edit>> {
-        let edits = self.buffer.undo()?;
-        edits.iter().for_each(|e| self.on_edit(e, None));
-        Some(edits)
+        let mut edits = Vec::new();
+        loop {
+            let (edit, done) = self.buffer.undo_step()?;
+            self.on_edit(&edit, None);
+            edits.push(edit);
+            if done {
+                return Some(edits);
+            }
+        }
     }
 
+    /// Re-applies the last undone group. See [`Document::undo`] for why
+    /// this reconciles after each change instead of the whole group.
     pub fn redo(&mut self) -> Option<Vec<Edit>> {
-        let edits = self.buffer.redo()?;
-        edits.iter().for_each(|e| self.on_edit(e, None));
-        Some(edits)
+        let mut edits = Vec::new();
+        loop {
+            let (edit, done) = self.buffer.redo_step()?;
+            self.on_edit(&edit, None);
+            edits.push(edit);
+            if done {
+                return Some(edits);
+            }
+        }
     }
 
     /// The next reparse to run, covering the first dirty range whole, or
@@ -537,8 +696,13 @@ impl Document {
         self.splices.push(Splice { old, new_len });
     }
 
-    /// `cuts`: pre-segmenter boundaries of the inserted text alone, if known.
+    /// `cuts`: pre-segmenter boundaries of the inserted text alone, if known. Plain documents
+    /// never reach the Markdown path below: they have no dirty ranges, definitions or parse
+    /// jobs, only a local re-chunk (see [`Document::on_edit_plain`]).
     fn on_edit(&mut self, edit: &Edit, cuts: Option<&[usize]>) {
+        if self.mode == DocMode::Plain {
+            return self.on_edit_plain(edit);
+        }
         for range in &mut self.dirty {
             *range = shift_range(range, edit);
         }
@@ -575,6 +739,71 @@ impl Document {
         };
         self.splice(first..last + 1, replacement);
         self.mark_dirty(start..start + len);
+    }
+
+    /// A plain document's whole reaction to an edit: replaces the block(s) it touched with a
+    /// fresh chunking of exactly their new combined span (`region_start..region_end`, the old
+    /// touched span's start and end, the latter shifted through the edit) - never the rest of
+    /// the document, since every other block's own length is untouched by an edit elsewhere (an
+    /// edit only moves its *absolute offset*, which [`Document::splice`]'s
+    /// [`Document::recompute_starts`] handles without touching content). That span is split, if
+    /// it grew past the maximum, with [`split_evenly`] rather than packed greedily
+    /// ([`plain_chunk_lens`]): the two ends of a touched span are constrained by whatever
+    /// surrounds them, and a greedy pack's last, partial chunk cannot promise to clear the
+    /// minimum the way an even split can (see [`split_evenly`]'s docs) - packing greedily here,
+    /// re-anchored at the touched span instead of the document start, would only move the
+    /// original bug's rippling from one anchor to another. If the span fits in one chunk on its
+    /// own but that chunk falls under the minimum, [`plain_block_is_small`] merges it with the
+    /// next block instead (bounded by [`PLAIN_MERGE_ATTEMPTS`], though one merge is normally
+    /// enough) unless it is the document's own last block or immediately follows a forced cut.
+    /// No dirty tracking, no definitions, no parse job: chunking is counting bytes and lines, not
+    /// parsing, so it always runs inline.
+    fn on_edit_plain(&mut self, edit: &Edit) {
+        let new_total = self.buffer.len();
+        if self.blocks.is_empty() {
+            if new_total > 0 {
+                let lens = plain_chunk_lens(self.buffer.rope(), 0..new_total);
+                let blocks =
+                    lens.into_iter().map(|len| self.new_block(md::plain(len), false)).collect();
+                self.splice(0..0, blocks);
+            }
+            return;
+        }
+        let n = self.blocks.len();
+        let first = self.block_at(edit.range.start).unwrap_or(0);
+        let mut last = if edit.range.end > edit.range.start {
+            self.block_at(edit.range.end - 1).unwrap_or(first)
+        } else {
+            first
+        };
+        let region_start = self.starts[first];
+        let mut region_end = shift_offset(self.starts[last + 1], edit);
+        let rope = self.buffer.rope().clone();
+
+        for _ in 0..PLAIN_MERGE_ATTEMPTS {
+            let span = region_end - region_start;
+            let fits_as_one = span <= PLAIN_CHUNK_BYTES
+                && rope.byte_to_line(region_end) - rope.byte_to_line(region_start)
+                    <= PLAIN_CHUNK_LINES;
+            if !fits_as_one || !plain_block_is_small(&rope, region_start, span) {
+                break;
+            }
+            let is_last_block = last + 1 == n;
+            let follows_forced_cut = first > 0 && rope.byte(region_start - 1) != b'\n';
+            if is_last_block || follows_forced_cut {
+                break;
+            }
+            last += 1;
+            region_end = shift_offset(self.starts[last + 1], edit);
+        }
+
+        let new_lens = split_evenly(&rope, region_start..region_end);
+        let mut new_blocks: Vec<Block> =
+            new_lens.into_iter().map(|len| self.new_block(md::plain(len), false)).collect();
+        if let Some(first_new) = new_blocks.first_mut() {
+            first_new.id = self.blocks[first].id;
+        }
+        self.splice(first..last + 1, new_blocks);
     }
 
     /// Blocks for a changed range `range` (current coordinates): one stale
@@ -915,6 +1144,250 @@ impl ParseResult {
     pub fn window(&self) -> Range<usize> {
         self.window.clone()
     }
+}
+
+/// Byte ranges of `query` in `rope`, in order, not overlapping, at most [`MAX_FIND_MATCHES`] (see
+/// [`find_all_in_rope_unbounded`] for the same scan without that cap, for `Replace All`). Smart
+/// case: case-insensitive (ASCII letters) unless `query` contains an uppercase letter. An empty
+/// query matches nothing.
+///
+/// Scans the rope's own chunks instead of copying the whole text into a `String` first (the
+/// previous implementation, `O(document size)` in extra memory): the only allocation is a
+/// rolling window of at most one query length of bytes, carried across chunk boundaries so a
+/// match spanning two chunks is still found.
+///
+/// Free (not `Document::find_all`, which just calls this on its own rope) so the editor can run
+/// it on a standalone rope snapshot - `Buffer::rope().clone()`, O(1) - on a background executor
+/// for a document above [`FIND_BACKGROUND_THRESHOLD`]: a `Document` borrow cannot cross an
+/// `.await` onto another thread the way an owned `Rope` can.
+pub fn find_all_in_rope(rope: &Rope, query: &str) -> Vec<Range<usize>> {
+    find_all_in_rope_bounded(rope, query, Some(MAX_FIND_MATCHES))
+}
+
+/// Like [`find_all_in_rope`], but never stops at [`MAX_FIND_MATCHES`]: that cap exists only for
+/// the display count and highlighting, and `Replace All` must still replace every match past it
+/// (a 200 MB log with ~530k matches of `status=200` silently replacing only the first 10,000,
+/// with no notice, was the bug this exists to fix). Same scan, same bounded extra memory; only
+/// the stopping condition differs. See [`replace_all_in_rope`], which is what `Replace All`
+/// actually calls.
+pub fn find_all_in_rope_unbounded(rope: &Rope, query: &str) -> Vec<Range<usize>> {
+    find_all_in_rope_bounded(rope, query, None)
+}
+
+fn find_all_in_rope_bounded(rope: &Rope, query: &str, limit: Option<usize>) -> Vec<Range<usize>> {
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let insensitive = !query.chars().any(char::is_uppercase);
+    let mut needle = query.as_bytes().to_vec();
+    if insensitive {
+        needle.make_ascii_lowercase();
+    }
+    let mut matches = Vec::new();
+    let mut window: Vec<u8> = Vec::new();
+    let mut window_start = 0usize;
+    'chunks: for piece in rope.chunks() {
+        let appended_at = window.len();
+        window.extend_from_slice(piece.as_bytes());
+        if insensitive {
+            // ASCII-only lowering keeps every byte offset where it was, and is safe on raw
+            // UTF-8 bytes: 'A'-'Z' never appear inside a multi-byte sequence.
+            window[appended_at..].make_ascii_lowercase();
+        }
+        let mut at = 0;
+        while let Some(found) = find_bytes(&window[at..], &needle) {
+            let start = window_start + at + found;
+            matches.push(start..start + needle.len());
+            if limit.is_some_and(|limit| matches.len() >= limit) {
+                break 'chunks;
+            }
+            at += found + needle.len();
+        }
+        let keep_from = window.len().saturating_sub(needle.len() - 1);
+        window_start += keep_from;
+        window.drain(..keep_from);
+    }
+    matches
+}
+
+/// The span from the first match of `query` in `rope` to the last, `replacement` spliced in at
+/// each one, and how many matches it covers: everything `Replace All` needs to apply as one
+/// [`Document::edit`] (one undo step), computed in a single pass so it can run entirely off the
+/// UI thread. `None` if `query` is empty or has no matches.
+///
+/// Two allocations scale with the span, not with the match count: the matched span extracted
+/// from `rope` once (`text`) and the replaced text built from it (`replaced`). Building
+/// `replaced` directly from `matches` (rather than, say, one document edit per match) is what
+/// keeps a multi-million-match Replace All to roughly one extra copy of the span instead of
+/// millions of tiny ones.
+pub fn replace_all_in_rope(
+    rope: &Rope,
+    query: &str,
+    replacement: &str,
+) -> Option<(Range<usize>, String, usize)> {
+    let matches = find_all_in_rope_unbounded(rope, query);
+    let span = matches.first()?.start..matches.last()?.end;
+    let text = rope.byte_slice(span.clone()).to_string();
+    let mut replaced = String::with_capacity(text.len());
+    let mut at = span.start;
+    for m in &matches {
+        replaced.push_str(&text[at - span.start..m.start - span.start]);
+        replaced.push_str(replacement);
+        at = m.end;
+    }
+    Some((span, replaced, matches.len()))
+}
+
+/// First offset in `hay` where `needle` occurs, or `None`. Naive (`O(hay.len() * needle.len())`)
+/// but only ever called on a bounded rolling window (`Document::find_all`), not the whole text.
+fn find_bytes(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || needle.len() > hay.len() {
+        return None;
+    }
+    hay.windows(needle.len()).position(|w| w == needle)
+}
+
+/// Byte offset of the next `\n` at or after `from` and before `before`, without copying: walks
+/// the rope's own chunks. `None` if there is none before `before`.
+fn find_newline(rope: &Rope, from: usize, before: usize) -> Option<usize> {
+    if from >= before {
+        return None;
+    }
+    let mut at = from;
+    for piece in rope.byte_slice(from..before).chunks() {
+        if let Some(i) = piece.find('\n') {
+            return Some(at + i);
+        }
+        at += piece.len();
+    }
+    None
+}
+
+/// The nearest char boundary at or before `byte_idx` (ropey panics on a slice or byte read that
+/// splits a character). UTF-8 continuation bytes have their top two bits `10`.
+fn floor_char_boundary(rope: &Rope, mut byte_idx: usize) -> usize {
+    while byte_idx > 0 && byte_idx < rope.len_bytes() && (rope.byte(byte_idx) & 0xC0) == 0x80 {
+        byte_idx -= 1;
+    }
+    byte_idx
+}
+
+/// Length of the next plain-text chunk starting at absolute offset `start`, never reading past
+/// `cap` (`0` only when `start >= cap`): cut after a `\n`, targeting [`PLAIN_CHUNK_BYTES`] bytes
+/// or [`PLAIN_CHUNK_LINES`] lines, whichever comes first, or `cap` itself if reached first. A
+/// line with no `\n` within [`PLAIN_FORCED_CUT_BYTES`] of its own start is cut there instead - a
+/// display-only break (the underlying bytes are unchanged, and the next chunk continues the same
+/// source line) that keeps a single pathologically long line from ever making the virtualized
+/// list lay out or shape more than a bounded amount of text. Scans at most
+/// `min(PLAIN_CHUNK_BYTES, cap - start)` bytes, never the rest of the document, and never copies
+/// `rope`'s text.
+///
+/// `cap` needs no precondition (unlike a plain byte offset picked at random, it is always itself
+/// a valid chunk boundary in the caller's own terms: the end of the document, or the start/end of
+/// a block the caller is not touching) - this only ever *shrinks* the chunk that would otherwise
+/// be returned, cutting at `cap` instead of the usual stopping point, and `cap` is exactly as
+/// valid a place to cut as whatever `cap` itself bounds.
+fn plain_chunk_len_capped(rope: &Rope, start: usize, cap: usize) -> usize {
+    if start >= cap {
+        return 0;
+    }
+    let mut pos = start;
+    let mut lines = 0usize;
+    loop {
+        let force_at = floor_char_boundary(rope, (pos + PLAIN_FORCED_CUT_BYTES).min(cap));
+        match find_newline(rope, pos, force_at) {
+            Some(nl) => {
+                lines += 1;
+                let len_so_far = nl + 1 - start;
+                if len_so_far >= PLAIN_CHUNK_BYTES || lines >= PLAIN_CHUNK_LINES || nl + 1 >= cap {
+                    return len_so_far;
+                }
+                pos = nl + 1;
+            }
+            None => return force_at - start,
+        }
+    }
+}
+
+/// Chunk lengths tiling `range` exactly, packed greedily to the maximum:
+/// [`plain_chunk_len_capped`] repeatedly from `range.start`, capped at `range.end`. Used for a
+/// fresh span with nothing past its own end to answer to - the whole document at load, or new
+/// content mid-document before [`Document::on_edit_plain`] decides how much of what surrounds it
+/// to fold in - never for re-chunking an existing span in place (see [`split_evenly`]).
+fn plain_chunk_lens(rope: &Rope, range: Range<usize>) -> Vec<usize> {
+    let mut lens = Vec::new();
+    let mut at = range.start;
+    while at < range.end {
+        let len = plain_chunk_len_capped(rope, at, range.end);
+        lens.push(len);
+        at += len;
+    }
+    lens
+}
+
+/// The block `start..start+len` is too small to stand on its own (under [`PLAIN_MIN_CHUNK_BYTES`]
+/// *and* under [`PLAIN_MIN_CHUNK_LINES`] - either alone is enough to clear the minimum, matching
+/// how a chunk is cut on whichever of lines or bytes hits its cap first). Whether it is actually
+/// allowed to be that small anyway (the document's last block, or right after a forced cut) is
+/// for the caller to judge; this only measures.
+fn plain_block_is_small(rope: &Rope, start: usize, len: usize) -> bool {
+    if len >= PLAIN_MIN_CHUNK_BYTES {
+        return false;
+    }
+    let lines = rope.byte_to_line(start + len) - rope.byte_to_line(start);
+    lines < PLAIN_MIN_CHUNK_LINES
+}
+
+/// Splits `range` into the fewest chunks that each respect [`PLAIN_CHUNK_BYTES`] and
+/// [`PLAIN_CHUNK_LINES`], cut at *even* line indices (`Rope::line_to_byte`) rather than packed
+/// greedily to the maximum like [`plain_chunk_lens`]. Used to re-chunk a span already bounded on
+/// both ends by whatever [`Document::on_edit_plain`] decided surrounds it - a block that grew
+/// past the maximum, alone or after merging with a too-small neighbour - where the two ends may
+/// themselves need to clear [`PLAIN_MIN_CHUNK_BYTES`]/[`PLAIN_MIN_CHUNK_LINES`]: a greedy pack's
+/// last, partial chunk cannot promise that (it is sized only by where it happens to run out of
+/// room, not by what is left over), while halving a range that is at most twice the maximum
+/// always leaves both halves at least half the maximum - comfortably over a quarter. Halving is
+/// recursive because one side of an uneven split (very unequal line lengths) may still be over
+/// the maximum. Still cut only at line ends, or, once no further line boundary can subdivide a
+/// piece (a single source line, or part of one, spans it entirely), at a forced cut - the same
+/// display-only break as [`plain_chunk_len_capped`], delegated to it directly.
+fn split_evenly(rope: &Rope, range: Range<usize>) -> Vec<usize> {
+    let mut lens = Vec::new();
+    split_evenly_into(rope, range, &mut lens);
+    lens
+}
+
+fn split_evenly_into(rope: &Rope, range: Range<usize>, lens: &mut Vec<usize>) {
+    let total = range.len();
+    if total == 0 {
+        return;
+    }
+    let start_line = rope.byte_to_line(range.start);
+    let end_line = rope.byte_to_line(range.end);
+    if total <= PLAIN_CHUNK_BYTES && end_line - start_line <= PLAIN_CHUNK_LINES {
+        lens.push(total);
+        return;
+    }
+    let mid_line = start_line + (end_line - start_line) / 2;
+    let mid = rope.line_to_byte(mid_line.min(end_line));
+    if mid <= range.start || mid >= range.end {
+        let mut at = range.start;
+        while at < range.end {
+            let len = plain_chunk_len_capped(rope, at, range.end);
+            lens.push(len);
+            at += len;
+        }
+        return;
+    }
+    split_evenly_into(rope, range.start..mid, lens);
+    split_evenly_into(rope, mid..range.end, lens);
+}
+
+/// Maps `offset` (in the text *before* `edit`) to its position after, like [`shift_range`] for a
+/// single point. Only meaningful for `offset >= edit.range.end` (a position [`Document`] never
+/// calls this with any other for): positions inside the edited range have no single new position.
+fn shift_offset(offset: usize, edit: &Edit) -> usize {
+    offset - edit.range.len() + edit.new_len
 }
 
 #[cfg(test)]

@@ -116,7 +116,21 @@ impl Editor {
     /// Takes over a backup from an earlier session: its text, its file, and its slot, and counts
     /// as unsaved.
     pub fn adopt_backup(&mut self, restored: Restored, cx: &mut Context<Self>) {
-        self.set_document(tachyon_doc::Document::new(&restored.text), cx);
+        // A restored scratch buffer stays Markdown; a restored file uses its own extension (and
+        // the same oversized-Markdown fallback a fresh open would), never whatever mode the
+        // window happened to be in when it was backed up (the toggle is not persisted).
+        let by_extension = restored
+            .file
+            .as_deref()
+            .map_or(tachyon_doc::DocMode::Markdown, tachyon_doc::mode_for_extension);
+        let oversized = by_extension == tachyon_doc::DocMode::Markdown
+            && restored.text.len() as u64 > tachyon_doc::MARKDOWN_SIZE_LIMIT;
+        let mode = if oversized { tachyon_doc::DocMode::Plain } else { by_extension };
+        let buffer = tachyon_text::Buffer::new(&restored.text);
+        self.set_document(tachyon_doc::Document::from_buffer(buffer, mode), cx);
+        if oversized {
+            self.notice = Some(crate::disk::oversized_markdown_notice());
+        }
         // Without a recorded version the file may have changed since: Save asks first.
         self.disk_changed = restored.file.is_some() && restored.stamp.is_none();
         self.file = restored.file;
@@ -129,13 +143,21 @@ impl Editor {
     }
 
     /// After an edit or a save: backs up unsaved text after a pause, or drops the backup of text
-    /// that is saved now.
+    /// that is saved now. Above [`tachyon_doc::LARGE_PLAIN_SIZE`] this is a no-op: writing tens or
+    /// hundreds of megabytes 1.5 s after every keystroke would itself compete with the UI
+    /// thread's frame budget on a slow disk, even though the write runs off it (`write_backup`).
+    /// Such a document is still backed up once, on quit or close, by `Editor::should_close`
+    /// calling `backup_now` directly (never through this method), so hot exit still restores it -
+    /// only the *periodic*, typing-pause backup is skipped.
     pub(crate) fn schedule_backup(&mut self, cx: &mut Context<Self>) {
         if !cx.has_global::<Backups>() {
             return;
         }
         if !self.is_modified() {
             self.discard_backup();
+            return;
+        }
+        if self.doc.len() as u64 > tachyon_doc::LARGE_PLAIN_SIZE {
             return;
         }
         if self.backup_task.is_some() || self.backed_up_version == Some(self.doc.buffer().version())
@@ -148,6 +170,11 @@ impl Editor {
         }));
     }
 
+    /// The saved text is built from a cloned rope snapshot (O(1): `ropey` shares nodes via
+    /// `Arc`) inside the spawned task, not here: `tachyon_text::saved_text` is `O(document
+    /// size)`, and this runs after every pause in typing (below `LARGE_PLAIN_SIZE`; see
+    /// `schedule_backup`), so even a few-MB document should not repeatedly cost the UI thread a
+    /// millisecond-plus string build and CRLF pass.
     fn write_backup(&mut self, cx: &mut Context<Self>) {
         self.backup_task = None;
         let version = self.doc.buffer().version();
@@ -155,16 +182,25 @@ impl Editor {
             return;
         }
         let Some(slot) = self.slot(cx) else { return };
-        let text = self.doc.buffer().to_saved_text();
+        let rope = self.doc.buffer().rope().clone();
+        let line_ending = self.doc.buffer().line_ending();
         let file = self.file.clone();
         let stamp = self.disk_stamp;
         self.backed_up_version = Some(version);
         cx.background_executor()
-            .spawn(async move { write_slot(&slot, &text, file.as_deref(), stamp) })
+            .spawn(async move {
+                let text = tachyon_text::saved_text(&rope, line_ending);
+                write_slot(&slot, &text, file.as_deref(), stamp)
+            })
             .detach();
     }
 
-    /// Backs up now, on this thread (Quit). Returns whether the text is safely on disk.
+    /// Backs up now, on this thread (Quit): the write must finish before the process exits, so
+    /// unlike `write_backup` it cannot hand the string-building work to a background task and
+    /// move on. The one-time stall this risks for a huge document is accepted here - quitting
+    /// already ends the frame loop - in exchange for the guarantee that hot exit has the text.
+    /// Never gated by `LARGE_PLAIN_SIZE`: this is the *only* backup point such a document gets.
+    /// Returns whether the text is safely on disk.
     pub(crate) fn backup_now(&mut self, cx: &mut Context<Self>) -> bool {
         self.backup_task = None;
         let Some(slot) = self.slot(cx) else { return false };

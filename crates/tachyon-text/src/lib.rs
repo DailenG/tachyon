@@ -5,9 +5,11 @@
 //! boundaries. This crate must never depend on GPUI.
 
 mod line_ending;
+mod load;
 
 use std::collections::VecDeque;
 use std::fmt;
+use std::io::{self, Read};
 use std::ops::Range;
 
 use ropey::Rope;
@@ -134,6 +136,47 @@ struct History {
     redo: Vec<Vec<Change>>,
     /// Whether the next edit joins the last undo group.
     open: bool,
+    /// A group popped from `undo` or `redo` but not yet fully replayed by
+    /// [`Buffer::undo_step`]/[`Buffer::redo_step`]: the changes plus which
+    /// stack the group returns to once every one of them has been applied.
+    /// Lets a caller (`tachyon_doc::Document`) react to each change against
+    /// the buffer state it actually produces - the same interleaving
+    /// `Buffer::edit` gives a typed keystroke - instead of the whole
+    /// group's final state, which is what applying the group first and
+    /// reacting after used to do.
+    replay: Option<Replay>,
+}
+
+#[derive(Debug)]
+struct Replay {
+    group: Vec<Change>,
+    /// Index of the next change [`Buffer::undo_step`]/[`Buffer::redo_step`]
+    /// applies: counts down from `group.len()` for a group undone (changes
+    /// revert newest first), up from `0` for one redone (oldest first).
+    cursor: usize,
+    is_undo: bool,
+}
+
+/// What [`Buffer::load`] found while decoding: whether any invalid UTF-8 was replaced with
+/// U+FFFD, and whether a NUL byte turned up in the first few KiB (a strong binary-file signal).
+/// Either means saving without confirmation would silently change the file's bytes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LoadReport {
+    pub lossy: bool,
+    pub looks_binary: bool,
+}
+
+/// Builds the text as it should be written to disk (original line ending restored) from a rope
+/// and line ending alone, without a [`Buffer`]: `Buffer::rope().clone()` is O(1) (`ropey` shares
+/// nodes across the clone via reference counting), so a caller can snapshot a buffer on the UI
+/// thread and run this - `Rope::to_string` plus the CRLF pass, `O(document size)` - on a
+/// background executor instead. [`Buffer::to_saved_text`] is this on its own rope.
+pub fn saved_text(rope: &Rope, line_ending: LineEnding) -> String {
+    let text = rope.to_string();
+    match line_ending {
+        LineEnding::Lf => text,
+        LineEnding::CrLf => text.replace('\n', "\r\n"),
+    }
 }
 
 #[derive(Debug)]
@@ -156,6 +199,97 @@ impl Buffer {
             line_ending: LineEnding::detect(text),
             history: History::default(),
         }
+    }
+
+    /// Builds a buffer by reading `reader` in bounded chunks, so the whole input is never held
+    /// as one contiguous `String`: peak memory is the rope's own storage plus one read-sized
+    /// buffer, instead of a full copy of the text plus the rope built from it (`Buffer::new` on
+    /// text already read into memory). Line endings are normalized and the dominant one detected
+    /// in the same streamed pass; invalid UTF-8 is replaced with U+FFFD rather than failing, so a
+    /// binary or foreign-encoded file still opens (see [`LoadReport`]).
+    pub fn load(reader: impl Read) -> io::Result<(Self, LoadReport)> {
+        Self::load_with_chunk(reader, load::READ_CHUNK)
+    }
+
+    /// [`Buffer::load`] with an explicit read-buffer size, so tests can exercise chunk-boundary
+    /// edge cases (a split multi-byte UTF-8 sequence, the binary sniff window) without a
+    /// multi-megabyte input.
+    fn load_with_chunk(mut reader: impl Read, chunk_size: usize) -> io::Result<(Self, LoadReport)> {
+        let mut builder = ropey::RopeBuilder::new();
+        let mut read_buf = vec![0u8; chunk_size];
+        let mut chunk: Vec<u8> = Vec::with_capacity(chunk_size + 8);
+        let mut carry: Vec<u8> = Vec::new();
+        let mut decoded = String::new();
+        let mut decoder = load::Decoder::default();
+        let mut sniffed = 0usize;
+        let mut looks_binary = false;
+        loop {
+            let n = reader.read(&mut read_buf)?;
+            if n == 0 {
+                break;
+            }
+            if sniffed < load::BINARY_SNIFF_LEN {
+                let take = (load::BINARY_SNIFF_LEN - sniffed).min(n);
+                looks_binary |= read_buf[..take].contains(&0);
+                sniffed += take;
+            }
+            chunk.clear();
+            chunk.extend_from_slice(&carry);
+            chunk.extend_from_slice(&read_buf[..n]);
+            carry.clear();
+            let mut rest: &[u8] = &chunk;
+            loop {
+                match std::str::from_utf8(rest) {
+                    Ok(s) => {
+                        decoder.push(&mut decoded, s);
+                        break;
+                    }
+                    Err(e) => {
+                        let valid_up_to = e.valid_up_to();
+                        // SAFETY: `from_utf8` reports `rest` is valid UTF-8 up to `valid_up_to`,
+                        // so this prefix is exactly that valid text.
+                        let valid = unsafe { std::str::from_utf8_unchecked(&rest[..valid_up_to]) };
+                        decoder.push(&mut decoded, valid);
+                        match e.error_len() {
+                            Some(len) => {
+                                decoder.lossy = true;
+                                decoded.push('\u{FFFD}');
+                                rest = &rest[valid_up_to + len..];
+                            }
+                            None => {
+                                // An incomplete sequence at the end of this read: it may
+                                // complete with the next one, so carry it over instead of
+                                // treating it as invalid yet.
+                                carry.extend_from_slice(&rest[valid_up_to..]);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            if !decoded.is_empty() {
+                builder.append(&decoded);
+                decoded.clear();
+            }
+        }
+        if !carry.is_empty() {
+            // A multi-byte sequence truncated at end of file: genuinely invalid.
+            decoder.lossy = true;
+            decoded.push('\u{FFFD}');
+        }
+        let line_ending = decoder.finish(&mut decoded);
+        let lossy = decoder.lossy;
+        if !decoded.is_empty() {
+            builder.append(&decoded);
+        }
+        let buffer = Buffer {
+            rope: builder.finish(),
+            version: 0,
+            log: VecDeque::new(),
+            line_ending,
+            history: History::default(),
+        };
+        Ok((buffer, LoadReport { lossy, looks_binary }))
     }
 
     pub fn version(&self) -> u64 {
@@ -189,11 +323,7 @@ impl Buffer {
     /// The text as it should be written to disk, with the original line
     /// ending restored.
     pub fn to_saved_text(&self) -> String {
-        let text = self.rope.to_string();
-        match self.line_ending {
-            LineEnding::Lf => text,
-            LineEnding::CrLf => text.replace('\n', "\r\n"),
-        }
+        saved_text(&self.rope, self.line_ending)
     }
 
     /// Replaces `range` with `text` (line endings normalized) and records the
@@ -248,23 +378,103 @@ impl Buffer {
         self.history.open = false;
     }
 
-    /// Reverts the last undo group. Returns the edits applied, in order.
+    /// Reverts the last undo group, applying every change in one call.
+    /// Returns the edits applied, in order. Equivalent to calling
+    /// [`Buffer::undo_step`] until it reports the group's last step;
+    /// prefer that when a caller needs to react (re-chunk, reparse) to each
+    /// change against the buffer state it individually produced, rather
+    /// than the group's final state.
     pub fn undo(&mut self) -> Option<Vec<Edit>> {
-        self.history.open = false;
-        let group = self.history.undo.pop()?;
-        let edits =
-            group.iter().rev().map(|c| self.apply(c.at..c.at + c.new.len(), &c.old)).collect();
-        self.history.redo.push(group);
-        Some(edits)
+        let mut edits = Vec::new();
+        loop {
+            let (edit, done) = self.undo_step()?;
+            edits.push(edit);
+            if done {
+                return Some(edits);
+            }
+        }
     }
 
-    /// Re-applies the last undone group. Returns the edits applied, in order.
+    /// Re-applies the last undone group, applying every change in one call.
+    /// Returns the edits applied, in order. Equivalent to calling
+    /// [`Buffer::redo_step`] until it reports the group's last step; see
+    /// its docs for why a caller may prefer that.
     pub fn redo(&mut self) -> Option<Vec<Edit>> {
+        let mut edits = Vec::new();
+        loop {
+            let (edit, done) = self.redo_step()?;
+            edits.push(edit);
+            if done {
+                return Some(edits);
+            }
+        }
+    }
+
+    /// Reverts one change of the last undo group and returns its edit and
+    /// whether it was the group's last change (the group has now moved to
+    /// the redo stack), or `None` if there is nothing left to undo. Call in
+    /// a loop until `true`; do not interleave with
+    /// [`Buffer::edit`]/[`Buffer::redo_step`] before a group reports `true`.
+    ///
+    /// Applying one change at a time - instead of the whole group, then
+    /// reporting all its edits together - lets a caller like
+    /// `tachyon_doc::Document` re-chunk or reparse after each change
+    /// against the buffer state that change actually produced, the same
+    /// interleaving a typed keystroke gets from [`Buffer::edit`]. Reacting
+    /// only after the whole group had already been replayed made a plain
+    /// document's re-chunk (`on_edit_plain`'s convergence search, which
+    /// compares a per-change shift against the current rope) compare against
+    /// a rope that had already moved past every other change in the group,
+    /// so it never converged and rescanned the entire document once per
+    /// change in the group instead of once per edited region.
+    pub fn undo_step(&mut self) -> Option<(Edit, bool)> {
         self.history.open = false;
-        let group = self.history.redo.pop()?;
-        let edits = group.iter().map(|c| self.apply(c.at..c.at + c.old.len(), &c.new)).collect();
-        self.history.undo.push(group);
-        Some(edits)
+        let mut replay = match self.history.replay.take() {
+            Some(replay) => replay,
+            None => {
+                let group = self.history.undo.pop()?;
+                let cursor = group.len();
+                Replay { group, cursor, is_undo: true }
+            }
+        };
+        debug_assert!(replay.is_undo, "redo_step left a group only partly replayed");
+        replay.cursor -= 1;
+        let c = &replay.group[replay.cursor];
+        let edit = self.apply(c.at..c.at + c.new.len(), &c.old);
+        let done = replay.cursor == 0;
+        if done {
+            self.history.redo.push(replay.group);
+        } else {
+            self.history.replay = Some(replay);
+        }
+        Some((edit, done))
+    }
+
+    /// Re-applies one change of the last undone group and returns its edit
+    /// and whether it was the group's last change (the group has now moved
+    /// back to the undo stack), or `None` if there is nothing left to redo.
+    /// See [`Buffer::undo_step`] for why a caller may prefer this over
+    /// [`Buffer::redo`].
+    pub fn redo_step(&mut self) -> Option<(Edit, bool)> {
+        self.history.open = false;
+        let mut replay = match self.history.replay.take() {
+            Some(replay) => replay,
+            None => {
+                let group = self.history.redo.pop()?;
+                Replay { group, cursor: 0, is_undo: false }
+            }
+        };
+        debug_assert!(!replay.is_undo, "undo_step left a group only partly replayed");
+        let c = &replay.group[replay.cursor];
+        let edit = self.apply(c.at..c.at + c.old.len(), &c.new);
+        replay.cursor += 1;
+        let done = replay.cursor == replay.group.len();
+        if done {
+            self.history.undo.push(replay.group);
+        } else {
+            self.history.replay = Some(replay);
+        }
+        Some((edit, done))
     }
 
     /// Edits applied after `version`, oldest first, or `None` if they have
@@ -364,6 +574,59 @@ mod tests {
             buffer.edit(buffer.len()..buffer.len(), chunk).unwrap();
         }
         assert_eq!(buffer.text(), "line one\nline two\n");
+    }
+
+    #[test]
+    fn load_matches_new_for_a_variety_of_inputs_at_small_chunk_sizes() {
+        let inputs = [
+            "",
+            "no line breaks",
+            "a\r\nb\r\nc\n",
+            "line one\r\nline two\r\nend without break",
+            "unicode: héllo \u{1f600} wörld\n",
+            "trailing lone cr\r",
+        ];
+        for text in inputs {
+            for chunk_size in [1, 2, 3, 7] {
+                let (loaded, report) =
+                    Buffer::load_with_chunk(io::Cursor::new(text.as_bytes()), chunk_size).unwrap();
+                assert!(!report.lossy, "{text:?} at chunk {chunk_size}");
+                assert!(!report.looks_binary, "{text:?} at chunk {chunk_size}");
+                let direct = Buffer::new(text);
+                assert_eq!(loaded.text(), direct.text(), "{text:?} at chunk {chunk_size}");
+                assert_eq!(
+                    loaded.line_ending(),
+                    direct.line_ending(),
+                    "{text:?} at chunk {chunk_size}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn load_replaces_invalid_utf8_even_when_split_across_reads() {
+        // `b"caf\xC3\xA9"` is "café"; splitting the 2-byte 'é' across a read boundary must not
+        // count it as invalid, but a lone continuation byte must.
+        let valid = b"caf\xC3\xA9 after\n";
+        let (buffer, report) = Buffer::load_with_chunk(io::Cursor::new(valid), 4).unwrap();
+        assert!(!report.lossy);
+        assert_eq!(buffer.text(), "café after\n");
+
+        let invalid = b"before \xff\xfe after\n";
+        let (buffer, report) = Buffer::load_with_chunk(io::Cursor::new(invalid), 3).unwrap();
+        assert!(report.lossy);
+        assert_eq!(buffer.text(), "before \u{FFFD}\u{FFFD} after\n");
+    }
+
+    #[test]
+    fn load_flags_a_nul_byte_in_the_first_8_kib_as_binary() {
+        let mut bytes = vec![b'a'; 100];
+        bytes[50] = 0;
+        let (_, report) = Buffer::load(io::Cursor::new(bytes)).unwrap();
+        assert!(report.looks_binary);
+
+        let (_, report) = Buffer::load(io::Cursor::new(vec![b'a'; 100])).unwrap();
+        assert!(!report.looks_binary);
     }
 
     #[test]

@@ -1,14 +1,95 @@
-//! Files changed on disk behind the editor's back. The editor remembers each file's modification
-//! time and size as it read or wrote them. When its window is activated it looks again: an
-//! unchanged document reloads, one with unsaved changes keeps them, and Save then asks before
-//! overwriting the other version.
+//! Files changed on disk behind the editor's back, and reading them in the first place.
+//! `load_document` is the single place a path becomes a [`Document`]: it decides Markdown vs.
+//! plain text, enforces the size limits that keep a huge file from ever repeating the 18 GB,
+//! frozen-window behaviour this feature replaces, and reads incrementally
+//! (`tachyon_text::Buffer::load`) so opening one never holds the whole file as a second copy in
+//! memory. The editor remembers each file's modification time and size as it read or wrote them.
+//! When its window is activated it looks again: an unchanged document reloads, one with unsaved
+//! changes keeps them, and Save then asks before overwriting the other version.
 
 use std::path::Path;
 use std::time::SystemTime;
 
-use gpui::{Context, Window};
+use gpui::{Context, SharedString, Window};
+use tachyon_doc::{DocMode, Document, MARKDOWN_SIZE_LIMIT, PLAIN_HARD_LIMIT, mode_for_extension};
+use tachyon_text::Buffer;
 
 use crate::editor::Editor;
+
+/// A one-line notice shown at the top of the view (see `render::mode_notice`) while a Markdown
+/// file is held in plain-text mode because it is larger than [`MARKDOWN_SIZE_LIMIT`]; the toggle
+/// back to Markdown is refused for the same reason (`Editor::toggle_text_mode`).
+pub fn oversized_markdown_notice() -> SharedString {
+    SharedString::from(format!(
+        "Larger than {} for Markdown: showing as plain text. Ctrl+Shift+M is disabled above that \
+         size.",
+        human_size(MARKDOWN_SIZE_LIMIT)
+    ))
+}
+
+/// `bytes`, rounded to whole MiB or GiB (both limits this crate cares about are round numbers in
+/// one of those units).
+fn human_size(bytes: u64) -> String {
+    const MIB: u64 = 1024 * 1024;
+    if bytes >= 1024 * MIB {
+        format!("{} GiB", bytes / (1024 * MIB))
+    } else {
+        format!("{} MiB", bytes / MIB)
+    }
+}
+
+/// A file read by [`load_document`], beyond the document itself.
+pub struct Loaded {
+    pub doc: Document,
+    /// Some of the file's bytes were not valid UTF-8 (or, being NUL-sniffed as binary, might not
+    /// round-trip through text at all) and were replaced with U+FFFD: saving would change the
+    /// file's bytes, so `Editor::save` must warn before doing that.
+    pub lossy: bool,
+    /// Set when the file opened as plain text only because it is too large for Markdown.
+    pub notice: Option<SharedString>,
+}
+
+/// Outcome of [`load_document`]: either a document to show, or a refusal (a file too large to
+/// ever open, whatever its mode) with a message to show in its place.
+pub enum LoadOutcome {
+    Loaded(Box<Loaded>),
+    Refused(String),
+}
+
+/// Reads `path` and builds the document it opens as. Markdown by extension, unless the file is
+/// larger than [`MARKDOWN_SIZE_LIMIT`] (then plain text, with a notice) or larger than
+/// [`PLAIN_HARD_LIMIT`] (then refused outright: [`LoadOutcome::Refused`], never read). Reads
+/// incrementally (`Buffer::load`), so opening a huge file never holds a second full copy of it in
+/// memory the way `std::fs::read_to_string` plus building a rope from the result would; invalid
+/// UTF-8 and binary content (a NUL byte in the first 8 KiB, sniffed the same pass) still open,
+/// decoded lossily and forced to plain text rather than parsed as Markdown regardless of
+/// extension, per the "never crash on user input" rule.
+pub fn load_document(path: &Path) -> std::io::Result<LoadOutcome> {
+    let size = std::fs::metadata(path)?.len();
+    if size > PLAIN_HARD_LIMIT {
+        return Ok(LoadOutcome::Refused(format!(
+            "{} is {} and Tachyon refuses files larger than {}, to avoid running out of memory. \
+             Open it with a tool built for very large files instead.",
+            path.display(),
+            human_size(size),
+            human_size(PLAIN_HARD_LIMIT)
+        )));
+    }
+    let file = std::fs::File::open(path)?;
+    let (buffer, report) = Buffer::load(file)?;
+    let mut mode = mode_for_extension(path);
+    let mut notice = None;
+    if mode == DocMode::Markdown && buffer.len() as u64 > MARKDOWN_SIZE_LIMIT {
+        mode = DocMode::Plain;
+        notice = Some(oversized_markdown_notice());
+    } else if mode == DocMode::Markdown && (report.lossy || report.looks_binary) {
+        // Binary or garbled content: parsing it as Markdown would be pointless work over
+        // replacement characters, and could not have been the user's intent.
+        mode = DocMode::Plain;
+    }
+    let doc = Document::from_buffer(buffer, mode);
+    Ok(LoadOutcome::Loaded(Box::new(Loaded { doc, lossy: report.lossy, notice })))
+}
 
 /// What identifies a version of a file on disk.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -74,24 +155,36 @@ impl Editor {
                 return;
             }
             let read_path = path.clone();
-            let text = cx
-                .background_executor()
-                .spawn(async move { std::fs::read_to_string(&read_path) })
-                .await;
+            let outcome =
+                cx.background_executor().spawn(async move { load_document(&read_path) }).await;
             let _ = this.update(cx, |editor, cx| {
-                if let Ok(text) = text
-                    && editor.file.as_deref() == Some(path.as_path())
+                let still_current = editor.file.as_deref() == Some(path.as_path())
                     && !editor.is_modified()
-                    && editor.disk_stamp == Some(known)
-                {
-                    let caret = editor.head();
-                    editor.set_document(tachyon_doc::Document::new(&text), cx);
-                    editor.disk_stamp = Some(current);
-                    editor.move_to(caret, false, cx);
+                    && editor.disk_stamp == Some(known);
+                if !still_current {
+                    return;
                 }
+                // A file that grew too large to reopen, or a transient read error (permissions,
+                // the file briefly gone mid-write): leave the window showing what it last had
+                // rather than replacing it with a refusal or losing the file association.
+                let Ok(LoadOutcome::Loaded(loaded)) = outcome else { return };
+                let caret = editor.head();
+                editor.set_loaded(*loaded, cx);
+                editor.disk_stamp = Some(current);
+                editor.file = Some(path);
+                editor.saved_version = editor.doc.buffer().version();
+                editor.move_to(caret, false, cx);
             });
         })
         .detach();
+    }
+
+    /// Installs a document [`load_document`] read, along with whether it was decoded lossily
+    /// (so `Editor::save` warns) and any mode notice.
+    pub fn set_loaded(&mut self, loaded: Loaded, cx: &mut Context<Self>) {
+        self.set_document(loaded.doc, cx);
+        self.lossy = loaded.lossy;
+        self.notice = loaded.notice;
     }
 }
 

@@ -23,6 +23,7 @@ use pulldown_cmark::{
     TagEnd,
 };
 
+pub use crate::autolink::bare_urls;
 pub use crate::defs::{DefTable, LinkTarget};
 pub use crate::ir::{BlockIr, LineInfo, LineKind, LinkSpan, Marker, SourceSpan, Style, StyleRun};
 pub use crate::presegment::{ends_in_fence, presegment};
@@ -84,6 +85,9 @@ pub enum BlockKind {
     /// Source not parsed yet (large insertions awaiting a background parse),
     /// shown as plain lines.
     Unparsed,
+    /// A plain-text document's chunk: never parsed as Markdown. Like `Unparsed`, it has no IR;
+    /// the editor renders it straight from the buffer.
+    Plain,
 }
 
 /// One top-level block of a parse window.
@@ -360,6 +364,13 @@ pub fn unparsed(len: usize) -> ParsedBlock {
         footnotes_seen: None,
         source_hash: 0,
     }
+}
+
+/// A plain-text document's chunk of `len` bytes: [`BlockKind::Plain`], permanently, with no IR.
+/// Like [`unparsed`], it costs nothing per byte; the editor takes its text straight from the
+/// buffer and never schedules a parse for it.
+pub fn plain(len: usize) -> ParsedBlock {
+    ParsedBlock { kind: BlockKind::Plain, ..unparsed(len) }
 }
 
 /// IR showing `src` verbatim, one visible line per source line.

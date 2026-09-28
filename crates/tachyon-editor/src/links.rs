@@ -2,6 +2,7 @@
 //! handler, links to Markdown and text files in Tachyon. Anything else (other schemes, other local
 //! files, which could be programs) is ignored.
 
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
 use gpui::{App, Context};
@@ -123,19 +124,33 @@ fn document_file(path: &Path) -> Option<LinkTarget> {
 }
 
 impl Editor {
-    /// Destination of the link at source `offset`: on its text, rendered or raw.
-    pub(crate) fn link_at(&self, offset: usize) -> Option<&str> {
+    /// Destination of the link at source `offset`: on its text, rendered or raw. Markdown blocks
+    /// look it up in their parsed IR; plain-text blocks (and Markdown's own IR-less `Unparsed`
+    /// placeholders) have none, so a bare URL there is found the same cheap way it is styled at
+    /// render time (`render::render_plain_chunk`), scanning just that block's own text.
+    pub(crate) fn link_at(&self, offset: usize) -> Option<Cow<'_, str>> {
         let index = self.doc.block_at(offset)?;
-        let start = self.doc.block_range(index).start;
+        let range = self.doc.block_range(index);
         let ir = &self.doc.blocks()[index].parsed().ir;
-        let visible = ir.source_to_visible(offset.checked_sub(start)?);
-        ir.links.iter().find(|link| link.visible.contains(&visible)).map(|link| link.dest.as_str())
+        if !ir.lines.is_empty() {
+            let visible = ir.source_to_visible(offset.checked_sub(range.start)?);
+            let dest = ir
+                .links
+                .iter()
+                .find(|link| link.visible.contains(&visible))
+                .map(|link| link.dest.as_str())?;
+            return Some(Cow::Borrowed(dest));
+        }
+        let local = offset.checked_sub(range.start)?;
+        let text = self.doc.buffer().rope().byte_slice(range).to_string();
+        let url = tachyon_md::bare_urls(&text).into_iter().find(|r| r.contains(&local))?;
+        Some(Cow::Owned(text[url].to_owned()))
     }
 
     /// Follows the link at `offset`, if there is one. Returns whether it did.
     pub(crate) fn follow_link(&mut self, offset: usize, cx: &mut Context<Self>) -> bool {
         let Some(dest) = self.link_at(offset) else { return false };
-        match resolve(dest, self.file()) {
+        match resolve(&dest, self.file()) {
             Some(LinkTarget::Url(url)) => cx.open_url(&url),
             Some(LinkTarget::File(path)) => {
                 cx.defer(move |cx: &mut App| {
