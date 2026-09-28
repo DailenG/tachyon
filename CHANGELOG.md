@@ -6,6 +6,29 @@ All notable user-visible changes are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Undo (or redo) back to exactly the text last saved now clears the title's dirty marker and lets
+  the window close without asking, instead of staying "modified" as long as any edit had ever
+  happened since the save. The buffer tracks a stable id for its position in the undo/redo history
+  (`Buffer::history_position`) rather than a plain incrementing edit counter, so a save remembers
+  that position and `is_modified` compares against it - an O(1) integer check, not a text
+  comparison, so it stays cheap on a huge document. Retyping the same characters by hand instead
+  of undoing/redoing back to them is a new edit and still counts as modified.
+- The command palette's checked theme row no longer moves to the end of the list and reorders the
+  other two: the checkmark shown on the current theme was part of the same text the filter ranks
+  and sorts by, so whichever theme was current sorted after the other two instead of the three
+  staying in a fixed order. The checkmark is now drawn from a separate flag, never part of the
+  ranked text.
+- New windows no longer open at exactly the same screen position. Each one now offsets about one
+  title-bar height down and right from the most recently opened window that is still open,
+  wrapping back to the centred position once that would put it outside the display's work area.
+  The very first window of a run is still centred, with no extra work before its first frame.
+- Windows: a secondary instance (`TACHYON_INSTANCE_ID` set, as benchmarks and tests use) no longer
+  overwrites the real taskbar/Start jump list with its own private recent-files list. The jump
+  list is scoped to the whole app (its AppUserModelID), unlike `Open recent`'s list, which is
+  per-instance; only the default instance updates it now.
+
 ## [1.0.0] - 2026-09-28
 
 ### Added

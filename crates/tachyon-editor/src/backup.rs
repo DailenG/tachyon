@@ -141,8 +141,10 @@ impl Editor {
         self.disk_changed = restored.file.is_some() && restored.stamp.is_none();
         self.file = restored.file;
         self.disk_stamp = restored.stamp;
-        // No later version equals this one, so the document stays modified until saved.
-        self.saved_version = self.doc.buffer().version().wrapping_sub(1);
+        // A restored backup is never "saved": force `is_modified` regardless of the fresh
+        // buffer's own history position (`u64::MAX` is never a real position - see
+        // `tachyon_text::Buffer::history_position` - so this can never accidentally match).
+        self.saved_history_position = u64::MAX;
         self.backup_slot = Some(restored.slot);
         self.backed_up_version = Some(self.doc.buffer().version());
         cx.notify();

@@ -257,8 +257,11 @@ pub struct Editor {
     /// while the find bar or a picker holds typing, so only the field's own caret is visible.
     pub(crate) caret_painted: bool,
     pub(crate) file: Option<PathBuf>,
-    /// Buffer version last written to (or loaded from) `file`.
-    pub(crate) saved_version: u64,
+    /// The buffer's undo/redo history position ([`tachyon_text::Buffer::history_position`]) at
+    /// the last save or load: `is_modified` compares against this, so undo/redo back to exactly
+    /// this point clears the dirty marker, not only "no edit happened since" - an O(1) integer
+    /// compare, never a whole-buffer scan, even on a huge document.
+    pub(crate) saved_history_position: u64,
     /// The file's modification time and size as last read or written (see `disk`).
     pub(crate) disk_stamp: Option<crate::disk::DiskStamp>,
     /// The file changed on disk while the document had unsaved changes: Save asks first.
@@ -361,7 +364,7 @@ impl Editor {
             find_bar_bottom: px(0.),
             caret_painted: false,
             file: None,
-            saved_version: 0,
+            saved_history_position: 0,
             disk_stamp: None,
             disk_changed: false,
             backup_slot: None,
@@ -382,7 +385,7 @@ impl Editor {
 
     /// Replaces the whole document (file load finished, new paste).
     pub fn set_document(&mut self, doc: Document, cx: &mut Context<Self>) {
-        self.saved_version = doc.buffer().version();
+        self.saved_history_position = doc.buffer().history_position();
         self.doc = doc;
         self.doc.take_splices();
         self.lossy = false;
@@ -411,7 +414,7 @@ impl Editor {
         self.disk_stamp = crate::disk::DiskStamp::of(&path);
         self.disk_changed = false;
         self.file = Some(path);
-        self.saved_version = self.doc.buffer().version();
+        self.saved_history_position = self.doc.buffer().history_position();
         cx.notify();
     }
 
@@ -421,7 +424,7 @@ impl Editor {
 
     /// Edited since the last save or load.
     pub fn is_modified(&self) -> bool {
-        self.doc.buffer().version() != self.saved_version
+        self.doc.buffer().history_position() != self.saved_history_position
     }
 
     /// Window title: file name (or "Tachyon" for a scratch buffer), with a
@@ -1764,7 +1767,7 @@ impl Editor {
         use crate::disk::DiskStamp;
         let rope = self.doc.buffer().rope().clone();
         let line_ending = self.doc.buffer().line_ending();
-        let version = self.doc.buffer().version();
+        let history_position = self.doc.buffer().history_position();
         // Only the file this document came from has a version to protect.
         let same_file = !force && self.file.as_ref() == Some(&path);
         if same_file && self.disk_changed {
@@ -1799,7 +1802,7 @@ impl Editor {
                     editor.disk_stamp = stamp;
                     editor.disk_changed = false;
                     editor.file = Some(path);
-                    editor.saved_version = version;
+                    editor.saved_history_position = history_position;
                     // The bytes now on disk are exactly what the document holds (U+FFFD in
                     // place of whatever did not decode the first time): the round trip is
                     // lossless from here on, so later saves need not ask again.

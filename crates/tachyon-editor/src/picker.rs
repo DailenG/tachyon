@@ -35,6 +35,13 @@ pub(crate) struct Item {
     pub(crate) indent: u8,
     /// Shown right-aligned after `detail` (a command's current keyboard shortcut).
     pub(crate) shortcut: Option<String>,
+    /// A leading checkmark drawn in front of `label` (the command palette's active theme row).
+    /// Kept out of `label` itself rather than folded into its text: `filter`'s ranking
+    /// (`fuzzy_rank`) matches and tie-breaks on `label`, so if the mark were part of it, the
+    /// three theme rows - otherwise identical apart from the name - would rank differently
+    /// depending only on which one currently carries the mark, reordering the list every time
+    /// the active theme changed instead of keeping a fixed order.
+    pub(crate) marked: bool,
     pub(crate) pick: Pick,
 }
 
@@ -232,6 +239,7 @@ impl Editor {
                 detail: None,
                 indent: level.saturating_sub(1),
                 shortcut: None,
+                marked: false,
                 pick: Pick::Offset(start + ir.visible_to_source(0)),
             });
         }
@@ -257,6 +265,7 @@ impl Editor {
                 detail: file.parent().map(|dir| dir.display().to_string()),
                 indent: 0,
                 shortcut: None,
+                marked: false,
                 pick: Pick::File(file),
             })
             .collect();

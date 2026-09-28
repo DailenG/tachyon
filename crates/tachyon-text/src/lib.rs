@@ -130,10 +130,23 @@ struct Change {
     new: String,
 }
 
+/// One undo group with a globally unique, ever-increasing id: assigned when the group is first
+/// pushed to [`History::undo`] and carried along as it moves between the undo and redo stacks
+/// (an undone group moves to `redo` keeping its id; a redone one moves back to `undo` keeping
+/// it), never reused. Because a fresh edit clears `redo` (see [`Buffer::record`]), no id is ever
+/// assigned twice to different content: [`Buffer::history_position`] compares these ids to tell
+/// "undo/redo landed back on the version last saved" from "still a different edit", in O(1)
+/// without reading the buffer's text.
+#[derive(Debug)]
+struct Group {
+    id: u64,
+    changes: Vec<Change>,
+}
+
 #[derive(Debug, Default)]
 struct History {
-    undo: Vec<Vec<Change>>,
-    redo: Vec<Vec<Change>>,
+    undo: Vec<Group>,
+    redo: Vec<Group>,
     /// Whether the next edit joins the last undo group.
     open: bool,
     /// A group popped from `undo` or `redo` but not yet fully replayed by
@@ -145,10 +158,13 @@ struct History {
     /// group's final state, which is what applying the group first and
     /// reacting after used to do.
     replay: Option<Replay>,
+    /// The id the next newly started group receives; strictly increasing, never reused.
+    next_id: u64,
 }
 
 #[derive(Debug)]
 struct Replay {
+    id: u64,
     group: Vec<Change>,
     /// Index of the next change [`Buffer::undo_step`]/[`Buffer::redo_step`]
     /// applies: counts down from `group.len()` for a group undone (changes
@@ -366,10 +382,36 @@ impl Buffer {
         let history = &mut self.history;
         history.redo.clear();
         match history.undo.last_mut() {
-            Some(group) if history.open => group.push(change),
-            _ => history.undo.push(vec![change]),
+            Some(group) if history.open => group.changes.push(change),
+            _ => {
+                history.next_id += 1;
+                history.undo.push(Group { id: history.next_id, changes: vec![change] });
+            }
         }
         history.open = true;
+    }
+
+    /// A stable position in the buffer's linear undo/redo history: the id of the group last
+    /// applied (undone groups sitting on `redo` do not count), or `0` if none has ever been
+    /// applied, or every group has been undone back past the start. Comparing two positions is
+    /// an integer equality check - no text is read - so callers like `Editor::is_modified` can
+    /// afford it on every keystroke, even on a huge buffer.
+    ///
+    /// A fresh edit always discards `redo` (see [`Buffer::record`]), so an id, once it stops
+    /// being reachable, is never assigned to different content: two positions compare equal only
+    /// when undo/redo landed back on the exact edit group, never merely on the same *count* of
+    /// groups after the history has since diverged. Retyping the same text by hand instead of
+    /// redoing it is a new group with a new id, so it compares unequal even though the text
+    /// matches - deliberate: it is a fresh edit, not a return to a known point in the history.
+    ///
+    /// Mid-replay (a group partly applied by [`Buffer::undo_step`]/[`Buffer::redo_step`]) this is
+    /// `u64::MAX`, a value no save ever captures: [`Buffer::undo`]/[`Buffer::redo`] always finish
+    /// a group in one call, so callers that only use those never observe it.
+    pub fn history_position(&self) -> u64 {
+        if self.history.replay.is_some() {
+            return u64::MAX;
+        }
+        self.history.undo.last().map_or(0, |group| group.id)
     }
 
     /// Ends the current undo group; the next edit starts a new one. The editor
@@ -433,8 +475,8 @@ impl Buffer {
             Some(replay) => replay,
             None => {
                 let group = self.history.undo.pop()?;
-                let cursor = group.len();
-                Replay { group, cursor, is_undo: true }
+                let cursor = group.changes.len();
+                Replay { id: group.id, group: group.changes, cursor, is_undo: true }
             }
         };
         debug_assert!(replay.is_undo, "redo_step left a group only partly replayed");
@@ -443,7 +485,7 @@ impl Buffer {
         let edit = self.apply(c.at..c.at + c.new.len(), &c.old);
         let done = replay.cursor == 0;
         if done {
-            self.history.redo.push(replay.group);
+            self.history.redo.push(Group { id: replay.id, changes: replay.group });
         } else {
             self.history.replay = Some(replay);
         }
@@ -461,7 +503,7 @@ impl Buffer {
             Some(replay) => replay,
             None => {
                 let group = self.history.redo.pop()?;
-                Replay { group, cursor: 0, is_undo: false }
+                Replay { id: group.id, group: group.changes, cursor: 0, is_undo: false }
             }
         };
         debug_assert!(!replay.is_undo, "undo_step left a group only partly replayed");
@@ -470,7 +512,7 @@ impl Buffer {
         replay.cursor += 1;
         let done = replay.cursor == replay.group.len();
         if done {
-            self.history.undo.push(replay.group);
+            self.history.undo.push(Group { id: replay.id, changes: replay.group });
         } else {
             self.history.replay = Some(replay);
         }
@@ -671,6 +713,41 @@ mod tests {
         buffer.edit(2..2, "X").unwrap();
         assert!(buffer.redo().is_none(), "a new edit discards the redo stack");
         assert_eq!(buffer.text(), "abX");
+    }
+
+    #[test]
+    fn history_position_returns_to_the_same_value_on_undo_and_redo_but_not_on_a_retyped_edit() {
+        let mut buffer = Buffer::new("");
+        let start = buffer.history_position();
+        buffer.edit(0..0, "a").unwrap();
+        let after_a = buffer.history_position();
+        assert_ne!(after_a, start, "a new group is a new position");
+        buffer.seal_undo_group();
+        buffer.edit(1..1, "b").unwrap();
+        let after_b = buffer.history_position();
+        assert_ne!(after_b, after_a);
+
+        buffer.undo().unwrap();
+        assert_eq!(buffer.text(), "a");
+        assert_eq!(buffer.history_position(), after_a, "undo lands back on the same group");
+
+        buffer.redo().unwrap();
+        assert_eq!(buffer.text(), "ab");
+        assert_eq!(buffer.history_position(), after_b, "redo lands back on the same group");
+
+        buffer.undo().unwrap();
+        buffer.undo().unwrap();
+        assert_eq!(buffer.text(), "");
+        assert_eq!(buffer.history_position(), start, "fully undone matches the starting position");
+
+        // Retyping the same text by hand, instead of redoing it, is a new group: same text, a
+        // different position (the caller decides whether that counts as "modified"; here it
+        // deliberately does not match `after_b`, even though the buffer holds the same "ab").
+        buffer.edit(0..0, "a").unwrap();
+        buffer.seal_undo_group();
+        buffer.edit(1..1, "b").unwrap();
+        assert_eq!(buffer.text(), "ab");
+        assert_ne!(buffer.history_position(), after_b, "a hand-retyped edit is a new group");
     }
 
     #[test]

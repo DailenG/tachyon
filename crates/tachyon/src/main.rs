@@ -17,6 +17,16 @@ pub(crate) fn instance_id() -> String {
     std::env::var("TACHYON_INSTANCE_ID").unwrap_or_else(|_| "tachyon".to_owned())
 }
 
+/// Whether this process is the user's own instance (no `TACHYON_INSTANCE_ID` override), as
+/// opposed to a private one a benchmark or a test spun up under its own instance id. The Windows
+/// jump list is scoped to the whole app (its AppUserModelID), not to one instance's recent-files
+/// list the way `RecentFiles` itself is (see `app::run`'s `RecentFilesOs`), so a private instance
+/// updating it would overwrite the real jump list with its own, usually empty or throwaway,
+/// recent files.
+pub(crate) fn is_default_instance() -> bool {
+    std::env::var_os("TACHYON_INSTANCE_ID").is_none()
+}
+
 fn main() -> ExitCode {
     let startup = startup::Startup::begin();
     let command = cli::parse(std::env::args_os().skip(1));
