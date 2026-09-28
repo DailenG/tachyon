@@ -1601,6 +1601,22 @@ fn command_palette_filters_and_runs_a_command(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn command_palette_about_row_opens_the_about_window(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        cx.set_global(crate::AppInfo { version: "1.2.3".into(), resident: false });
+    });
+    let (_editor, cx) = open("text\n", cx);
+    let before = cx.update(|_, cx| cx.windows().len());
+    cx.simulate_keystrokes("secondary-shift-p");
+    cx.simulate_input("about");
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    // A row's action is looked up by name and an unknown name is skipped silently, so a
+    // misspelled row would do nothing: the window must actually open.
+    assert_eq!(cx.update(|_, cx| cx.windows().len()), before + 1, "About Tachyon opened a window");
+}
+
+#[gpui::test]
 fn command_palette_shows_shortcuts_from_the_keymap(cx: &mut TestAppContext) {
     let (editor, cx) = open("text\n", cx);
     cx.simulate_keystrokes("secondary-shift-p");
