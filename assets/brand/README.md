@@ -1,6 +1,6 @@
 # Tachyon brand assets
 
-These are original SVG constructions informed by the selected conceptual logo in `docs/design/concepts/tachyon-logo-concept.png` (PR #41). The particle, orbit, and tapered wake were drawn as new Bézier shapes; the raster was not auto-traced. These assets are for build-time icon generation and external brand surfaces. **Do not load, parse, rasterize, or draw them inside the editor window or on its startup path.** The application's `.ico` and launcher SVG in `crates/tachyon-platform/assets/` are generated from `app-icon-small.svg` (16–32 px, the same art as the website favicon) and `app-icon.svg` (40–64 px) by `cargo xtask icons`; the build only embeds those results.
+These are original SVG constructions informed by the selected conceptual logo in `docs/design/concepts/tachyon-logo-concept.png` (PR #41). The particle, orbit, and tapered wake were drawn as new Bézier shapes; the raster was not auto-traced. These assets are for build-time icon generation and external brand surfaces. **Do not load, parse, rasterize, or draw them inside the editor window or on its startup path.** `cargo xtask icons` generates the application's raster icons (`crates/tachyon-platform/assets/tachyon.ico` and the MSIX PNGs in `packaging/msix/Assets/`) from `app-icon-small.svg` (16–32 px, the same art as the website favicon) and `app-icon.svg` (40 px and up), and copies `app-icon.svg` as the Linux launcher SVG (`crates/tachyon-platform/assets/tachyon.svg`); the build only embeds those results.
 
 ## Files and use
 
@@ -10,7 +10,7 @@ These are original SVG constructions informed by the selected conceptual logo in
 | `mark-small.svg` | Simplified, solid mark for compact surfaces | 16 px wide; reviewed at 16, 20, 24, 32 px |
 | `mark-mono.svg` | Single `currentColor` tintable mark | 24 px wide; use the small mark geometry if smaller |
 | `app-icon.svg` / `app-icon-flat.svg` | Square icon on a bounded dark tile | 48 px square |
-| `app-icon-small.svg` | Square icon with simplified mark | 32 px square |
+| `app-icon-small.svg` | Square icon with simplified mark; the 16–32 px raster icons and the website favicon | 16 px square; reviewed at 16, 20, 24, 32 px |
 | `wordmark.svg` | Outlined wordmark; never relies on a runtime font | 120 px wide |
 | `lockup-horizontal.svg` / `lockup-horizontal-flat.svg` | Mark plus outlined wordmark | 240 px wide |
 

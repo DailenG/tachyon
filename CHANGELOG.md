@@ -40,8 +40,8 @@ All notable user-visible changes are recorded here. The format follows
   thread from a cloned snapshot of the buffer. Find on a document over 5 MiB runs on the
   background executor instead of the keystroke's frame, showing "searching…" until it lands.
 
-- The app icon (tray, windows, taskbar, executable, Linux launcher) is the new Tachyon mark, with
-  the simplified mark (the same art as the website's favicon) at 16–32 px. `cargo xtask icons`
+- The app icon (tray, windows, taskbar, executable, Linux launcher) is the new Tachyon mark; the
+  raster icons use the simplified mark (the same art as the website's favicon) at 16–32 px. `cargo xtask icons`
   regenerates the icon from `assets/brand/`.
 - Windows: `tachyon.exe` carries its icon and version information (Explorer, Task Manager,
   pinned taskbar buttons).
