@@ -13,3 +13,4 @@ that supersedes the old one.
 | [0004](0004-startup-budget-and-gate.md) | 50 ms startup budget and the Phase 1 gate | Accepted |
 | [0005](0005-incremental-reparse-by-block-windows.md) | Incremental reparse by block windows | Accepted |
 | [0006](0006-hot-exit.md) | Hot exit: Quit keeps unsaved documents instead of asking | Accepted |
+| [0007](0007-versions-and-release-channels.md) | Versions and release channels | Accepted |

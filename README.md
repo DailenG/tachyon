@@ -111,6 +111,15 @@ machine (p50 about 59 ms instead of about 21 ms), so the `.zip` above is the fas
 would rather manage updates yourself. Uninstalling the package does not remove the autostart
 entry if you turned it on; run `tachyon --autostart off` first.
 
+**Nightly builds:** every merge to `main` publishes a signed MSIX to a rolling
+[`nightly`](https://github.com/DailenG/tachyon/releases/tag/nightly) prerelease. Install once from
+[`Tachyon.appinstaller`](https://github.com/DailenG/tachyon/releases/download/nightly/Tachyon.appinstaller)
+the same way as above; it then updates itself on every launch. An already-installed stable
+`0.1.0.0` MSIX updates in place the same way, no uninstall needed, because a nightly's version is
+always higher than the stable release it followed. There is no path back from nightly to the
+stable release with that same version without uninstalling first (it would be a downgrade); switch
+channels only if you want a tested, versioned build instead of main's latest commit.
+
 ## Building
 
 Requires the toolchain pinned in [`rust-toolchain.toml`](rust-toolchain.toml); `rustup` installs it
