@@ -1677,7 +1677,13 @@ fn command_palette_shows_shortcuts_from_the_keymap(cx: &mut TestAppContext) {
 /// which one was already active.
 fn theme_row_order(initial: crate::ThemeChoice, cx: &mut TestAppContext) -> Vec<String> {
     cx.update(|cx| {
-        cx.set_global(crate::Settings { theme: initial, zoom: 1., hot_exit: true, tips: true });
+        cx.set_global(crate::Settings {
+            theme: initial,
+            zoom: 1.,
+            hot_exit: true,
+            tips: true,
+            whats_new: true,
+        });
     });
     let (editor, cx) = open("text\n", cx);
     cx.simulate_keystrokes("secondary-shift-p");

@@ -171,6 +171,7 @@ fn command_items(cx: &App) -> Vec<Item> {
                 ),
                 CommandEffect::ToggleWhatsNew => (
                     format!("{}: {}", command.name, if settings.whats_new { "On" } else { "Off" }),
+                    false,
                     None,
                 ),
             };

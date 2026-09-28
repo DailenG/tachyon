@@ -121,6 +121,9 @@ Some prose that is not a version section at all.
         let section = extract_section(changelog, "1.1.0").expect("found");
         assert!(section.starts_with("## [1.1.0] - 2026-10-01"), "{section:?}");
         assert!(section.contains("- new thing"));
-        assert!(!section.contains("Migration notes"), "stopped before the next heading: {section:?}");
+        assert!(
+            !section.contains("Migration notes"),
+            "stopped before the next heading: {section:?}"
+        );
     }
 }

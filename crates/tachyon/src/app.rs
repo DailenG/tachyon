@@ -695,10 +695,7 @@ fn check_whats_new(cx: &mut App) {
             .spawn(async move { whats_new::read_and_record(&path, &record_version) })
             .await;
         if !recorded {
-            eprintln!(
-                "tachyon: could not record the What's new version at {}",
-                log_path.display()
-            );
+            eprintln!("tachyon: could not record the What's new version at {}", log_path.display());
             return;
         }
         if whats_new::should_open_window(check, enabled, has_notes) {
