@@ -27,6 +27,11 @@ Tasks:
       Builds the release binary and packs it with the README, changelog and
       licenses into target/dist/tachyon-<version>-<arch>-<os>.zip on Windows,
       .tar.gz elsewhere.
+  icons
+      Regenerates the application's icons from assets/brand: tachyon.ico (16-64 px,
+      32-bit DIB images; the small icon art up to 32 px) and the launcher SVG, both in
+      crates/tachyon-platform/assets. Needs rsvg-convert and ImageMagick (magick).
+      Run after changing the brand art; the build only embeds the results.
 ";
 
 const REPORT_PREFIX: &str = "tachyon-startup";
@@ -38,6 +43,7 @@ fn main() -> ExitCode {
         Some("ci") => ci(args.collect()),
         Some("bench-startup") => bench_startup(args.collect()),
         Some("dist") => dist(),
+        Some("icons") => icons(),
         _ => {
             eprint!("{USAGE}");
             return ExitCode::from(2);
@@ -171,6 +177,90 @@ fn dist() -> Result<ExitCode, String> {
     let size = std::fs::metadata(&path).map_err(|e| format!("{}: {e}", path.display()))?.len();
     println!("{} ({:.1} MB)", path.display(), size as f64 / 1e6);
     Ok(ExitCode::SUCCESS)
+}
+
+/// Icon sizes and the art drawn at each: the simplified mark stays legible up to 32 px.
+const ICON_SIZES: [(u32, &str); 7] = [
+    (16, "app-icon-small.svg"),
+    (20, "app-icon-small.svg"),
+    (24, "app-icon-small.svg"),
+    (32, "app-icon-small.svg"),
+    (40, "app-icon.svg"),
+    (48, "app-icon.svg"),
+    (64, "app-icon.svg"),
+];
+
+/// `cargo xtask icons`: rasterizes the brand SVGs into the `.ico` the tray, the windows and the
+/// executable embed, and copies the launcher SVG. Sizes stay at 64 px and below, which ImageMagick
+/// writes as DIB images: the tray creates icons without an image codec and rejects PNG entries.
+fn icons() -> Result<ExitCode, String> {
+    let root = workspace_root();
+    let brand = root.join("assets/brand");
+    let out = root.join("crates/tachyon-platform/assets");
+    let work = std::env::temp_dir().join(format!("tachyon-icons-{}", std::process::id()));
+    std::fs::create_dir_all(&work).map_err(|e| e.to_string())?;
+    let run = |program: &str, args: &[&std::ffi::OsStr]| -> Result<(), String> {
+        let status = Command::new(program)
+            .args(args)
+            .status()
+            .map_err(|e| format!("{program} is needed for `cargo xtask icons` ({e})"))?;
+        if status.success() { Ok(()) } else { Err(format!("{program} failed")) }
+    };
+    let mut pngs = Vec::new();
+    for (size, art) in ICON_SIZES {
+        let png = work.join(format!("{size}.png"));
+        let size = size.to_string();
+        run(
+            "rsvg-convert",
+            &[
+                "-w".as_ref(),
+                size.as_ref(),
+                "-h".as_ref(),
+                size.as_ref(),
+                brand.join(art).as_os_str(),
+                "-o".as_ref(),
+                png.as_os_str(),
+            ],
+        )?;
+        pngs.push(png);
+    }
+    // Written and checked in the scratch directory first, so a bad ICO never replaces the tracked
+    // one that builds embed.
+    let staged = work.join("tachyon.ico");
+    let mut args: Vec<&std::ffi::OsStr> = pngs.iter().map(|p| p.as_os_str()).collect();
+    args.push(staged.as_os_str());
+    let checked = run("magick", &args)
+        .and_then(|()| std::fs::read(&staged).map_err(|e| e.to_string()))
+        .and_then(|bytes| check_dib_icon(&bytes));
+    let ico = out.join("tachyon.ico");
+    let replaced = checked.and_then(|()| {
+        std::fs::copy(&staged, &ico).map(drop).map_err(|e| format!("{}: {e}", ico.display()))
+    });
+    let _ = std::fs::remove_dir_all(&work);
+    replaced?;
+    let svg = out.join("tachyon.svg");
+    std::fs::copy(brand.join("app-icon.svg"), &svg)
+        .map_err(|e| format!("{}: {e}", svg.display()))?;
+    println!("{} and {} updated", ico.display(), svg.display());
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Every image in the `.ico` is a 32-bit DIB (a `BITMAPINFOHEADER` with 32 bits per pixel, not a
+/// PNG).
+fn check_dib_icon(ico: &[u8]) -> Result<(), String> {
+    let u16_at = |at: usize| ico.get(at..at + 2).map(|b| u16::from_le_bytes([b[0], b[1]]));
+    let count = u16_at(4).ok_or("the icon file is truncated")?;
+    for i in 0..usize::from(count) {
+        let offset = ico
+            .get(18 + 16 * i..22 + 16 * i)
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize)
+            .ok_or("the icon directory is truncated")?;
+        let header = ico.get(offset..offset + 4) == Some(&[40, 0, 0, 0][..]);
+        if !header || u16_at(offset + 14) != Some(32) {
+            return Err(format!("icon image {i} is not a 32-bit DIB"));
+        }
+    }
+    Ok(())
 }
 
 /// `version` from the workspace manifest's `[workspace.package]` table.

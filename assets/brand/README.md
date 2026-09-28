@@ -1,6 +1,6 @@
 # Tachyon brand assets
 
-These are original SVG constructions informed by the selected conceptual logo in `docs/design/concepts/tachyon-logo-concept.png` (PR #41). The particle, orbit, and tapered wake were drawn as new Bézier shapes; the raster was not auto-traced. These assets are for build-time icon generation and external brand surfaces. **Do not load, parse, rasterize, or draw them inside the editor window or on its startup path.** No `.ico` files are committed.
+These are original SVG constructions informed by the selected conceptual logo in `docs/design/concepts/tachyon-logo-concept.png` (PR #41). The particle, orbit, and tapered wake were drawn as new Bézier shapes; the raster was not auto-traced. These assets are for build-time icon generation and external brand surfaces. **Do not load, parse, rasterize, or draw them inside the editor window or on its startup path.** The application's `.ico` and launcher SVG in `crates/tachyon-platform/assets/` are generated from `app-icon-small.svg` (16–32 px) and `app-icon.svg` (40–64 px) by `cargo xtask icons`; the build only embeds those results.
 
 ## Files and use
 
