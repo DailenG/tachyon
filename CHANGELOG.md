@@ -78,7 +78,9 @@ All notable user-visible changes are recorded here. The format follows
 - Windows: a signed MSIX installer (`cargo xtask msix`) and a `Tachyon.appinstaller` published
   with each GitHub Release, so `Add-AppxPackage -AppInstallerFile` (or just opening the
   `.appinstaller`) installs Tachyon and checks for updates on every launch. The package registers
-  an App Execution Alias (`tachyon` from any terminal), `.md`/`.markdown` file associations, and
+  an App Execution Alias (`tachyon` from any terminal), `.md`/`.markdown` and (as a separate
+  `plaintext` association, since plain-text mode opens them too) `.txt`/`.text`/`.log` file
+  associations, and
   disables MSIX's write virtualization so settings, backups and autostart use the same real
   locations as the `.zip` build; `--autostart on` targets the execution alias instead of the
   versioned install path when run from an MSIX install, so it survives updates. The release
@@ -94,6 +96,14 @@ All notable user-visible changes are recorded here. The format follows
   and hot exit on or off. Saving the file applies the theme to open windows.
 - Open recent (`Ctrl+R`): pick one of the last 30 files you opened or saved; type to filter by
   name or folder.
+- Recent files reach two OS-native surfaces, not just `Open recent`: on Windows, right-clicking
+  the taskbar or Start icon shows a "Recent" jump-list category (newest first, up to 10) and a
+  "New window" task; on Linux and BSD, opened and saved files are added to the freedesktop
+  recently-used list (`~/.local/share/recently-used.xbel`), which GTK and Qt file choosers read
+  as their own "Recent" list. Both update off the UI thread whenever `Open recent`'s own list
+  changes (open, save, or a backup restored). The portable `.exe` sets an explicit
+  AppUserModelID (`DailenG.Tachyon`) so the jump list attaches to the right taskbar icon; an
+  MSIX install already has one from its package identity.
 - Files changed by another program reload when you return to the window, unless you have unsaved
   changes; saving over such a change asks first.
 - Copy as HTML (`Ctrl+Shift+C`): the selection, or the whole document, rendered as HTML. On

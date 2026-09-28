@@ -73,6 +73,18 @@
             </uap:SupportedFileTypes>
           </uap:FileTypeAssociation>
         </uap:Extension>
+        <!-- Plain-text mode (crates/tachyon-editor: `DocMode::Plain`) opens these as literal
+             text; a separate association from `markdown` above, so Windows offers "Open with
+             Tachyon" for both kinds without conflating them into one file-type group. -->
+        <uap:Extension Category="windows.fileTypeAssociation">
+          <uap:FileTypeAssociation Name="plaintext">
+            <uap:SupportedFileTypes>
+              <uap:FileType>.txt</uap:FileType>
+              <uap:FileType>.text</uap:FileType>
+              <uap:FileType>.log</uap:FileType>
+            </uap:SupportedFileTypes>
+          </uap:FileTypeAssociation>
+        </uap:Extension>
       </Extensions>
     </Application>
   </Applications>

@@ -45,6 +45,9 @@ ropey = "1.6"
 unicase = "2.6"
 unicode-segmentation = "1.10"
 windows-sys = "0.61"
+# Same crate version GPUI already resolves to (Cargo.lock); adding it directly, rather than a
+# second `windows`/`windows-sys` major version, keeps one COM binding in the dependency tree.
+windows = "0.62"
 
 # Test and benchmark only.
 proptest = "1"

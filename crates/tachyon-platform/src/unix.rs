@@ -11,6 +11,9 @@ use std::time::{Duration, Instant};
 
 use crate::protocol;
 
+#[cfg(not(target_os = "macos"))]
+mod recently_used;
+
 /// How long a secondary waits for a primary that holds the lock but has not
 /// bound its socket yet.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
@@ -434,6 +437,20 @@ pub fn os_version() -> String {
 pub fn packaged_version() -> Option<String> {
     None
 }
+
+/// See [`crate::update_jump_list`]. No Linux, BSD or macOS equivalent yet: [`note_recently_used`]
+/// is this platform's own recent-files surface instead.
+pub fn update_jump_list(_recent: &[PathBuf]) {}
+
+/// See [`crate::note_recently_used`]: upserts `file` into the freedesktop recently-used list.
+#[cfg(not(target_os = "macos"))]
+pub fn note_recently_used(file: &std::path::Path) {
+    let _ = recently_used::add(file);
+}
+
+/// No freedesktop recently-used list, or equivalent, on macOS yet.
+#[cfg(target_os = "macos")]
+pub fn note_recently_used(_file: &std::path::Path) {}
 
 #[cfg(all(test, not(target_os = "macos")))]
 mod autostart_tests {

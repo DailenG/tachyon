@@ -5420,6 +5420,7 @@ name = "tachyon-platform"
 version = "0.1.0"
 dependencies = [
  "raw-window-handle",
+ "windows 0.62.2",
  "windows-sys 0.61.2",
  "zbus",
 ]

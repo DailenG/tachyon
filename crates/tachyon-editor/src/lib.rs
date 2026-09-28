@@ -26,7 +26,7 @@ pub use crate::editor::{
     ClipboardReader, CloseWindow, Editor, HtmlClipboard, KEY_CONTEXT, OpenPaths, Save, SaveAs,
     key_bindings,
 };
-pub use crate::picker::RecentFiles;
+pub use crate::picker::{RecentFiles, RecentFilesOs};
 pub use crate::prompt::keyboard_prompt;
 pub use crate::settings::{DEFAULT_SETTINGS, Settings, SettingsFile, ThemeChoice};
 pub use crate::theme::{AppearanceHint, Theme};

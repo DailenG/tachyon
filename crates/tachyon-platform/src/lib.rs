@@ -166,6 +166,24 @@ pub fn set_desktop_entry(exe: &std::path::Path, enabled: bool) -> io::Result<()>
     imp::set_desktop_entry(exe, enabled)
 }
 
+/// Rebuilds the taskbar/Start jump list's "Recent" category (and its "New window" task) from
+/// `recent` (`tachyon_editor::RecentFiles`'s own list, newest first): call this whenever that
+/// list changes (a file is opened, saved, or a backup restored). Returns immediately; the rebuild
+/// happens off the caller's thread, coalesced against any rebuild already queued (Windows: see
+/// `windows::jump_list`'s module doc comment). No-op on Linux, BSD and macOS, which have no
+/// equivalent surface yet.
+pub fn update_jump_list(recent: &[std::path::PathBuf]) {
+    imp::update_jump_list(recent);
+}
+
+/// Adds `file` to the freedesktop recently-used list (`~/.local/share/recently-used.xbel`),
+/// which GTK and Qt file choosers read as "Recent" (Linux and BSD only). Call this alongside
+/// [`update_jump_list`], whenever a file is opened or saved. No-op on Windows (its own recent
+/// surface is [`update_jump_list`]) and macOS (no equivalent yet).
+pub fn note_recently_used(file: &std::path::Path) {
+    imp::note_recently_used(file);
+}
+
 /// Whether Tachyon starts in the background at login.
 pub fn autostart_enabled() -> io::Result<bool> {
     imp::autostart_enabled()

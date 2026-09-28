@@ -138,6 +138,23 @@ pub struct RecentFiles {
 
 impl Global for RecentFiles {}
 
+/// What `RecentFiles::note` tells the OS whenever the recent-files list changes: the Windows
+/// taskbar/Start jump list (`update_jump_list`), the freedesktop recently-used list
+/// (`note_recently_used`). Set by the application (to `tachyon_platform`'s free functions);
+/// without it - as in every test, and any window before the application finishes start-up - `note`
+/// only updates its own file and tells the OS nothing, the same graceful absence `RecentFiles`
+/// itself has. Kept as a global of plain function pointers, not a direct `tachyon-platform` call
+/// from here, so this crate's tests never touch a real per-user path
+/// (`tachyon_platform::note_recently_used`'s freedesktop implementation resolves `$XDG_DATA_HOME`/
+/// `$HOME` from the real environment, which a test has no reason to sandbox).
+#[derive(Clone, Copy)]
+pub struct RecentFilesOs {
+    pub update_jump_list: fn(&[PathBuf]),
+    pub note_recently_used: fn(&Path),
+}
+
+impl Global for RecentFilesOs {}
+
 /// How many files Open recent remembers.
 const RECENT_LIMIT: usize = 30;
 
@@ -152,11 +169,16 @@ impl RecentFiles {
             .unwrap_or_default()
     }
 
-    /// Moves `file` to the front of the list, off the UI thread.
+    /// Moves `file` to the front of the list, off the UI thread; also mirrors the change to the
+    /// OS's own recent-files surface, when the application has set [`RecentFilesOs`] (the Windows
+    /// taskbar jump list; the freedesktop recently-used list) - which is why this runs on open,
+    /// save *and* backup restore alike: every path that means the same thing `Open recent` itself
+    /// would show a new entry for.
     pub(crate) fn note(file: &Path, cx: &App) {
         let Some(recent) = cx.try_global::<RecentFiles>() else { return };
         let Some(entry) = file.to_str().map(str::to_owned) else { return };
         let (path, lock) = (recent.path.clone(), Arc::clone(&recent.lock));
+        let os = cx.try_global::<RecentFilesOs>().copied();
         cx.background_executor()
             .spawn(async move {
                 let _guard = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -170,6 +192,10 @@ impl RecentFiles {
                     let _ = std::fs::create_dir_all(dir);
                 }
                 let _ = crate::editor::write_atomically(&path, text.as_bytes());
+                if let Some(os) = os {
+                    (os.update_jump_list)(&files);
+                    (os.note_recently_used)(Path::new(&entry));
+                }
             })
             .detach();
     }
