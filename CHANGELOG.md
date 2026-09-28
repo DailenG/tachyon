@@ -121,6 +121,8 @@ All notable user-visible changes are recorded here. The format follows
 
 ### Fixed
 
+- Table grid lines are 1 px: neighbouring cells drew two lines side by side (2 px at 100 %, and
+  visibly heavier than card and field borders at 150 %).
 - Windows: the tray icon's context menu ("New window", "Quit Tachyon") now follows Tachyon's
   resolved theme instead of always rendering light, matching the native title bar
   (`set_popup_menu_dark`; an undocumented `uxtheme.dll` mode switch, Windows 10 1903+, the same one
