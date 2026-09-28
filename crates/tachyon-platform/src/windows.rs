@@ -11,20 +11,23 @@ use std::ptr;
 use std::sync::{Mutex, PoisonError, mpsc};
 use std::time::{Duration, Instant};
 
+use windows_sys::Wdk::System::SystemServices::RtlGetVersion;
 use windows_sys::Win32::Foundation::{
-    ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_PIPE_BUSY, ERROR_PIPE_CONNECTED, HWND,
-    INVALID_HANDLE_VALUE, LocalFree,
+    ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_INSUFFICIENT_BUFFER, ERROR_PIPE_BUSY,
+    ERROR_PIPE_CONNECTED, HWND, INVALID_HANDLE_VALUE, LocalFree,
 };
 use windows_sys::Win32::Security::Authorization::{
     ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
 };
 use windows_sys::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
 use windows_sys::Win32::Storage::FileSystem::{FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_DUPLEX};
+use windows_sys::Win32::Storage::Packaging::Appx::GetCurrentPackageFullName;
 use windows_sys::Win32::System::Pipes::{
     ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS,
     PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT, WaitNamedPipeW,
 };
 use windows_sys::Win32::System::RemoteDesktop::ProcessIdToSessionId;
+use windows_sys::Win32::System::SystemInformation::OSVERSIONINFOW;
 use windows_sys::Win32::UI::WindowsAndMessaging::{ASFW_ANY, AllowSetForegroundWindow};
 
 use crate::protocol;
@@ -510,18 +513,69 @@ pub fn autostart_enabled() -> io::Result<bool> {
 /// `GetCurrentPackageFullName`'s versioned `C:\Program Files\WindowsApps\...` install folder.
 const PACKAGED_ALIAS: &str = r"Microsoft\WindowsApps\tachyon.exe";
 
-/// Whether this process runs from an installed MSIX package: asking `GetCurrentPackageFullName`
-/// for its required buffer length reports the package is too small a buffer
-/// (`ERROR_INSUFFICIENT_BUFFER`) rather than `APPMODEL_ERROR_NO_PACKAGE`. Only called from
-/// [`set_autostart`], so the zip build's startup path never pays for it.
-fn running_packaged() -> bool {
-    use windows_sys::Win32::Foundation::ERROR_INSUFFICIENT_BUFFER;
-    use windows_sys::Win32::Storage::Packaging::Appx::GetCurrentPackageFullName;
+/// The installed MSIX package's full 4-part version ("X.Y.Z.B"), for the About window's
+/// Environment table: `GetCurrentPackageFullName`'s result has the shape
+/// `Name_Version_Architecture_ResourceId_PublisherHash`, the same identity
+/// `packaging/msix/AppxManifest.xml` and `cargo xtask msix` produce, so the version is its second
+/// underscore-separated segment. `None` if this process is not packaged (`ERROR_INSUFFICIENT_BUFFER`
+/// on the length query is packaged; `APPMODEL_ERROR_NO_PACKAGE` is not) or the name does not have
+/// the expected shape.
+pub fn packaged_version() -> Option<String> {
     let mut len: u32 = 0;
     // SAFETY: `&raw mut len` is a valid, live `u32` for the call to write its required buffer
     // length to; a null buffer pointer with that length asks only for the length.
     let status = unsafe { GetCurrentPackageFullName(&raw mut len, ptr::null_mut()) };
-    status == ERROR_INSUFFICIENT_BUFFER
+    if status != ERROR_INSUFFICIENT_BUFFER {
+        return None;
+    }
+    let mut buffer = vec![0u16; len as usize];
+    // SAFETY: `buffer` has exactly the `len` UTF-16 units (including the terminator) the call
+    // just reported it needs, a valid destination for it to fill.
+    let status = unsafe { GetCurrentPackageFullName(&raw mut len, buffer.as_mut_ptr()) };
+    if status != 0 {
+        return None;
+    }
+    version_from_full_name(String::from_utf16_lossy(&buffer).trim_end_matches('\0'))
+}
+
+/// The version segment of a package full name (see [`packaged_version`]), split out so the
+/// parsing is unit-tested without a real package or a WinAPI call.
+fn version_from_full_name(full_name: &str) -> Option<String> {
+    full_name.split('_').nth(1).map(String::from)
+}
+
+/// Whether this process runs from an installed MSIX package. Called from [`set_autostart`]
+/// (never on the startup path) and the About window (opened on demand, never at start-up).
+fn running_packaged() -> bool {
+    packaged_version().is_some()
+}
+
+/// The real Windows build number. `GetVersionExW` (and `GetVersion`) report an older, shimmed
+/// version once an executable has no manifest asserting support for the running Windows release,
+/// so this asks `RtlGetVersion` instead: ntdll.dll always exports it and never shims it.
+pub(crate) fn windows_build_number() -> u32 {
+    // SAFETY: every all-zero bit pattern is a valid OSVERSIONINFOW.
+    let mut info: OSVERSIONINFOW = unsafe { std::mem::zeroed() };
+    info.dwOSVersionInfoSize = size_of::<OSVERSIONINFOW>() as u32;
+    // SAFETY: `info` is a plain struct `RtlGetVersion` fills in place; `dwOSVersionInfoSize` was
+    // just set, as the call needs it to know which version of the struct was passed.
+    unsafe { RtlGetVersion(&mut info) };
+    info.dwBuildNumber
+}
+
+/// "Windows 11" or "Windows 10" plus the build number, for the About window's Environment table
+/// ("Platform"). Windows 11 shares NT 10.0 with Windows 10 and is not otherwise distinguishable
+/// through `RtlGetVersion`; splitting on build 22000 is the same threshold `winver` and Settings
+/// use.
+pub fn os_version() -> String {
+    let build = windows_build_number();
+    format!("{} (build {build})", os_name_for_build(build))
+}
+
+/// The name half of [`os_version`], split out so the build-number threshold is unit-tested
+/// without a real build number.
+fn os_name_for_build(build: u32) -> &'static str {
+    if build >= 22000 { "Windows 11" } else { "Windows 10" }
 }
 
 /// The path the `Run` key should launch: `exe` unless this process is `packaged`, in which case
@@ -572,7 +626,9 @@ pub fn set_autostart(exe: &Path, enabled: bool) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{PACKAGED_ALIAS, autostart_target, cf_html};
+    use super::{
+        PACKAGED_ALIAS, autostart_target, cf_html, os_name_for_build, version_from_full_name,
+    };
     use std::path::Path;
 
     #[test]
@@ -610,5 +666,30 @@ mod tests {
         let exe =
             Path::new(r"C:\Program Files\WindowsApps\Tachyon_0.1.0.0_x64__abc123\tachyon.exe");
         assert_eq!(autostart_target(exe, true, None), exe);
+    }
+
+    #[test]
+    fn version_from_full_name_is_the_second_underscore_segment() {
+        assert_eq!(
+            version_from_full_name("Tachyon_0.1.0.5_x64__abc123defg"),
+            Some("0.1.0.5".to_owned())
+        );
+        assert_eq!(version_from_full_name("not-a-package-name"), None);
+    }
+
+    #[test]
+    fn os_name_for_build_splits_windows_10_and_11_at_22000() {
+        assert_eq!(os_name_for_build(19045), "Windows 10");
+        assert_eq!(os_name_for_build(22000), "Windows 11");
+        assert_eq!(os_name_for_build(26100), "Windows 11");
+    }
+
+    #[test]
+    fn windows_build_number_is_plausible() {
+        // The reference and CI machines are Windows 10 or 11; both report a build number well
+        // past `SetPreferredAppMode`'s (18362, checked in `tray::tests`), and well short of a
+        // value that would suggest the struct was filled in wrong.
+        let build = super::windows_build_number();
+        assert!((10000..100_000).contains(&build), "implausible build number {build}");
     }
 }

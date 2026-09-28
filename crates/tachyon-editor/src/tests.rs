@@ -1,4 +1,6 @@
-use gpui::{Entity, EntityInputHandler, TestAppContext, VisualContext, VisualTestContext};
+use gpui::{
+    Entity, EntityInputHandler, TestAppContext, VisualContext, VisualTestContext, WindowHandle,
+};
 use tachyon_md::BlockKind;
 
 use crate::Editor;
@@ -1953,4 +1955,67 @@ fn editing_a_large_non_active_list_does_not_use_a_stale_rendered_height_cache(
     assert!(!text(&editor, cx).contains("item 2000"), "the removed items are really gone");
     assert!(text(&editor, cx).contains("item 1999"), "items before the cut remain");
     assert!(text(&editor, cx).contains("after\n"), "the trailing paragraph still parses");
+}
+
+/// A settings/backups path pair for the About window's Environment table, isolated per test.
+fn about_dirs(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+    let dir = backup_dir(name);
+    (dir.join("settings.toml"), dir.join("backups"))
+}
+
+fn open_about(cx: &mut TestAppContext) -> WindowHandle<crate::AboutView> {
+    cx.update(crate::about::open_about).expect("the About window opens")
+}
+
+#[gpui::test]
+fn about_window_opens_once_and_a_second_request_focuses_it(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        cx.set_global(crate::AppInfo { version: "1.2.3".into(), resident: true });
+    });
+    let first = open_about(cx);
+    cx.run_until_parked();
+    assert_eq!(cx.update(|cx| cx.windows().len()), 1);
+
+    let second = open_about(cx);
+    cx.run_until_parked();
+    assert_eq!(first, second, "a second request reuses the same window");
+    assert_eq!(cx.update(|cx| cx.windows().len()), 1, "no second window was opened");
+}
+
+#[gpui::test]
+fn escape_and_the_close_button_close_the_about_window(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        cx.set_global(crate::AppInfo { version: "1.2.3".into(), resident: false });
+    });
+
+    let handle = open_about(cx);
+    cx.run_until_parked();
+    let mut about = VisualTestContext::from_window(handle.into(), cx);
+    assert_eq!(cx.update(|cx| cx.windows().len()), 1);
+    about.simulate_keystrokes("escape");
+    assert_eq!(cx.update(|cx| cx.windows().len()), 0, "Escape closes the window");
+
+    // Reopened, the same `CloseWindow` action the Close button's `on_click` and Quit's
+    // close-every-window loop both use closes it too.
+    let handle = open_about(cx);
+    cx.run_until_parked();
+    let mut about = VisualTestContext::from_window(handle.into(), cx);
+    about.dispatch_action(crate::CloseWindow);
+    cx.run_until_parked();
+    assert_eq!(cx.update(|cx| cx.windows().len()), 0, "CloseWindow (the Close button) closes it");
+}
+
+#[gpui::test]
+fn the_environment_details_include_the_version_and_settings_path(cx: &mut TestAppContext) {
+    let (settings_path, backups_dir) = about_dirs("about-env");
+    cx.update(|cx| {
+        cx.set_global(crate::AppInfo { version: "9.9.9".into(), resident: true });
+        cx.set_global(crate::SettingsFile(settings_path.clone()));
+        cx.set_global(crate::Backups::new(backups_dir));
+    });
+    let handle = open_about(cx);
+    cx.run_until_parked();
+    let details = handle.read_with(cx, |view, _| view.environment_text()).expect("window is open");
+    assert!(details.contains("9.9.9"), "{details}");
+    assert!(details.contains(&settings_path.display().to_string()), "{details}");
 }

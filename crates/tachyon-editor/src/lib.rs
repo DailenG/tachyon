@@ -2,6 +2,7 @@
 //! The block holding the caret is shown and edited as raw Markdown; all other
 //! blocks are rendered with their syntax hidden.
 
+mod about;
 mod backup;
 mod disk;
 mod editor;
@@ -17,6 +18,7 @@ mod render;
 mod settings;
 mod theme;
 
+pub use crate::about::{About, AboutView, AppInfo, open_about};
 pub use crate::backup::{Backups, HotExit, Restored};
 pub use crate::disk::{LoadOutcome, Loaded, load_document, oversized_markdown_notice};
 pub use crate::editor::{
@@ -35,6 +37,9 @@ pub use crate::theme::{AppearanceHint, Theme};
 /// queues instead (see `Editor::replace_text_in_range`), landing once the paste does.
 pub fn init(cx: &mut gpui::App) {
     cx.bind_keys(key_bindings());
+    cx.on_action(|_: &About, cx| {
+        open_about(cx);
+    });
     cx.intercept_keystrokes(|event, window, cx| {
         if let Some(Some(editor)) = window.root::<Editor>() {
             editor.update(cx, |editor, cx| {

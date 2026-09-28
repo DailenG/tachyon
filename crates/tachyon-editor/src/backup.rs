@@ -42,6 +42,12 @@ impl Backups {
         Backups { dir }
     }
 
+    /// Where backups are written, for the About window's Environment table ("Backups"): a
+    /// clickable path, so it needs the directory itself, not just the ability to write to it.
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
     /// The backups left by an earlier session, oldest first. Unreadable ones are skipped.
     pub fn restore(&self) -> Vec<Restored> {
         let Ok(entries) = std::fs::read_dir(&self.dir) else { return Vec::new() };
