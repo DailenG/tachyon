@@ -1362,3 +1362,207 @@ fn prompts_use_the_theme_the_settings_choose(cx: &mut TestAppContext) {
     let dark = cx.update(|window, cx| crate::Theme::for_window(window, cx).dark);
     assert!(dark);
 }
+
+#[gpui::test]
+fn a_log_file_opens_as_plain_text_and_hashes_stay_literal(cx: &mut TestAppContext) {
+    let dir = backup_dir("log-ext");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let path = dir.join("app.log");
+    std::fs::write(&path, "# not a heading\nplain text\n").expect("write");
+    let (editor, cx) = open("", cx);
+    let crate::LoadOutcome::Loaded(loaded) = crate::load_document(&path).expect("readable") else {
+        panic!("not refused")
+    };
+    editor.update(cx, |e, cx| {
+        e.set_loaded(*loaded, cx);
+        e.set_file(path.clone(), cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(editor.read_with(cx, |e, _| e.document().mode()), tachyon_doc::DocMode::Plain);
+    assert_eq!(text(&editor, cx), "# not a heading\nplain text\n");
+    assert_eq!(
+        kinds(&editor, cx),
+        vec![BlockKind::Plain],
+        "'#' is literal, not parsed as a heading"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[gpui::test]
+fn ctrl_shift_m_toggles_text_mode_and_keeps_text_and_undo(cx: &mut TestAppContext) {
+    let (editor, cx) = open("# Title\n\npara\n", cx);
+    assert_eq!(editor.read_with(cx, |e, _| e.document().mode()), tachyon_doc::DocMode::Markdown);
+    assert_eq!(kinds(&editor, cx), vec![BlockKind::Heading(1), BlockKind::Paragraph]);
+
+    cx.simulate_keystrokes("ctrl-shift-m");
+    cx.run_until_parked();
+    assert_eq!(editor.read_with(cx, |e, _| e.document().mode()), tachyon_doc::DocMode::Plain);
+    assert_eq!(text(&editor, cx), "# Title\n\npara\n", "the toggle keeps the text as is");
+    assert_eq!(kinds(&editor, cx), vec![BlockKind::Plain], "'#' is literal in plain mode");
+
+    cx.simulate_keystrokes("ctrl-end");
+    cx.simulate_input("!");
+    cx.run_until_parked();
+    assert_eq!(text(&editor, cx), "# Title\n\npara\n!");
+
+    cx.simulate_keystrokes("ctrl-shift-m");
+    cx.run_until_parked();
+    assert_eq!(editor.read_with(cx, |e, _| e.document().mode()), tachyon_doc::DocMode::Markdown);
+    assert_eq!(text(&editor, cx), "# Title\n\npara\n!", "the typed text survived both toggles");
+
+    // The same buffer and undo log carried across both toggles (retagging, not reloading):
+    // undoes the typed "!", not either toggle (a toggle is not itself an undo step).
+    cx.simulate_keystrokes("secondary-z");
+    cx.run_until_parked();
+    assert_eq!(text(&editor, cx), "# Title\n\npara\n");
+    assert_eq!(
+        kinds(&editor, cx),
+        vec![BlockKind::Heading(1), BlockKind::Paragraph],
+        "back to Markdown parsing"
+    );
+}
+
+#[gpui::test]
+fn toggle_to_markdown_is_refused_above_the_size_limit_with_a_notice(cx: &mut TestAppContext) {
+    let big = "x".repeat(tachyon_doc::MARKDOWN_SIZE_LIMIT as usize + 1024);
+    let (editor, cx) = open("", cx);
+    editor.update(cx, |e, cx| e.set_document(tachyon_doc::Document::new_plain(&big), cx));
+    cx.run_until_parked();
+    assert_eq!(editor.read_with(cx, |e, _| e.document().mode()), tachyon_doc::DocMode::Plain);
+
+    cx.simulate_keystrokes("ctrl-shift-m");
+    cx.run_until_parked();
+    assert_eq!(
+        editor.read_with(cx, |e, _| e.document().mode()),
+        tachyon_doc::DocMode::Plain,
+        "refused: too large to parse as Markdown"
+    );
+    let notice = editor.read_with(cx, |e, _| e.notice.clone());
+    assert_eq!(notice, Some(crate::oversized_markdown_notice()));
+}
+
+#[gpui::test]
+fn lossy_load_then_save_shows_the_prompt_and_cancel_leaves_the_file_untouched(
+    cx: &mut TestAppContext,
+) {
+    let dir = backup_dir("lossy");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let path = dir.join("note.log");
+    // A lone 0xFF is invalid UTF-8 on its own (never a valid lead byte): `Buffer::load`
+    // replaces it with one U+FFFD and reports `lossy`.
+    std::fs::write(&path, b"before\xff after\n").expect("write");
+    let (editor, cx) = open("", cx);
+    let crate::LoadOutcome::Loaded(loaded) = crate::load_document(&path).expect("readable") else {
+        panic!("not refused")
+    };
+    editor.update(cx, |e, cx| {
+        e.set_loaded(*loaded, cx);
+        e.set_file(path.clone(), cx);
+    });
+    cx.run_until_parked();
+    assert!(editor.read_with(cx, |e, _| e.lossy), "decoded lossily");
+
+    cx.simulate_keystrokes("secondary-s");
+    cx.run_until_parked();
+    assert!(cx.has_pending_prompt(), "asks before overwriting a lossily-decoded file");
+    cx.simulate_prompt_answer("Cancel");
+    cx.run_until_parked();
+    assert_eq!(
+        std::fs::read(&path).expect("read"),
+        b"before\xff after\n",
+        "cancel leaves the file untouched"
+    );
+    assert!(editor.read_with(cx, |e, _| e.lossy), "nothing was saved: still flagged lossy");
+    assert!(
+        !editor.read_with(cx, |e, _| e.is_modified()),
+        "no edit was made and the file was not written: canceling a lossy-save prompt must not \
+         itself mark the document modified"
+    );
+
+    cx.simulate_keystrokes("secondary-s");
+    cx.run_until_parked();
+    assert!(cx.has_pending_prompt());
+    cx.simulate_prompt_answer("Save Anyway");
+    cx.run_until_parked();
+    let saved = std::fs::read_to_string(&path).expect("valid utf-8 now");
+    assert_eq!(saved, "before\u{FFFD} after\n");
+    assert!(!editor.read_with(cx, |e, _| e.lossy), "the round trip is lossless from here on");
+    assert!(!editor.read_with(cx, |e, _| e.is_modified()));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[gpui::test]
+fn caret_crosses_a_forced_long_line_cut(cx: &mut TestAppContext) {
+    let cut = tachyon_doc::PLAIN_FORCED_CUT_BYTES;
+    // One line with no `\n` spanning more than three forced display-only cuts, then a real
+    // second line: the shape of the reported 20 MB single-line pathology, scaled down.
+    let giant = "x".repeat(cut * 3 + 500);
+    let doc = format!("{giant}\nEND\n");
+    let (editor, cx) = open("", cx);
+    editor.update(cx, |e, cx| e.set_document(tachyon_doc::Document::new_plain(&doc), cx));
+    cx.run_until_parked();
+    assert_eq!(editor.read_with(cx, |e, _| e.document().mode()), tachyon_doc::DocMode::Plain);
+
+    // Right/Left step by grapheme directly on the rope: chunk-agnostic, so the forced cut never
+    // affects them. Checked as the baseline the Up/Down fix below must not regress.
+    editor.update(cx, |e, cx| e.move_to(cut - 1, false, cx));
+    cx.run_until_parked();
+    cx.simulate_keystrokes("right");
+    cx.run_until_parked();
+    assert_eq!(selection(&editor, cx), cut..cut);
+    cx.simulate_keystrokes("left");
+    cx.run_until_parked();
+    assert_eq!(selection(&editor, cx), (cut - 1)..(cut - 1));
+
+    // Down from the very last byte of the first forced-cut chunk. Without crossing the cut
+    // correctly, `rope.byte_to_line` sees the whole 25 KB+ line as line 0 throughout and jumps
+    // straight to "END", skipping the rest of the line entirely; crossing it correctly lands in
+    // the next chunk at the same within-chunk byte offset (here, its last byte again).
+    editor.update(cx, |e, cx| e.move_to(cut - 1, false, cx));
+    cx.run_until_parked();
+    cx.simulate_keystrokes("down");
+    cx.run_until_parked();
+    assert_eq!(
+        selection(&editor, cx),
+        (2 * cut - 1)..(2 * cut - 1),
+        "crossed into the next chunk of the same line, not past it to \"END\""
+    );
+
+    // Up from the first byte of the second chunk symmetrically crosses back into the first.
+    editor.update(cx, |e, cx| e.move_to(cut, false, cx));
+    cx.run_until_parked();
+    cx.simulate_keystrokes("up");
+    cx.run_until_parked();
+    assert_eq!(selection(&editor, cx), 0..0);
+}
+
+#[gpui::test]
+fn background_find_on_a_huge_document_matches_a_synchronous_scan(cx: &mut TestAppContext) {
+    // Well over `FIND_BACKGROUND_THRESHOLD` (5 MiB).
+    let filler = "filler word ".repeat(500_000);
+    let doc = format!("{filler}needle here\nand needle again\n");
+    assert!(
+        doc.len() as u64 >= tachyon_doc::FIND_BACKGROUND_THRESHOLD,
+        "fixture must exceed the background threshold"
+    );
+    let (editor, cx) = open("", cx);
+    editor.update(cx, |e, cx| e.set_document(tachyon_doc::Document::new_plain(&doc), cx));
+    cx.run_until_parked();
+
+    let expected = editor.read_with(cx, |e, _| e.document().find_all("needle"));
+    assert_eq!(expected.len(), 2, "fixture sanity check");
+
+    cx.simulate_keystrokes("secondary-f");
+    cx.simulate_input("needle");
+    cx.run_until_parked();
+    let (matches, searching, status) = editor.read_with(cx, |e, _| {
+        let find = e.find.as_ref().expect("bar is open");
+        (find.matches.clone(), find.searching, find.status())
+    });
+    assert!(!searching, "the background scan finished");
+    assert_eq!(matches, expected);
+    // The bar opened with the caret at the document's start (`origin = 0`), so the first match
+    // at or after it - "needle here", not "and needle again" - is current, same as a synchronous
+    // scan would select (`research`'s `select_first`, independent of which path found it).
+    assert_eq!(status, "1/2");
+}

@@ -94,6 +94,64 @@ the very top can clear the bar. The document caret is not painted while the find
 takes typing; the field there paints its own.
 Selections are drawn as highlight backgrounds, so they span raw and rendered blocks alike.
 
+## Plain-text mode
+
+A `Document` has a `DocMode`: `Markdown` (block-swap, as above) or `Plain` (every block always
+shows literal text - no syntax hiding, no block-swap distinction). `mode_for_extension` chooses by
+the path's extension (`.md`, `.markdown`, `.mdown`, `.mkd`, `.mkdn`, `.mdx` → Markdown; anything
+else, including no extension → Plain); `Ctrl+Shift+M` (`Editor::toggle_text_mode`) retags the same
+buffer (text, undo and version untouched: `Document::retagged` only re-tiles it into blocks for
+the new mode) rather than reloading, so the toggle is instant and undoable text stays undoable.
+Toggling *to* Markdown is refused, with a notice, above `MARKDOWN_SIZE_LIMIT` (16 MiB, extrapolated
+from Phase 2's 220 ms/10 MiB full-parse cost); a Markdown file that large opens as `Plain`
+automatically with the same notice (`disk::load_document`), since nothing about that decision
+needs a background path if it never has to run in the first place.
+
+**Chunking.** A `Plain` document tiles into blocks of `PLAIN_CHUNK_LINES` (256) lines or
+`PLAIN_CHUNK_BYTES` (16 KiB), whichever comes first, cut after a `\n` - except a line with no
+`\n` within `PLAIN_FORCED_CUT_BYTES` (8 KiB) of its own start, which is cut there instead: a
+display-only break (`next_plain_chunk_len`/`plain_chunk_lens`). The underlying bytes and the
+block's reported line are unaffected; this only bounds how much of one pathologically long line
+(a 20+ MB single line is the reported case this defends against) the virtualized list ever has to
+shape or lay out at once. `Editor::vertical`'s fallback (`movement::vertical`, real source lines
+via `rope.byte_to_line`) cannot see across such a cut - the whole multi-chunk line looks like line
+0 throughout - so `cross_forced_cut` detects leaving a block that ends (or begins) without a `\n`
+and continues into the neighboring block at the same byte offset from its start instead, before
+falling back to `movement::vertical` for an ordinary line boundary.
+
+Because every block in `Plain` mode renders raw (`render_block`'s `DocMode::Plain` arm), more than
+one of them can paint in a frame - unlike Markdown, where only the active block ever does. Only
+the block whose canvas paints a caret position (i.e. actually holds `head`) may write
+`Editor::active_layout`: a later-painted neighbor with no caret in it must not silently steal it,
+or `vertical` misdirects Up/Down using the wrong block's layout and bounds.
+
+**Streaming load.** `Buffer::load` (`tachyon-text`) reads a file in 1 MiB chunks straight into a
+`RopeBuilder`, never materializing the whole file as one `String` first (about half the peak
+memory of `Buffer::new(&text)`); it normalizes line endings across chunk boundaries and replaces
+invalid UTF-8 with U+FFFD, reporting `LoadReport { lossy, looks_binary }` (`looks_binary`: a NUL
+byte in the first 8 KiB) instead of failing to open the file. `disk::load_document` is the single
+place a path becomes a `Document`: it refuses outright (`LoadOutcome::Refused`, never reads) above
+`PLAIN_HARD_LIMIT` (2 GiB - the measured ~4x-file-size peak RSS already puts that at 8+ GiB
+resident), and forces `Plain` (no notice) for lossy or binary-sniffed content regardless of
+extension. `Editor::lossy` records whether the file was decoded lossily; `Save`/`Save As` ask
+"Save Anyway" or "Cancel" first when it is set (`confirm_lossy_then`), since writing would replace
+the original bytes for good, and clear it once a save has gone through losslessly.
+
+**Large documents off the UI thread.** Above `LARGE_PLAIN_SIZE` (64 MiB), the periodic
+typing-pause backup is skipped (`Editor::schedule_backup`) - writing tens or hundreds of megabytes
+1.5 s after every keystroke would itself compete for the UI thread's frame budget even though the
+write runs off it - and the document is backed up only on quit or close instead (`backup_now`,
+never gated by the size), so hot exit still restores it. Both that backup and an ordinary save
+build the text to write (`tachyon_text::saved_text`: line-ending restoration, `O(document size)`)
+inside the background task, from a cloned rope snapshot (`ropey`'s clone is O(1): nodes are
+shared via `Arc`), not on the UI thread before handing it off. Find
+(`Document::find_all`/`find_all_in_rope`) runs inline below `FIND_BACKGROUND_THRESHOLD` (5 MiB) and
+on the background executor at or above it, with a generation counter so a result overtaken by a
+newer search or an edit before it lands is dropped instead of clobbering fresher matches
+(`find.rs`'s module doc comment has the full scheme); `FindState::searching` shows "searching…"
+meanwhile, and actions that need current matches (`step_match`, `replace_current`, `replace_all`)
+queue until a fresh scan lands rather than acting on a stale one.
+
 ## Concurrency
 
 ```mermaid

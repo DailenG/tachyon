@@ -8,6 +8,25 @@ All notable user-visible changes are recorded here. The format follows
 
 ### Added
 
+- Plain-text mode: any file that is not Markdown by extension (`.md`, `.markdown`, `.mdown`,
+  `.mkd`, `.mkdn`, `.mdx`; anything else) opens as literal text, syntax hidden nowhere - `#`, `*`
+  and the rest stay exactly what you typed. `Ctrl+Shift+M` toggles the current document between
+  plain and Markdown, keeping its text and undo history; toggling to Markdown is refused, with a
+  notice, above 16 MiB (a full parse at that size risks a visible stall), and a Markdown file that
+  large opens as plain text automatically with the same notice.
+- Large and unusual files no longer risk crashing or freezing Tachyon. Files are streamed in from
+  disk in 1 MiB chunks instead of read into one `String` first, so opening a huge file no longer
+  doubles its peak memory; invalid UTF-8 is replaced with U+FFFD instead of failing to open
+  (Save / Save As then asks "Save Anyway" or "Cancel" first, since saving would replace the
+  original bytes for good), and files over 2 GiB are refused outright with a message rather than
+  risking exhausting memory. A single pathologically long line (no `\n` for a long stretch, as in
+  some logs and single-line minified files) is split into ≤ 8 KiB display-only chunks so it never
+  costs a full layout at once; the caret still moves through it, with arrow keys, exactly as if it
+  were one continuous line. A document over 64 MiB is backed up (hot exit) only on quit or close,
+  not after every pause in typing, and both backups and saves build the text to write off the UI
+  thread from a cloned snapshot of the buffer. Find on a document over 5 MiB runs on the
+  background executor instead of the keystroke's frame, showing "searching…" until it lands.
+
 - The app icon (tray, windows, taskbar, executable, Linux launcher) is the new Tachyon mark, with
   a bold, single-arrow silhouette at 16–32 px (the full mark's orbit arcs read like a "3" at those
   sizes in the tray, title bar and taskbar; the small tile also gets a crisp, pixel-aligned rim for

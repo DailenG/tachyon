@@ -277,14 +277,20 @@ fn window_options(title: SharedString, show: bool, cx: &App) -> WindowOptions {
     }
 }
 
-/// The document `source` opens with; files are loaded in the background.
+/// The document `source` opens with; files are loaded in the background. A file's window shows
+/// immediately with a placeholder (never a frozen or empty-looking window while a huge file
+/// streams in off the UI thread; see `load_file`).
 fn initial_document(source: &Source, cx: &App) -> Document {
     match source {
         Source::Sample => Document::new(SAMPLE),
         Source::Clipboard => Document::new(
             &cx.read_from_clipboard().and_then(|item| item.text()).unwrap_or_default(),
         ),
-        Source::Blank | Source::File(_) | Source::Restored(_) => Document::new(""),
+        Source::File(path) => {
+            let name = path.file_name().unwrap_or(path.as_os_str()).to_string_lossy();
+            Document::new(&format!("Loading {name}...\n"))
+        }
+        Source::Blank | Source::Restored(_) => Document::new(""),
     }
 }
 
@@ -340,22 +346,27 @@ fn take_pending_restore(cx: &mut App) -> Vec<Source> {
     }
 }
 
+/// Reads and builds the document (Markdown or plain text, chosen and size-checked by
+/// `tachyon_editor::load_document`) on the background executor, so opening a huge file never
+/// blocks window creation or a frame; the window already shows the "Loading ..." placeholder
+/// above until this replaces it.
 fn load_file(path: PathBuf, cx: &mut Context<Editor>) {
     cx.spawn(async move |editor, cx| {
         let read_path = path.clone();
-        let loaded = cx
+        let outcome = cx
             .background_executor()
-            .spawn(
-                async move { std::fs::read_to_string(&read_path).map(|text| Document::new(&text)) },
-            )
+            .spawn(async move { tachyon_editor::load_document(&read_path) })
             .await;
-        editor.update(cx, |editor, cx| match loaded {
-            Ok(doc) => {
-                editor.set_document(doc, cx);
+        editor.update(cx, |editor, cx| match outcome {
+            Ok(tachyon_editor::LoadOutcome::Loaded(loaded)) => {
+                editor.set_loaded(*loaded, cx);
                 editor.set_file(path, cx);
             }
-            // Not associated with the file: saving must not overwrite it
-            // with the error message.
+            // Neither is associated with the file: saving must not overwrite it with the
+            // message, and Save As still prompts as it would for a fresh scratch buffer.
+            Ok(tachyon_editor::LoadOutcome::Refused(message)) => {
+                editor.set_document(Document::new(&format!("{message}\n")), cx);
+            }
             Err(e) => editor.set_document(
                 Document::new(&format!("Could not read {}: {e}\n", path.display())),
                 cx,

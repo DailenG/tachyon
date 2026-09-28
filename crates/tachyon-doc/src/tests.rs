@@ -19,6 +19,150 @@ fn assert_matches_full_parse(doc: &Document) {
     assert!(doc.blocks().iter().all(|b| !b.is_stale()));
 }
 
+/// A plain document's chunk lengths equal a from-scratch chunking of its current text.
+fn assert_plain_matches_full_chunking(doc: &Document) {
+    let fresh = Document::new_plain(&doc.buffer().text());
+    let got: Vec<usize> = doc.blocks().iter().map(Block::len).collect();
+    let want: Vec<usize> = fresh.blocks().iter().map(Block::len).collect();
+    assert_eq!(got, want);
+    assert!(doc.blocks().iter().all(|b| b.parsed().kind == BlockKind::Plain));
+}
+
+#[test]
+fn mode_for_extension_recognizes_markdown_case_insensitively() {
+    use std::path::Path;
+    for name in ["a.md", "a.MD", "a.Markdown", "a.mdown", "a.mkd", "a.mkdn", "a.mdx"] {
+        assert_eq!(mode_for_extension(Path::new(name)), DocMode::Markdown, "{name}");
+    }
+    for name in ["a.txt", "a.log", "a.rs", "a", "a.tar.gz", ".gitignore"] {
+        assert_eq!(mode_for_extension(Path::new(name)), DocMode::Plain, "{name}");
+    }
+}
+
+#[test]
+fn plain_documents_never_parse_markdown() {
+    let text = "# not a heading\n\n- not a list\n\n```rust\nnot a fence\n```\n";
+    let doc = Document::new_plain(text);
+    assert!(doc.blocks().iter().all(|b| b.parsed().kind == BlockKind::Plain));
+    assert!(!doc.is_dirty());
+    assert_eq!(doc.buffer().text(), text);
+}
+
+#[test]
+fn plain_chunking_splits_at_the_line_cap_and_never_schedules_a_parse_job() {
+    let text = "line\n".repeat(300);
+    let mut doc = Document::new_plain(&text);
+    assert!(doc.blocks().len() >= 2, "300 lines exceeds the 256-line cap");
+    assert_eq!(doc.blocks().iter().map(Block::len).sum::<usize>(), text.len());
+    assert_eq!(doc.block_at(0), Some(0));
+    assert_eq!(doc.block_at(doc.len() - 1), Some(doc.blocks().len() - 1));
+    assert!(doc.parse_job().is_none(), "plain documents never parse");
+    assert!(!doc.is_dirty());
+    doc.edit(0..0, "x").unwrap();
+    assert!(doc.parse_job().is_none(), "an edit in plain mode leaves nothing dirty either");
+    assert_plain_matches_full_chunking(&doc);
+}
+
+#[test]
+fn a_pathologically_long_line_is_split_by_the_forced_cut() {
+    // One 50 KiB line, no real line end at all: the forced cut must still bound every chunk.
+    let text = "x".repeat(50 * 1024);
+    let doc = Document::new_plain(&text);
+    assert!(doc.blocks().len() > 1, "one unbroken line must still be split for shaping");
+    assert!(doc.blocks().iter().map(Block::len).all(|len| len <= PLAIN_FORCED_CUT_BYTES));
+    assert_eq!(doc.blocks().iter().map(Block::len).sum::<usize>(), text.len());
+    assert_eq!(doc.buffer().text(), text, "the forced cut never changes the text");
+}
+
+#[test]
+fn edits_across_a_plain_chunk_boundary_match_a_fresh_chunking() {
+    let text = "line\n".repeat(500);
+    let mut doc = Document::new_plain(&text);
+    let boundary = doc.block_range(0).end;
+    // Insert and delete text spanning the first chunk boundary.
+    doc.edit(boundary - 3..boundary + 3, "REPLACED ACROSS THE BOUNDARY\n").unwrap();
+    assert_plain_matches_full_chunking(&doc);
+
+    // A large insertion that itself must split into several new chunks.
+    let at = doc.len();
+    doc.edit(at..at, &"more\n".repeat(2000)).unwrap();
+    assert_plain_matches_full_chunking(&doc);
+
+    // Deleting across several chunks merges them back down.
+    let mid = doc.len() / 2;
+    doc.edit(mid - 200..mid + 200, "").unwrap();
+    assert_plain_matches_full_chunking(&doc);
+}
+
+#[test]
+fn undo_restores_the_original_plain_chunking() {
+    let text = "line\n".repeat(500);
+    let mut doc = Document::new_plain(&text);
+    let before: Vec<usize> = doc.blocks().iter().map(Block::len).collect();
+    doc.edit(0..0, "prefix\n").unwrap();
+    doc.seal_undo_group();
+    assert_ne!(doc.blocks().iter().map(Block::len).collect::<Vec<_>>(), before);
+    doc.undo().unwrap();
+    assert_eq!(doc.buffer().text(), text);
+    assert_eq!(doc.blocks().iter().map(Block::len).collect::<Vec<_>>(), before);
+    assert_plain_matches_full_chunking(&doc);
+}
+
+#[test]
+fn retagging_keeps_text_undo_history_and_version_across_modes() {
+    let mut doc = Document::new("# Title\n\nbody\n");
+    doc.edit(0..0, "x").unwrap();
+    doc.seal_undo_group();
+    let version = doc.buffer().version();
+    let text = doc.buffer().text();
+
+    let plain = doc.retagged(DocMode::Plain);
+    assert_eq!(plain.mode(), DocMode::Plain);
+    assert_eq!(plain.buffer().text(), text);
+    assert_eq!(plain.buffer().version(), version);
+    assert!(plain.blocks().iter().all(|b| b.parsed().kind == BlockKind::Plain));
+
+    let mut back = plain.retagged(DocMode::Markdown);
+    assert_eq!(back.mode(), DocMode::Markdown);
+    assert_eq!(back.buffer().version(), version);
+    back.undo().unwrap();
+    back.reparse_now();
+    assert_eq!(back.buffer().text(), "# Title\n\nbody\n");
+    assert_matches_full_parse(&back);
+}
+
+#[test]
+fn random_edits_to_a_plain_document_always_match_a_fresh_chunking() {
+    // A cheap linear congruential generator: deterministic, no extra dev-dependency.
+    let mut seed = 0x2545F4914F6CDD1Du64;
+    let mut rand = move || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed
+    };
+    // Deliberately adversarial: lines short enough, and close enough to the cap, that a small
+    // edit can plausibly ripple across more than one neighboring chunk.
+    let mut doc = Document::new_plain(&"line\n".repeat(1000));
+    for _ in 0..300 {
+        let len = doc.len();
+        if len == 0 {
+            doc.edit(0..0, "line\n").unwrap();
+            continue;
+        }
+        let a = (rand() as usize) % (len + 1);
+        let b = (rand() as usize) % (len + 1);
+        let (start, end) = (a.min(b), a.max(b));
+        let insert = match rand() % 3 {
+            0 => String::new(),
+            1 => "x".repeat(1 + (rand() as usize) % 20),
+            _ => "line\n".repeat(1 + (rand() as usize) % 5),
+        };
+        doc.edit(start..end, &insert).unwrap();
+        assert_plain_matches_full_chunking(&doc);
+    }
+}
+
 #[test]
 fn edits_mark_blocks_stale_until_reparsed_and_keep_ids() {
     let mut doc = Document::new("# Title\n\nfirst para\n\nsecond para\n");

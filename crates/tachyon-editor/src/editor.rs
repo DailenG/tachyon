@@ -8,9 +8,10 @@ use std::time::{Duration, Instant};
 use gpui::{
     App, Bounds, ClipboardItem, Context, EntityInputHandler, FocusHandle, Focusable, Font,
     FontStyle, FontWeight, KeyBinding, ListAlignment, ListOffset, ListState, Pixels, Point,
-    PromptLevel, Task, TextLayout, TextRun, UTF16Selection, Window, actions, point, px,
+    PromptLevel, SharedString, Task, TextLayout, TextRun, UTF16Selection, Window, actions, point,
+    px,
 };
-use tachyon_doc::{BlockId, Document, PreparedInsert, Splice};
+use tachyon_doc::{BlockId, DocMode, Document, PreparedInsert, Splice};
 use tachyon_md::{BlockKind, ParsedBlock};
 
 use crate::movement;
@@ -70,6 +71,7 @@ actions!(
         Save,
         SaveAs,
         ToggleFrameStats,
+        ToggleTextMode,
         CloseWindow,
     ]
 );
@@ -149,6 +151,7 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("secondary-s", Save, c),
         KeyBinding::new("secondary-shift-s", SaveAs, c),
         KeyBinding::new("ctrl-alt-f", ToggleFrameStats, c),
+        KeyBinding::new("ctrl-shift-m", ToggleTextMode, c),
         KeyBinding::new("secondary-w", CloseWindow, c),
     ]
 }
@@ -240,6 +243,12 @@ pub struct Editor {
     pub(crate) frame_stats: Option<crate::frame_stats::FrameStats>,
     /// Per-frame timing log, when `TACHYON_FRAME_LOG` names a file.
     pub(crate) frame_log: Option<crate::frame_log::FrameLog>,
+    /// Some of the file's bytes were not valid UTF-8 and were replaced with U+FFFD when it was
+    /// read: saving would change its bytes, so `save`/`save_as` warn first.
+    pub(crate) lossy: bool,
+    /// A one-line notice shown at the top of the view (currently only the oversized-Markdown
+    /// fallback; see `disk::oversized_markdown_notice`).
+    pub(crate) notice: Option<SharedString>,
 }
 
 /// Zoom levels `Ctrl+=` and `Ctrl+-` step through, as in browsers.
@@ -310,6 +319,8 @@ impl Editor {
             shown_title: None,
             frame_stats: None,
             frame_log: crate::frame_log::FrameLog::from_env(),
+            lossy: false,
+            notice: None,
         };
         editor.doc.take_splices();
         editor.update_active();
@@ -322,6 +333,8 @@ impl Editor {
         self.saved_version = doc.buffer().version();
         self.doc = doc;
         self.doc.take_splices();
+        self.lossy = false;
+        self.notice = None;
         self.selection = 0..0;
         self.reversed = false;
         self.marked = None;
@@ -569,10 +582,56 @@ impl Editor {
                 let (Ok(index) | Err(index)) = layout.index_for_position(target);
                 return self.move_to(base + index, select, cx);
             }
+            if let Some(target) = self.cross_forced_cut(base, layout.len(), head, lines) {
+                return self.move_to(target, select, cx);
+            }
         }
         // Leaving the laid-out block: continue by source lines.
         let target = movement::vertical(self.doc.buffer().rope(), head, lines);
         self.move_to(target, select, cx);
+    }
+
+    /// `vertical`'s fallback (leaving the active block's laid-out bounds) normally continues by
+    /// real source lines (`movement::vertical`, via `rope.byte_to_line`/`line_to_byte`): correct
+    /// because a block boundary is ordinarily a real line boundary too. Not so for a plain-text
+    /// block split by [`tachyon_doc::PLAIN_FORCED_CUT_BYTES`] - a display-only cut in the middle
+    /// of one source line with no `\n` at the boundary. There, `rope.byte_to_line` sees the whole
+    /// multi-chunk line as line 0 throughout, so `movement::vertical` would jump straight to the
+    /// *next real line*, skipping every remaining chunk of the current one - the reported 20 MB
+    /// single-line pathology, applied to Up/Down instead of open time.
+    ///
+    /// Detects that case (the block being left ends, or begins, without a `\n`) and crosses into
+    /// the neighboring chunk instead, at the same byte offset from its start (clamped to its
+    /// length) - exact for a uniform forced cut (the common case: one very long line of similar
+    /// content), and always a valid, in-bounds offset otherwise. `None` if this is an ordinary
+    /// line boundary (or plain mode is not active, or there is no neighboring block), so the
+    /// caller falls back to `movement::vertical` as before.
+    fn cross_forced_cut(
+        &self,
+        base: usize,
+        block_len: usize,
+        head: usize,
+        lines: isize,
+    ) -> Option<usize> {
+        if self.doc.mode() != DocMode::Plain {
+            return None;
+        }
+        let within = head - base;
+        let rope = self.doc.buffer().rope();
+        if lines > 0 {
+            let end = base + block_len;
+            if end >= self.doc.len() || rope.byte(end - 1) == b'\n' {
+                return None;
+            }
+            let next = self.doc.block_range(self.doc.block_at(end)?);
+            Some((next.start + within).min(next.end))
+        } else {
+            if base == 0 || rope.byte(base - 1) == b'\n' {
+                return None;
+            }
+            let prev = self.doc.block_range(self.doc.block_at(base - 1)?);
+            Some(prev.start + within.min(prev.end - prev.start))
+        }
     }
 
     /// Scrolls by one viewport height and moves the caret by as many source lines as fit in it.
@@ -727,7 +786,7 @@ impl Editor {
     fn after_edit(&mut self, cx: &mut Context<Self>) {
         self.schedule_backup(cx);
         self.goal_x = None;
-        self.refresh_find();
+        self.refresh_find(cx);
         self.reparse(self.head(), cx);
         self.update_active();
         self.reveal_cursor();
@@ -1285,12 +1344,93 @@ impl Editor {
         cx.notify();
     }
 
+    /// `Ctrl+Shift+M`: switches between Markdown and plain-text display and editing, keeping the
+    /// text, undo history and modified/saved state (retagging the same buffer, not reloading).
+    /// Not persisted: the next launch reopens the file by its extension again. Refused, with the
+    /// same notice the automatic Markdown-to-plain fallback shows, above `MARKDOWN_SIZE_LIMIT`:
+    /// switching a document that large to Markdown risks the same multi-hundred-millisecond
+    /// parse stall the size limit exists to avoid, and this action has no background path for it
+    /// (see the doc comment on `Document::retagged`).
+    pub(crate) fn toggle_text_mode(
+        &mut self,
+        _: &ToggleTextMode,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.flush_pending_paste(cx);
+        let target = match self.doc.mode() {
+            DocMode::Plain => DocMode::Markdown,
+            DocMode::Markdown => DocMode::Plain,
+        };
+        if target == DocMode::Markdown && self.doc.len() as u64 > tachyon_doc::MARKDOWN_SIZE_LIMIT {
+            self.notice = Some(crate::disk::oversized_markdown_notice());
+            cx.notify();
+            return;
+        }
+        let caret = self.head().min(self.doc.len());
+        let placeholder = std::mem::replace(&mut self.doc, Document::new_plain(""));
+        self.doc = placeholder.retagged(target);
+        self.doc.take_splices();
+        self.selection = 0..0;
+        self.reversed = false;
+        self.marked = None;
+        self.active = None;
+        self.active_layout = None;
+        self.notice = None;
+        self.list.reset(self.doc.blocks().len());
+        self.update_active();
+        self.reparse(0, cx);
+        self.move_to(caret, false, cx);
+        cx.notify();
+    }
+
     pub(crate) fn save(&mut self, _: &Save, window: &mut Window, cx: &mut Context<Self>) {
-        self.save_then(window, cx, |_, _| {});
+        self.confirm_lossy_then(window, cx, |editor, window, cx| {
+            editor.save_then(window, cx, |_, _| {});
+        });
     }
 
     pub(crate) fn save_as(&mut self, _: &SaveAs, window: &mut Window, cx: &mut Context<Self>) {
-        self.prompt_path_then_save(window, cx, |_, _| {});
+        self.confirm_lossy_then(window, cx, |editor, window, cx| {
+            editor.prompt_path_then_save(window, cx, |_, _| {});
+        });
+    }
+
+    /// If this document was decoded lossily (`self.lossy`: some bytes were not valid UTF-8, or it
+    /// looked binary, and were replaced with U+FFFD when it was read - see `disk::load_document`),
+    /// asks before `save`/`save_as` writes it, since that replaces the original bytes for good;
+    /// otherwise runs `then` right away. Uses the same in-window-or-native prompt as the
+    /// unsaved-changes-on-close prompt (`should_close`) - native on Windows/macOS, in-window on
+    /// Linux, chosen once at startup (`tachyon_platform::has_native_prompts`).
+    ///
+    /// Asked once per Save/Save As, not once per overwrite attempt: gated here, before
+    /// `write_to`'s own disk-changed-on-conflict prompt, rather than inside `write_to` itself,
+    /// which `confirm_overwrite` can call again for the same logical save.
+    fn confirm_lossy_then(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        then: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+    ) {
+        if !self.lossy {
+            return then(self, window, cx);
+        }
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            "Save this file?",
+            Some(
+                "Some bytes in this file were not valid text and were replaced with \u{FFFD} \
+                 when it was opened. Saving keeps the replacement text, not the original bytes.",
+            ),
+            &["Save Anyway", "Cancel"],
+            cx,
+        );
+        cx.spawn_in(window, async move |this, cx| {
+            if answer.await.ok() == Some(0) {
+                let _ = this.update_in(cx, |editor, window, cx| then(editor, window, cx));
+            }
+        })
+        .detach();
     }
 
     /// Saves to the associated file (asking for one if there is none), then
@@ -1337,7 +1477,10 @@ impl Editor {
     }
 
     /// Writes the text (original line endings restored) off the UI thread. Unless `force`, asks
-    /// first if the file changed on disk since it was read or last written.
+    /// first if the file changed on disk since it was read or last written. The rope is cloned
+    /// (O(1): `ropey` shares nodes via `Arc`) and the line-ending conversion itself
+    /// (`tachyon_text::saved_text`, `O(document size)`) runs on the background executor, not
+    /// here, so a save of a huge document never stalls a frame building the string to write.
     fn write_to(
         &mut self,
         path: PathBuf,
@@ -1347,7 +1490,8 @@ impl Editor {
         after: impl FnOnce(&mut Window, &mut App) + 'static,
     ) {
         use crate::disk::DiskStamp;
-        let text = self.doc.buffer().to_saved_text();
+        let rope = self.doc.buffer().rope().clone();
+        let line_ending = self.doc.buffer().line_ending();
         let version = self.doc.buffer().version();
         // Only the file this document came from has a version to protect.
         let same_file = !force && self.file.as_ref() == Some(&path);
@@ -1370,6 +1514,7 @@ impl Editor {
                     if !unchanged() {
                         return Ok(None);
                     }
+                    let text = tachyon_text::saved_text(&rope, line_ending);
                     // Checked again right before the new file replaces the old one.
                     let written = write_atomically_if(&target, text.as_bytes(), unchanged)?;
                     io::Result::Ok(written.then(|| DiskStamp::of(&target)))
@@ -1383,6 +1528,10 @@ impl Editor {
                     editor.disk_changed = false;
                     editor.file = Some(path);
                     editor.saved_version = version;
+                    // The bytes now on disk are exactly what the document holds (U+FFFD in
+                    // place of whatever did not decode the first time): the round trip is
+                    // lossless from here on, so later saves need not ask again.
+                    editor.lossy = false;
                     editor.schedule_backup(cx);
                     editor.sync_title(window);
                     cx.notify();

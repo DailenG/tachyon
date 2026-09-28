@@ -12,6 +12,14 @@ const LITERAL: [Style; 4] = [Style::CODE, Style::MATH, Style::HTML, Style::IMAGE
 /// Characters trimmed from the end of a URL: sentence punctuation around it, not part of it.
 const TRAILING: &[char] = &['?', '!', '.', ',', ':', '*', '_', '~', '\'', '"', ';'];
 
+/// Byte ranges of bare URLs in `text`, for plain text (no code/math/HTML runs or existing links
+/// to exclude, unlike [`autolink`]'s Markdown IR pass): used to underline and open them in plain
+/// documents, which have no styling of their own. Cheap: a single scan, skipped entirely when
+/// `text` has no `"http"` substring.
+pub fn bare_urls(text: &str) -> Vec<Range<usize>> {
+    if !text.contains("http") { Vec::new() } else { urls(text).collect() }
+}
+
 pub(crate) fn autolink(ir: &mut BlockIr) {
     if !ir.text.contains("http") {
         return;
@@ -145,6 +153,14 @@ mod tests {
     #[test]
     fn not_urls() {
         assert!(found("xhttps://x.dev http:// https://.x http://- https").is_empty());
+    }
+
+    #[test]
+    fn bare_urls_finds_the_same_ranges_without_ir_context() {
+        let text = "log line: see https://x.dev/a for details\nplain http://y.dev end";
+        let found: Vec<&str> = bare_urls(text).into_iter().map(|r| &text[r]).collect();
+        assert_eq!(found, ["https://x.dev/a", "http://y.dev"]);
+        assert!(bare_urls("nothing here").is_empty());
     }
 
     #[test]

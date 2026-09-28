@@ -5,9 +5,11 @@
 //! boundaries. This crate must never depend on GPUI.
 
 mod line_ending;
+mod load;
 
 use std::collections::VecDeque;
 use std::fmt;
+use std::io::{self, Read};
 use std::ops::Range;
 
 use ropey::Rope;
@@ -136,6 +138,28 @@ struct History {
     open: bool,
 }
 
+/// What [`Buffer::load`] found while decoding: whether any invalid UTF-8 was replaced with
+/// U+FFFD, and whether a NUL byte turned up in the first few KiB (a strong binary-file signal).
+/// Either means saving without confirmation would silently change the file's bytes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LoadReport {
+    pub lossy: bool,
+    pub looks_binary: bool,
+}
+
+/// Builds the text as it should be written to disk (original line ending restored) from a rope
+/// and line ending alone, without a [`Buffer`]: `Buffer::rope().clone()` is O(1) (`ropey` shares
+/// nodes across the clone via reference counting), so a caller can snapshot a buffer on the UI
+/// thread and run this - `Rope::to_string` plus the CRLF pass, `O(document size)` - on a
+/// background executor instead. [`Buffer::to_saved_text`] is this on its own rope.
+pub fn saved_text(rope: &Rope, line_ending: LineEnding) -> String {
+    let text = rope.to_string();
+    match line_ending {
+        LineEnding::Lf => text,
+        LineEnding::CrLf => text.replace('\n', "\r\n"),
+    }
+}
+
 #[derive(Debug)]
 pub struct Buffer {
     rope: Rope,
@@ -156,6 +180,97 @@ impl Buffer {
             line_ending: LineEnding::detect(text),
             history: History::default(),
         }
+    }
+
+    /// Builds a buffer by reading `reader` in bounded chunks, so the whole input is never held
+    /// as one contiguous `String`: peak memory is the rope's own storage plus one read-sized
+    /// buffer, instead of a full copy of the text plus the rope built from it (`Buffer::new` on
+    /// text already read into memory). Line endings are normalized and the dominant one detected
+    /// in the same streamed pass; invalid UTF-8 is replaced with U+FFFD rather than failing, so a
+    /// binary or foreign-encoded file still opens (see [`LoadReport`]).
+    pub fn load(reader: impl Read) -> io::Result<(Self, LoadReport)> {
+        Self::load_with_chunk(reader, load::READ_CHUNK)
+    }
+
+    /// [`Buffer::load`] with an explicit read-buffer size, so tests can exercise chunk-boundary
+    /// edge cases (a split multi-byte UTF-8 sequence, the binary sniff window) without a
+    /// multi-megabyte input.
+    fn load_with_chunk(mut reader: impl Read, chunk_size: usize) -> io::Result<(Self, LoadReport)> {
+        let mut builder = ropey::RopeBuilder::new();
+        let mut read_buf = vec![0u8; chunk_size];
+        let mut chunk: Vec<u8> = Vec::with_capacity(chunk_size + 8);
+        let mut carry: Vec<u8> = Vec::new();
+        let mut decoded = String::new();
+        let mut decoder = load::Decoder::default();
+        let mut sniffed = 0usize;
+        let mut looks_binary = false;
+        loop {
+            let n = reader.read(&mut read_buf)?;
+            if n == 0 {
+                break;
+            }
+            if sniffed < load::BINARY_SNIFF_LEN {
+                let take = (load::BINARY_SNIFF_LEN - sniffed).min(n);
+                looks_binary |= read_buf[..take].contains(&0);
+                sniffed += take;
+            }
+            chunk.clear();
+            chunk.extend_from_slice(&carry);
+            chunk.extend_from_slice(&read_buf[..n]);
+            carry.clear();
+            let mut rest: &[u8] = &chunk;
+            loop {
+                match std::str::from_utf8(rest) {
+                    Ok(s) => {
+                        decoder.push(&mut decoded, s);
+                        break;
+                    }
+                    Err(e) => {
+                        let valid_up_to = e.valid_up_to();
+                        // SAFETY: `from_utf8` reports `rest` is valid UTF-8 up to `valid_up_to`,
+                        // so this prefix is exactly that valid text.
+                        let valid = unsafe { std::str::from_utf8_unchecked(&rest[..valid_up_to]) };
+                        decoder.push(&mut decoded, valid);
+                        match e.error_len() {
+                            Some(len) => {
+                                decoder.lossy = true;
+                                decoded.push('\u{FFFD}');
+                                rest = &rest[valid_up_to + len..];
+                            }
+                            None => {
+                                // An incomplete sequence at the end of this read: it may
+                                // complete with the next one, so carry it over instead of
+                                // treating it as invalid yet.
+                                carry.extend_from_slice(&rest[valid_up_to..]);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            if !decoded.is_empty() {
+                builder.append(&decoded);
+                decoded.clear();
+            }
+        }
+        if !carry.is_empty() {
+            // A multi-byte sequence truncated at end of file: genuinely invalid.
+            decoder.lossy = true;
+            decoded.push('\u{FFFD}');
+        }
+        let line_ending = decoder.finish(&mut decoded);
+        let lossy = decoder.lossy;
+        if !decoded.is_empty() {
+            builder.append(&decoded);
+        }
+        let buffer = Buffer {
+            rope: builder.finish(),
+            version: 0,
+            log: VecDeque::new(),
+            line_ending,
+            history: History::default(),
+        };
+        Ok((buffer, LoadReport { lossy, looks_binary }))
     }
 
     pub fn version(&self) -> u64 {
@@ -189,11 +304,7 @@ impl Buffer {
     /// The text as it should be written to disk, with the original line
     /// ending restored.
     pub fn to_saved_text(&self) -> String {
-        let text = self.rope.to_string();
-        match self.line_ending {
-            LineEnding::Lf => text,
-            LineEnding::CrLf => text.replace('\n', "\r\n"),
-        }
+        saved_text(&self.rope, self.line_ending)
     }
 
     /// Replaces `range` with `text` (line endings normalized) and records the
@@ -364,6 +475,59 @@ mod tests {
             buffer.edit(buffer.len()..buffer.len(), chunk).unwrap();
         }
         assert_eq!(buffer.text(), "line one\nline two\n");
+    }
+
+    #[test]
+    fn load_matches_new_for_a_variety_of_inputs_at_small_chunk_sizes() {
+        let inputs = [
+            "",
+            "no line breaks",
+            "a\r\nb\r\nc\n",
+            "line one\r\nline two\r\nend without break",
+            "unicode: héllo \u{1f600} wörld\n",
+            "trailing lone cr\r",
+        ];
+        for text in inputs {
+            for chunk_size in [1, 2, 3, 7] {
+                let (loaded, report) =
+                    Buffer::load_with_chunk(io::Cursor::new(text.as_bytes()), chunk_size).unwrap();
+                assert!(!report.lossy, "{text:?} at chunk {chunk_size}");
+                assert!(!report.looks_binary, "{text:?} at chunk {chunk_size}");
+                let direct = Buffer::new(text);
+                assert_eq!(loaded.text(), direct.text(), "{text:?} at chunk {chunk_size}");
+                assert_eq!(
+                    loaded.line_ending(),
+                    direct.line_ending(),
+                    "{text:?} at chunk {chunk_size}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn load_replaces_invalid_utf8_even_when_split_across_reads() {
+        // `b"caf\xC3\xA9"` is "café"; splitting the 2-byte 'é' across a read boundary must not
+        // count it as invalid, but a lone continuation byte must.
+        let valid = b"caf\xC3\xA9 after\n";
+        let (buffer, report) = Buffer::load_with_chunk(io::Cursor::new(valid), 4).unwrap();
+        assert!(!report.lossy);
+        assert_eq!(buffer.text(), "café after\n");
+
+        let invalid = b"before \xff\xfe after\n";
+        let (buffer, report) = Buffer::load_with_chunk(io::Cursor::new(invalid), 3).unwrap();
+        assert!(report.lossy);
+        assert_eq!(buffer.text(), "before \u{FFFD}\u{FFFD} after\n");
+    }
+
+    #[test]
+    fn load_flags_a_nul_byte_in_the_first_8_kib_as_binary() {
+        let mut bytes = vec![b'a'; 100];
+        bytes[50] = 0;
+        let (_, report) = Buffer::load(io::Cursor::new(bytes)).unwrap();
+        assert!(report.looks_binary);
+
+        let (_, report) = Buffer::load(io::Cursor::new(vec![b'a'; 100])).unwrap();
+        assert!(!report.looks_binary);
     }
 
     #[test]

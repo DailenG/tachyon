@@ -39,6 +39,8 @@ impl Render for Editor {
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus)
             .size_full()
+            .flex()
+            .flex_col()
             .bg(self.theme.surface.canvas)
             .text_color(self.theme.text.primary)
             .font_family(self.theme.text_font.clone())
@@ -102,6 +104,7 @@ impl Render for Editor {
             .on_action(cx.listener(Self::save_as))
             .on_action(cx.listener(Self::close_window))
             .on_action(cx.listener(Self::toggle_frame_stats))
+            .on_action(cx.listener(Self::toggle_text_mode))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|editor, _: &MouseDownEvent, window, cx| {
@@ -113,6 +116,7 @@ impl Render for Editor {
                 MouseButton::Left,
                 cx.listener(|editor, _, _, _| editor.selecting = false),
             )
+            .children(self.mode_notice())
             .child(
                 list(
                     self.list.clone(),
@@ -120,7 +124,8 @@ impl Render for Editor {
                         editor.render_block(index, window, cx)
                     }),
                 )
-                .size_full()
+                .w_full()
+                .flex_1()
                 .py_6(),
             )
             .child(
@@ -407,6 +412,28 @@ impl Editor {
                 .into_any_element(),
         )
     }
+
+    /// A one-line notice at the top of the view (currently only the oversized-Markdown
+    /// fallback: see `disk::oversized_markdown_notice`), a normal (not floating) row so it pushes
+    /// the document down rather than covering its first line.
+    fn mode_notice(&self) -> Option<AnyElement> {
+        let notice = self.notice.clone()?;
+        let theme = &self.theme;
+        Some(
+            div()
+                .w_full()
+                .flex_none()
+                .px_4()
+                .py_1()
+                .text_size(px(12.))
+                .bg(theme.surface.raised)
+                .text_color(theme.text.muted)
+                .border_b_1()
+                .border_color(theme.border.subtle)
+                .child(notice)
+                .into_any_element(),
+        )
+    }
 }
 
 impl Editor {
@@ -424,14 +451,21 @@ impl Editor {
             None => index..index + 1,
         });
         let range = self.doc.block_range(index);
-        let parsed = block.parsed_shared();
-        let active = self.active_block() == Some(index);
-        let leaf = if active { self.active_leaf() } else { None };
-        let content = if block.is_stale() || (active && leaf.is_none()) {
-            let code = matches!(parsed.kind, BlockKind::CodeBlock { .. } | BlockKind::Html);
-            self.render_raw(range, code, window, cx)
+        let content = if self.doc.mode() == tachyon_doc::DocMode::Plain {
+            // No block-swap distinction in plain text: every chunk is always shown this way, the
+            // same "raw" path Markdown uses for the block under the caret, just without its
+            // editing-card styling (see `render_raw`'s own `DocMode::Plain` checks).
+            self.render_raw(range, true, window, cx)
         } else {
-            self.render_rendered(range.start, parsed, leaf, window, cx)
+            let parsed = block.parsed_shared();
+            let active = self.active_block() == Some(index);
+            let leaf = if active { self.active_leaf() } else { None };
+            if block.is_stale() || (active && leaf.is_none()) {
+                let code = matches!(parsed.kind, BlockKind::CodeBlock { .. } | BlockKind::Html);
+                self.render_raw(range, code, window, cx)
+            } else {
+                self.render_rendered(range.start, parsed, leaf, window, cx)
+            }
         };
         // The list cannot scroll above its first item, so `reveal_caret_at`'s inset (which
         // relies on scrolling) cannot keep a match in this block below the find bar on its own.
@@ -468,12 +502,20 @@ impl Editor {
         let base = range.start;
         let len = text.len();
 
+        let plain = self.doc.mode() == tachyon_doc::DocMode::Plain;
         let mut highlights = Vec::new();
         if code {
             for (token, style) in self.code_tokens(&range) {
                 if let Some(local) = intersect(&token, &range, base, len) {
                     highlights = overlay(highlights, local, theme.highlight(style));
                 }
+            }
+        }
+        if plain {
+            // Cheap: a single scan, skipped entirely unless the text contains "http" (see
+            // `bare_urls`), and only ever run over one visible chunk's text at paint time.
+            for url in tachyon_md::bare_urls(&text) {
+                highlights = overlay(highlights, url, theme.highlight(tachyon_md::Style::LINK));
             }
         }
         for (mark, style) in self.marks(&range) {
@@ -508,49 +550,59 @@ impl Editor {
         let cursor_color = theme.editing.caret;
         let paint_layout = layout.clone();
 
-        let mut element = div()
-            .relative()
-            .my_1()
-            .px(theme.scaled(RAW_INSET) - px(1.))
-            .rounded(theme.radius_small)
-            .border_1()
-            .border_color(theme.border.control)
-            .bg(theme.surface.raised)
-            .cursor_text()
-            .child(styled)
-            .child(
-                canvas(
-                    |_, _, _| {},
-                    move |_, _, window, cx| {
-                        let caret_position =
-                            caret.and_then(|caret| paint_layout.position_for_index(caret));
-                        let line_height = paint_layout.line_height();
-                        let scrolled = editor.update(cx, |editor, _| {
+        let mut element = div().relative().cursor_text().child(styled).child(
+            canvas(
+                |_, _, _| {},
+                move |_, _, window, cx| {
+                    let caret_position =
+                        caret.and_then(|caret| paint_layout.position_for_index(caret));
+                    let line_height = paint_layout.line_height();
+                    let scrolled = editor.update(cx, |editor, _| {
+                        // In `DocMode::Plain` every block renders raw (see `render_block`),
+                        // so several of these canvases paint each frame; only the one that
+                        // actually holds the caret may claim `active_layout` (`vertical`'s
+                        // notion of "the laid-out block"), or a later-painted neighbor with
+                        // no caret in it would silently steal it and misdirect Up/Down.
+                        if caret_position.is_some() {
                             editor.active_layout = Some((paint_layout.clone(), base));
-                            if show_caret && caret_position.is_some() {
-                                editor.caret_painted = true;
-                            }
-                            caret_position.is_some_and(|p| editor.reveal_caret_at(p.y, line_height))
-                        });
-                        if scrolled {
-                            // The caret was out of view: draw again.
-                            window.request_animation_frame();
                         }
-                        if show_caret && let Some(position) = caret_position {
-                            let caret = fill(
-                                gpui::Bounds::new(position, size(px(2.), line_height)),
-                                cursor_color,
-                            );
-                            window.paint_quad(caret);
+                        if show_caret && caret_position.is_some() {
+                            editor.caret_painted = true;
                         }
-                    },
-                )
-                .absolute()
-                .top_0()
-                .left_0()
-                .size_full(),
-            );
-        if code {
+                        caret_position.is_some_and(|p| editor.reveal_caret_at(p.y, line_height))
+                    });
+                    if scrolled {
+                        // The caret was out of view: draw again.
+                        window.request_animation_frame();
+                    }
+                    if show_caret && let Some(position) = caret_position {
+                        let caret = fill(
+                            gpui::Bounds::new(position, size(px(2.), line_height)),
+                            cursor_color,
+                        );
+                        window.paint_quad(caret);
+                    }
+                },
+            )
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full(),
+        );
+        if !plain {
+            // The raw editing card: only Markdown's block-swap shows this (the active block
+            // looks editable, distinct from rendered ones). A plain chunk is always "raw", so it
+            // never gets this treatment - it would otherwise draw a border around every ~16 KiB
+            // chunk boundary of an ordinary text file.
+            element = element
+                .my_1()
+                .px(theme.scaled(RAW_INSET) - px(1.))
+                .rounded(theme.radius_small)
+                .border_1()
+                .border_color(theme.border.control)
+                .bg(theme.surface.raised);
+        }
+        if code || plain {
             element = element.font_family(theme.code_font.clone()).text_size(theme.code_size);
         }
         with_mouse(element, layout, TextTarget::Raw { base }, cx).into_any_element()
