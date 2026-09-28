@@ -16,6 +16,7 @@ mod movement;
 mod picker;
 mod prompt;
 mod render;
+mod session;
 mod settings;
 mod theme;
 mod tips;
@@ -29,6 +30,7 @@ pub use crate::editor::{
 };
 pub use crate::picker::{RecentFiles, RecentFilesOs};
 pub use crate::prompt::keyboard_prompt;
+pub use crate::session::{MAX_SESSION_WINDOWS, Target, WindowState, read_session, write_session};
 pub use crate::settings::{
     ContentWidth, DEFAULT_SETTINGS, RestartRegistration, Settings, SettingsFile, ThemeChoice,
     sync_restart_registration,

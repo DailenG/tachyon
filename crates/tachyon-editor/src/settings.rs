@@ -83,6 +83,11 @@ pub struct Settings {
     /// Show the What's new window once, after an update (`tachyon::whats_new`). The command
     /// palette's "What's new" row opens it on demand regardless of this setting.
     pub whats_new: bool,
+    /// Write the whole session (open files, window bounds, caret and scroll) on Quit, and
+    /// restore it at the next start with no files on the command line (issue #79, on top of hot
+    /// exit's own unsaved-document restore, ADR 0006). Off: today's behaviour, unsaved documents
+    /// only, and the session file is neither written nor read.
+    pub restore_session: bool,
     /// The text column's width (`render::Editor::render_block`, `tip_overlay`).
     pub content_width: ContentWidth,
 }
@@ -95,6 +100,7 @@ impl Default for Settings {
             hot_exit: true,
             tips: true,
             whats_new: true,
+            restore_session: true,
             content_width: ContentWidth::default(),
         }
     }
@@ -121,6 +127,11 @@ tips = true
 # Show what's new after an update, once, the next time Tachyon starts. false only stops that
 # automatic prompt; the command palette's \"What's new\" row still opens the notes any time.
 whats_new = true
+
+# Restore the whole session (open files, window position and size, caret and scroll) the next
+# time Tachyon starts with no files given on the command line. false: only unsaved documents come
+# back (hot exit), as before this setting existed.
+restore_session = true
 # Text column width: a pixel size like \"820px\" (or a bare 820), scaled by zoom, or a
 # percentage of the window like \"80%\"; \"100%\" is the widest the column can get, and a
 # minimum gap to the window frame always remains.
@@ -171,6 +182,11 @@ impl Settings {
                     "true" => settings.whats_new = true,
                     "false" => settings.whats_new = false,
                     _ => problems.push(format!("{number}: whats_new is true or false")),
+                },
+                "restore_session" => match value {
+                    "true" => settings.restore_session = true,
+                    "false" => settings.restore_session = false,
+                    _ => problems.push(format!("{number}: restore_session is true or false")),
                 },
                 "content_width" => match ContentWidth::parse(unquoted) {
                     Some(width) => settings.content_width = width,
@@ -336,7 +352,7 @@ mod tests {
     fn values_comments_and_problems() {
         let (settings, problems) = Settings::parse(
             "theme = \"light\"  # always\nzoom = 1.25\nhot_exit = false\ntips = false\n\
-             whats_new = false\nzoom = 9\ncolour = red\nnonsense\n",
+             whats_new = false\nrestore_session = false\nzoom = 9\ncolour = red\nnonsense\n",
         );
         assert_eq!(
             settings,
@@ -346,17 +362,25 @@ mod tests {
                 hot_exit: false,
                 tips: false,
                 whats_new: false,
+                restore_session: false,
                 content_width: ContentWidth::default(),
             }
         );
         assert_eq!(
             problems,
             [
-                "6: zoom is a number from 0.5 to 3.0",
-                "7: unknown setting `colour`",
-                "8: expected `key = value`",
+                "7: zoom is a number from 0.5 to 3.0",
+                "8: unknown setting `colour`",
+                "9: expected `key = value`",
             ]
         );
+    }
+
+    #[test]
+    fn an_invalid_restore_session_value_falls_back_to_the_default_and_is_reported() {
+        let (settings, problems) = Settings::parse("restore_session = maybe\n");
+        assert!(settings.restore_session, "falls back to the default (on)");
+        assert_eq!(problems, ["1: restore_session is true or false"]);
     }
 
     #[test]

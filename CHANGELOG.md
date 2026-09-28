@@ -38,6 +38,16 @@ All notable user-visible changes are recorded here. The format follows
   ended could otherwise be lost; this is a best effort, not an unconditional guarantee - a
   document that still could not be backed up in time, or a wait that timed out, is reported to
   stderr rather than lost silently.
+- Session restore, on top of hot exit: Quit now writes a small session file (each open window's
+  file or backup id, position, size, maximized state, caret, scroll and Markdown/plain-text
+  mode, before the windows close), and the next start with no files on the command line reopens
+  everything in the same places - clean files too, not just the unsaved documents hot exit
+  already restored. A launch with files restores the session first, then opens and focuses the
+  new files. A missing file is skipped, listed in a one-line notice on the first restored
+  window; window bounds are clamped to fit the current display, since monitors change between
+  sessions. `restore_session = true` (default on) in `settings.toml`, and a "Restore session on
+  start" command palette row; off keeps today's hot-exit-only behaviour (`app::write_session_now`,
+  `tachyon_editor::session`; [ADR 0009](docs/adr/0009-session-restore.md)).
 
 ### Fixed
 

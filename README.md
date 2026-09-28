@@ -19,10 +19,10 @@ start as fast as a scratchpad and edit like Typora: one pane, inline WYSIWYG, no
 
 > **Status:** 1.0. Block-swap editing, incremental parsing, everyday editing (find/replace,
 > themes, zoom, links, the command palette), writing comfort (lists, code highlighting, hot exit,
-> Copy as HTML), files and settings, distribution, large-file stability and Markdown-mode memory
-> efficiency are done (Phases 1-9), each held to its measured budget. What remains is owner-only
-> (macOS signing and notarization) or a documented measurement follow-up - see
-> [ROADMAP](docs/ROADMAP.md). Download it from the
+> session restore, Copy as HTML), files and settings, distribution, large-file stability and
+> Markdown-mode memory efficiency are done (Phases 1-9), each held to its measured budget. What
+> remains is owner-only (macOS signing and notarization) or a documented measurement follow-up -
+> see [ROADMAP](docs/ROADMAP.md). Download it from the
 > [latest release](https://github.com/DailenG/tachyon/releases/latest).
 
 ## Highlights
@@ -43,6 +43,11 @@ start as fast as a scratchpad and edit like Typora: one pane, inline WYSIWYG, no
 - **Signed Windows builds:** `tachyon.exe` is signed with Azure Trusted Signing; an optional MSIX
   install auto-updates itself from GitHub Releases, and shows what changed as a Markdown document
   the first time the new version starts.
+- **Session restore:** Quit remembers every open window - file or unsaved scratch text, position,
+  size, caret and scroll - and the next start with no files on the command line reopens all of
+  them, in place; a launch with files restores the session first, then opens and focuses those.
+  `restore_session = true` (default on) in `settings.toml` turns it off if you would rather always
+  start fresh, keeping hot exit's own unsaved-document restore either way.
 - **Everyday editing:** find and replace (Replace All is one undo step), light and dark themes
   following the system or a setting, zoom, `Ctrl+click` links, list continuation and `Tab`
   nesting, syntax highlighting in fenced code (Rust, Python, JS/TS, C family, Go, Java, C#,
@@ -152,7 +157,7 @@ at once (`--no-resident` turns that off; on Linux and macOS it is opt-in with `-
 ```sh
 tachyon --autostart on   # start in the background at login
 tachyon --status         # is an instance running? does it start at login?
-tachyon --quit           # end it (unsaved documents come back next time)
+tachyon --quit           # end it (documents and window layout come back next time)
 tachyon --desktop-entry on   # Linux: add it to the launcher and "Open with" menus
 ```
 
@@ -162,10 +167,12 @@ restartable apps and restart them when I sign back in" (Settings > Accounts > Si
 the same windowless start autostart uses, reopening whatever was unsaved.
 
 `cargo xtask dist` builds a release archive in `target/dist/`. `tachyon --help` lists all options. Settings live in `settings.toml` (`Ctrl+,` opens it): theme,
-zoom of new windows, whether Quit keeps unsaved documents, whether a faint rotating tip shows
-behind the document, whether an update opens a "What's new" window (the command palette's
-"What's new" row opens it any time regardless), and the text column width (a pixel size like
-`820px` or a percentage like `80%`, always leaving a minimum gap to the window frame).
+zoom of new windows, whether Quit keeps unsaved documents, whether the whole session (open files,
+window position and size, caret and scroll) is restored at the next start with no files given on
+the command line, whether a faint rotating tip shows behind the document, whether an update opens
+a "What's new" window (the command palette's "What's new" row opens it any time regardless), and
+the text column width (a pixel size like `820px` or a percentage like `80%`, always leaving a
+minimum gap to the window frame).
 
 ## Development
 
@@ -184,5 +191,5 @@ Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT l
 at your option.
 
 Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in
-Tachyon by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any
+this project shall be dual licensed as above, without any
 additional terms or conditions.

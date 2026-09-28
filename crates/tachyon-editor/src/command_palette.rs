@@ -27,6 +27,9 @@ pub(crate) enum CommandEffect {
     /// Flips whether the What's new window shows itself after an update, in memory and in the
     /// settings file.
     ToggleWhatsNew,
+    /// Flips whether the whole session (open files, window bounds, caret and scroll) is
+    /// restored at the next start, in memory and in the settings file.
+    ToggleRestoreSession,
     /// Sets the text column width, in memory and in the settings file.
     ContentWidth(ContentWidth),
 }
@@ -77,6 +80,7 @@ const COMMANDS: &[Command] = &[
     Command { name: "Theme: Dark", effect: CommandEffect::Theme(ThemeChoice::Dark) },
     Command { name: "Hot exit", effect: CommandEffect::ToggleHotExit },
     Command { name: "Show what's new after updates", effect: CommandEffect::ToggleWhatsNew },
+    Command { name: "Restore session on start", effect: CommandEffect::ToggleRestoreSession },
     Command { name: "Width: 680px", effect: CommandEffect::ContentWidth(ContentWidth::Px(680.)) },
     Command { name: "Width: 820px", effect: CommandEffect::ContentWidth(ContentWidth::Px(820.)) },
     Command { name: "Width: 1100px", effect: CommandEffect::ContentWidth(ContentWidth::Px(1100.)) },
@@ -194,6 +198,15 @@ fn command_items(cx: &App) -> Vec<Item> {
                     false,
                     None,
                 ),
+                CommandEffect::ToggleRestoreSession => (
+                    format!(
+                        "{}: {}",
+                        command.name,
+                        if settings.restore_session { "On" } else { "Off" }
+                    ),
+                    false,
+                    None,
+                ),
                 CommandEffect::ContentWidth(width) => {
                     (command.name.to_owned(), settings.content_width == width, None)
                 }
@@ -258,6 +271,14 @@ impl Editor {
                 let value = if next { "true" } else { "false" };
                 crate::settings::apply_setting(cx, "whats_new", value, move |settings| {
                     settings.whats_new = next;
+                });
+            }
+            CommandEffect::ToggleRestoreSession => {
+                let current = cx.try_global::<Settings>().is_none_or(|s| s.restore_session);
+                let next = !current;
+                let value = if next { "true" } else { "false" };
+                crate::settings::apply_setting(cx, "restore_session", value, move |settings| {
+                    settings.restore_session = next;
                 });
             }
             CommandEffect::ContentWidth(width) => {
