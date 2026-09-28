@@ -129,6 +129,7 @@ impl Render for Editor {
             .on_action(cx.listener(Self::find))
             .on_action(cx.listener(Self::go_to_heading))
             .on_action(cx.listener(Self::open_recent))
+            .on_action(cx.listener(Self::open_command_palette))
             .on_action(cx.listener(Self::replace_bar))
             .on_action(cx.listener(Self::replace_all))
             .on_action(cx.listener(Self::find_next))
@@ -320,10 +321,18 @@ impl Editor {
     fn picker_bar(&self, viewport: Size<Pixels>, cx: &mut Context<Self>) -> Option<AnyElement> {
         let picker = self.picker.as_ref()?;
         let theme = &self.theme;
-        // Rows that fit under the header in the window: line height plus the 4 px row gap, with
-        // the margins, padding and header taken off.
+        // The top edge sits a fifth of the way down (the optical centre Spotlight-style launchers
+        // use), not at the window's top: the eye finds it without travelling to the edge, and
+        // anchoring the top rather than centring the whole box keeps it from jumping as typing
+        // shrinks the list. Rows that fit under it: line height plus the 4 px row gap, with the
+        // bottom margin, padding and header taken off. A short window falls back to the margin.
         let row_height = theme.text_size * 1.6 + theme.scaled(px(4.));
-        let room = viewport.height - OVERLAY_MARGIN * 2. - theme.scaled(px(16.)) - row_height;
+        let full_height =
+            theme.scaled(px(16.)) + row_height * (crate::picker::VISIBLE_ROWS as f32 + 1.);
+        let top = (viewport.height * 0.2)
+            .min(viewport.height - OVERLAY_MARGIN - full_height)
+            .max(OVERLAY_MARGIN);
+        let room = viewport.height - top - OVERLAY_MARGIN - theme.scaled(px(16.)) - row_height;
         let fit = (room / row_height).floor().max(1.) as usize;
         let rows = picker.window(fit.min(crate::picker::VISIBLE_ROWS)).map(|row| {
             let item = &picker.items[picker.matches[row]];
@@ -346,7 +355,15 @@ impl Editor {
                         .whitespace_nowrap()
                         .child(detail)
                 }))
-                .on_click(cx.listener(move |editor, _, _, cx| editor.picker_pick(Some(row), cx)))
+                .child(div().flex_1())
+                .children(
+                    item.shortcut
+                        .clone()
+                        .map(|shortcut| div().flex_none().text_color(detail_color).child(shortcut)),
+                )
+                .on_click(cx.listener(move |editor, _, window, cx| {
+                    editor.picker_pick(Some(row), window, cx)
+                }))
         });
         let note = if picker.items.is_empty() {
             Some(picker.empty)
@@ -358,7 +375,7 @@ impl Editor {
         Some(
             div()
                 .absolute()
-                .top_2()
+                .top(top)
                 .left_0()
                 .right_0()
                 .flex()

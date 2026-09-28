@@ -40,6 +40,16 @@ flowchart LR
 GPUI dominates compile time. Keeping it out of the core crates keeps their tests in the seconds
 range and means editing them never recompiles GPUI.
 
+**Command palette (`tachyon-editor`, `command_palette.rs`).** Lists every user-facing action,
+including `tachyon`'s own (new window, open, quit, open settings), even though `tachyon` depends
+on `tachyon-editor` and not the other way around. It does this the way GPUI's own command palette
+would: by the action's registered name (`App::build_action`/`App::key_bindings`), not its Rust
+type, so no reverse dependency is needed - every `actions!` invocation anywhere in the linked
+binary registers into one process-wide table (`inventory`) regardless of which crate declared it.
+The one cost: a `tachyon-editor`-only test binary (`cargo test -p tachyon-editor`) never links
+`tachyon`, so its own actions are not registered there; palette tests exercise `tachyon-editor`'s
+own actions instead, and the cross-crate ones are proven by running the app.
+
 ## State
 
 GPUI entities and text shaping stay on the main thread. Background work receives an immutable

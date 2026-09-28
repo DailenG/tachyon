@@ -116,6 +116,69 @@ impl Editor {
     }
 }
 
+/// Applies an in-memory settings change to every open window and writes it to the settings
+/// file, keeping the file's comments and other keys (see `set_setting_line`). Used by the
+/// command palette's settings commands, which apply immediately rather than waiting for a save.
+pub(crate) fn apply_setting(
+    cx: &mut Context<Editor>,
+    key: &'static str,
+    value: &'static str,
+    mutate: impl FnOnce(&mut Settings),
+) {
+    let mut settings = cx.try_global::<Settings>().cloned().unwrap_or_default();
+    mutate(&mut settings);
+    cx.set_global(settings);
+    cx.defer(apply_to_windows);
+    let Some(path) = cx.try_global::<SettingsFile>().map(|file| file.0.clone()) else { return };
+    cx.background_executor()
+        .spawn(async move {
+            let text =
+                std::fs::read_to_string(&path).unwrap_or_else(|_| DEFAULT_SETTINGS.to_owned());
+            let updated = set_setting_line(&text, key, value);
+            if let Some(dir) = path.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            let _ = crate::editor::write_atomically(&path, updated.as_bytes());
+        })
+        .detach();
+}
+
+/// Rewrites `key`'s line in a settings file's text to `key = value`, keeping any trailing
+/// comment on that line and every other line untouched; appends the line if `key` is missing.
+fn set_setting_line(text: &str, key: &str, value: &str) -> String {
+    let mut out = String::with_capacity(text.len() + key.len() + value.len() + 4);
+    let mut found = false;
+    for line in text.split_inclusive('\n') {
+        let (content, newline) = line.strip_suffix('\n').map_or((line, ""), |c| (c, "\n"));
+        let code = content.split('#').next().unwrap_or("");
+        let matches_key = !found && code.split_once('=').is_some_and(|(k, _)| k.trim() == key);
+        if matches_key {
+            found = true;
+            let comment = &content[code.len()..];
+            out.push_str(key);
+            out.push_str(" = ");
+            out.push_str(value);
+            if !comment.is_empty() {
+                out.push(' ');
+                out.push_str(comment);
+            }
+        } else {
+            out.push_str(content);
+        }
+        out.push_str(newline);
+    }
+    if !found {
+        if !out.is_empty() && !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push_str(key);
+        out.push_str(" = ");
+        out.push_str(value);
+        out.push('\n');
+    }
+    out
+}
+
 /// Applies changed settings to every open window: the theme, and (Windows) the native title
 /// bar's and popup menus' dark/light mode, neither of which is GPUI's to draw and so does not
 /// follow `apply_settings`'s own repaint.

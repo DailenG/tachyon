@@ -11,13 +11,23 @@ All notable user-visible changes are recorded here. The format follows
 - An About window: the owner's signature artwork (a light-ink variant for the dark theme),
   version (and the full MSIX package version, for a packaged install), and an Environment table
   (platform, install kind, resident or standalone, update channel derived from the packaged
-  version, and clickable Settings/Backups paths and project website). Opens from the `About`
-  action (a command-palette row will follow), the Windows tray's "About Tachyon" item above
-  "Quit Tachyon", or `tachyon --about` on the command line (forwarded to a running instance like
-  other launches). Reused if already open; `Escape` or its Close button closes it. The signature
-  is embedded in the binary (`assets/brand/signature.png`, `signature-light.png`) and decoded
-  only when the window opens, never on the startup path.
-
+  version, and clickable Settings/Backups paths and project website). Opens from the command
+  palette's "About Tachyon" row, the Windows tray's "About Tachyon" item above "Quit Tachyon", or
+  `tachyon --about` on the command line (forwarded to a running instance like other launches).
+  Reused if already open; `Escape` or its Close button closes it. The signature is embedded in
+  the binary (`assets/brand/signature.png`, `signature-light.png`) and decoded only when the
+  window opens, never on the startup path.
+- Command palette (`Ctrl+Shift+P`/`Cmd+Shift+P`): every user-facing action (New window, Open,
+  Save/Save As, Close window, Quit, Find/Replace/Find next/previous, Go to heading, Open recent,
+  Copy as HTML, Toggle plain-text mode, Zoom in/out/reset, Undo/Redo, Select all, Document
+  start/end, the frame-time overlay, Open settings file, About Tachyon) plus the theme and hot
+  exit settings, which apply at once and persist to `settings.toml` without disturbing its
+  comments or other keys. Reuses the picker overlay: type to filter (case-insensitive substring,
+  then subsequence, closest match first), Up/Down/Enter/Escape as in the other pickers; each row
+  shows its current keyboard shortcut, read from the real keymap. `Ctrl+P`/`Cmd+P` is a
+  quick-open shortcut for the same Open recent list. Nothing is built until the palette opens.
+  The palette, Go to heading and Open recent now open a fifth of the way down the window instead
+  of against its top edge.
 - Markdown mode no longer costs memory and frame time proportional to a whole oversized block:
   a fresh open streams the parse back in 4 MiB windows instead of copying the whole file into one
   `String` first; a run of verbatim text split across parser events (a long fenced code block,

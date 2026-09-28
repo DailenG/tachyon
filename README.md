@@ -45,8 +45,9 @@ start as fast as a scratchpad and edit like Typora: one pane, inline WYSIWYG, no
 - **Everyday editing:** find and replace (Replace All is one undo step), light and dark themes
   following the system or a setting, zoom, `Ctrl+click` links, list continuation and `Tab`
   nesting, syntax highlighting in fenced code (Rust, Python, JS/TS, C family, Go, Java, C#,
-  shells, PowerShell, SQL, JSON, TOML, YAML), Go to heading, Open recent, hot exit, Copy as HTML,
-  local images, external file change reload, a settings file, and math.
+  shells, PowerShell, SQL, JSON, TOML, YAML), a command palette, Go to heading, quick open, Open
+  recent, hot exit, Copy as HTML, local images, external file change reload, a settings file, and
+  math.
 
 ## Keyboard shortcuts
 
@@ -58,8 +59,9 @@ start as fast as a scratchpad and edit like Typora: one pane, inline WYSIWYG, no
 | Open | `Ctrl+O` |
 | Save / Save As | `Ctrl+S` / `Ctrl+Shift+S` |
 | Close window / Quit | `Ctrl+W` / `Ctrl+Q` |
+| Command palette | `Ctrl+Shift+P` |
 | Settings | `Ctrl+,` |
-| Open recent | `Ctrl+R` |
+| Open recent / Quick open | `Ctrl+R` / `Ctrl+P` |
 | Find | `Ctrl+F` |
 | Find next / previous | `F3` / `Shift+F3` (also `Ctrl+G` / `Ctrl+Shift+G`) |
 | Replace | `Ctrl+H` (`Cmd+Alt+F` on macOS) |
