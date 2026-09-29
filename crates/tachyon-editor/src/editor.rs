@@ -301,12 +301,10 @@ pub struct Editor {
     /// for the rest of the window's life otherwise.
     pub(crate) tip: Option<SharedString>,
     /// The window's placement (normal rectangle, maximized) as last seen while it was on screen,
-    /// kept current by bounds and visibility observers (`with_document`). The session file uses
-    /// it instead of reading the window when it saves: at a real Windows shutdown the window's
-    /// maximized state is already gone by the time Tachyon is told the session is ending (seen on
-    /// the test machine: `IsZoomed` false for a window that was maximized until then), and a
-    /// minimized window has no useful placement either. `None` until the window is first seen on
-    /// screen.
+    /// kept current by bounds and visibility observers (`with_document`). The session file saves
+    /// this rather than the window's state at save time, so a window that is minimized when the
+    /// session is saved comes back as it was before it was minimized. `None` until the window is
+    /// first seen on screen.
     pub(crate) last_placement: Option<(Bounds<Pixels>, bool)>,
     /// Fixed window title, if set: for a special document whose title should not follow the
     /// usual file-name / scratch-buffer rule (the What's new window; see `tachyon::whats_new`).

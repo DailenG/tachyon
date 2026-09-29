@@ -49,7 +49,7 @@ All notable user-visible changes are recorded here. The format follows
   sessions. `restore_session = true` (default on) in `settings.toml`, and a "Restore session on
   start" command palette row; off keeps today's hot-exit-only behaviour and deletes the session
   file. Each window's position, size and maximized state are recorded as they change while the
-  window is on screen, so a window maximized when Windows shuts down comes back maximized. Closing the last window keeps what it showed for next time, as closing an app does
+  window is on screen, so a window minimized when the session is saved comes back as it was. Closing the last window keeps what it showed for next time, as closing an app does
   (`app::write_session_now`, `tachyon_editor::session`; [ADR
   0009](docs/adr/0009-session-restore.md)).
 
