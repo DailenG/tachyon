@@ -282,6 +282,41 @@ pub fn set_always_on_top(window: &impl raw_window_handle::HasWindowHandle, on: b
     (style & WS_EX_TOPMOST as isize != 0) == on
 }
 
+/// See [`crate::resize_without_activating`].
+pub fn resize_without_activating(
+    window: &impl raw_window_handle::HasWindowHandle,
+    width: i32,
+    height: i32,
+) -> bool {
+    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetClientRect, GetWindowRect, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, SetWindowPos,
+    };
+    let Ok(handle) = window.window_handle() else { return false };
+    let raw_window_handle::RawWindowHandle::Win32(win32) = handle.as_raw() else { return false };
+    let hwnd = win32.hwnd.get() as _;
+    let mut outer = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    let mut client = outer;
+    // SAFETY: `hwnd` is the live window handle GPUI just returned; `outer` is a valid RECT to
+    // fill.
+    if unsafe { GetWindowRect(hwnd, &mut outer) } == 0 {
+        return false;
+    }
+    // SAFETY: as above, filling `client`.
+    if unsafe { GetClientRect(hwnd, &mut client) } == 0 {
+        return false;
+    }
+    let frame_width = (outer.right - outer.left) - (client.right - client.left);
+    let frame_height = (outer.bottom - outer.top) - (client.bottom - client.top);
+    let flags = SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE;
+    // SAFETY: `hwnd` is live; `SWP_NOMOVE | SWP_NOZORDER` make the position and insert-after
+    // arguments ignored.
+    let result = unsafe {
+        SetWindowPos(hwnd, ptr::null_mut(), 0, 0, width + frame_width, height + frame_height, flags)
+    };
+    result != 0
+}
+
 /// See [`crate::set_window_opacity`].
 pub fn set_window_opacity(window: &impl raw_window_handle::HasWindowHandle, opacity: f32) -> bool {
     use windows_sys::Win32::UI::WindowsAndMessaging::{

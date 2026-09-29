@@ -70,6 +70,11 @@ All notable user-visible changes are recorded here. The format follows
 
 ### Fixed
 
+- Windows: typing straight after a launch now reaches the window that opened. About 100 ms after
+  the first frame, the resident instance prepares the hidden window that the next launch reuses,
+  and resizing it activated it, so keystrokes went to an invisible window until you clicked the
+  visible one. It is now resized without being activated (`SWP_NOACTIVATE`).
+
 - Undo (or redo) back to exactly the text last saved now clears the title's dirty marker and lets
   the window close without asking, instead of staying "modified" as long as any edit had ever
   happened since the save. The buffer tracks a stable id for its position in the undo/redo history

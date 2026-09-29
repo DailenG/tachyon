@@ -463,6 +463,15 @@ pub fn set_always_on_top(_window: &impl raw_window_handle::HasWindowHandle, _on:
     false
 }
 
+/// See [`crate::resize_without_activating`]: not needed here (no hidden ready window).
+pub fn resize_without_activating(
+    _window: &impl raw_window_handle::HasWindowHandle,
+    _width: i32,
+    _height: i32,
+) -> bool {
+    false
+}
+
 /// See [`crate::set_window_opacity`]: nothing at the OS level here.
 pub fn set_window_opacity(
     _window: &impl raw_window_handle::HasWindowHandle,

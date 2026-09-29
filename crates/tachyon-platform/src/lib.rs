@@ -488,6 +488,20 @@ pub fn has_native_prompts() -> bool {
     cfg!(any(target_os = "windows", target_os = "macos"))
 }
 
+/// Resizes `window` so its client area is `width` x `height` device pixels, without activating it
+/// or changing its z-order (Windows: `SetWindowPos` with `SWP_NOMOVE | SWP_NOZORDER |
+/// SWP_NOACTIVATE`, the frame size taken from the window's current window and client rects, as
+/// GPUI's own `resize` does). GPUI's `Window::resize` omits `SWP_NOACTIVATE`, and on a hidden
+/// window that made it the active window, taking keystrokes from the visible one. Returns whether
+/// it resized; `false` elsewhere, where the caller falls back to `Window::resize`.
+pub fn resize_without_activating(
+    window: &impl raw_window_handle::HasWindowHandle,
+    width: i32,
+    height: i32,
+) -> bool {
+    imp::resize_without_activating(window, width, height)
+}
+
 /// Whether a window opened with `show: false` stays hidden until activated.
 /// Wayland compositors map it anyway, so a resident instance keeps no ready
 /// window there. Only enabled where it has been measured (docs/adr/0004).

@@ -894,7 +894,16 @@ fn prepare_ready_window(cx: &mut App) {
                     // shown, and its first frame is drawn sooner (docs/adr/0004). The size is
                     // the fitted one, so a small screen's work area still holds the window.
                     let _ = handle.update(cx, |_, window, cx| {
-                        window.resize(bounds.size);
+                        // Never `Window::resize` alone on Windows: it activates the hidden window,
+                        // so keystrokes meant for the visible one went to this one.
+                        let device = bounds.size.to_device_pixels(window.scale_factor());
+                        if !tachyon_platform::resize_without_activating(
+                            window,
+                            device.width.0,
+                            device.height.0,
+                        ) {
+                            window.resize(bounds.size);
+                        }
                         tachyon_platform::disable_window_transitions(window);
                         tachyon_platform::set_window_icon(window);
                         // Same reasoning as in `open_window`: set before this window is ever
