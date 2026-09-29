@@ -68,7 +68,7 @@ start as fast as a scratchpad and edit like Typora: one pane, inline WYSIWYG, no
 | Close window / Quit | `Ctrl+W` / `Ctrl+Q` |
 | Command palette | `Ctrl+Shift+P` |
 | Settings | `Ctrl+,` |
-| Open recent / Quick open | `Ctrl+R` / `Ctrl+P` |
+| Open recent / quick open (the same picker) | `Ctrl+R` or `Ctrl+P` |
 | Find | `Ctrl+F` |
 | Find next / previous | `F3` / `Shift+F3` (also `Ctrl+G` / `Ctrl+Shift+G`) |
 | Replace | `Ctrl+H` (`Cmd+Alt+F` on macOS) |
@@ -76,12 +76,20 @@ start as fast as a scratchpad and edit like Typora: one pane, inline WYSIWYG, no
 | Go to heading | `Ctrl+Shift+O` |
 | Copy as HTML | `Ctrl+Shift+C` |
 | Toggle plain-text mode | `Ctrl+Shift+M` (same on every platform) |
-| Zoom in / out / reset | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` |
+| Zoom in / out / reset | `Ctrl+=` (or `Ctrl++`) / `Ctrl+-` / `Ctrl+0` |
 | Frame-time overlay | `Ctrl+Alt+F` (same on every platform) |
-| Undo / redo | `Ctrl+Z` / `Ctrl+Shift+Z` |
+| Cut / copy / paste | `Ctrl+X` / `Ctrl+C` / `Ctrl+V` |
+| Undo / redo | `Ctrl+Z` / `Ctrl+Shift+Z` (redo also `Ctrl+Y`) |
 | Select all | `Ctrl+A` |
-| Document start / end | `Ctrl+Home` / `Ctrl+End` |
+| Move by word | `Ctrl+Left` / `Ctrl+Right` (`Alt+Left` / `Alt+Right` also work); add `Shift` to select |
+| Delete previous / next word | `Ctrl+Backspace` / `Ctrl+Delete` (`Alt+Backspace` / `Alt+Delete` also work) |
+| Line start / end | `Home` / `End` (`Cmd+Left` / `Cmd+Right` on macOS); add `Shift` to select |
+| Document start / end | `Ctrl+Home` / `Ctrl+End` (`Cmd+Up` / `Cmd+Down` on macOS) |
+| Page up / down | `Page Up` / `Page Down`; add `Shift` to select |
+| Previous match, in the find bar | `Shift+Enter` |
+| Indent / outdent a list item | `Tab` / `Shift+Tab` |
 | Toggle a note's always-on-top pin | `Ctrl+Shift+T` (sticky notes only) |
+| New sticky note from anywhere | `Win+Shift+N` (Windows; the `sticky_hotkey` setting changes it) |
 | Leave editing (click, type or move the caret to resume) | `Escape` |
 
 ## Sticky notes
