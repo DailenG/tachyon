@@ -206,12 +206,16 @@ impl Editor {
         // was. `bounds` is offset from those coordinates on Windows (each restore drifted 15 px
         // down at 125 %), and for a maximized window it is the maximized rectangle, not the one
         // to restore to.
-        let (bounds, maximized) = match window.window_bounds() {
+        // The maximized flag also asks `is_maximized` (`IsZoomed` on Windows): on the test
+        // machine a window maximized with its title-bar button still came back from
+        // `window_bounds` as `Windowed`, while `IsZoomed` reported it correctly.
+        let (bounds, placement_maximized) = match window.window_bounds() {
             gpui::WindowBounds::Maximized(bounds) => (bounds, true),
             gpui::WindowBounds::Windowed(bounds) | gpui::WindowBounds::Fullscreen(bounds) => {
                 (bounds, false)
             }
         };
+        let maximized = placement_maximized || window.is_maximized();
         Some(WindowState {
             target,
             bounds,
