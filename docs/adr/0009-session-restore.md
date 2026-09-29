@@ -12,11 +12,17 @@ session on top of that, not just the unsaved half of it, and Tachyon should too 
 
 ## Decision
 
-- On Quit (`Ctrl+Q`, `tachyon --quit`, the tray's Quit, and - the parent's own handling of
-  `WM_ENDSESSION`, `docs/adr/0008-restart-registration.md` - Windows session end), the primary
-  writes one small file, `state_dir()/session-<instance>.txt`, before its windows close
-  (`app::write_session_now`), atomically (a temp file, then rename - the same mechanism hot exit's
-  own backups use). For each window worth remembering, in the order it was opened
+- On Quit (`Ctrl+Q`, `tachyon --quit`, the tray's Quit), the primary writes one small file,
+  `state_dir()/session-<instance>.txt`, before its windows close (`app::write_session_now`),
+  atomically (a temp file, then rename - the same mechanism hot exit's own backups use). It is
+  also rewritten when a window closes and when a file finishes loading, so a crash or power loss
+  restores what was open recently, and at a Windows session end (ADR 0008, through GPUI's quit
+  observers). With no document window left open (the last one just closed, or a windowless
+  resident instance quitting), the file keeps what was open the last time any were: closing the
+  last window is how most people close an app, and a resident instance keeps running after it.
+  With the setting off, Quit deletes the file, so an old session cannot come back when it is
+  turned on again.
+  For each window worth remembering, in the order it was opened
   (`WindowCascade`): its file path (a clean, file-backed document) or its hot-exit backup id (an
   unsaved one - hot exit already keeps its text; the session file only needs to name the same
   slot), the window's bounds and whether it is maximized, the caret and scroll offsets, and

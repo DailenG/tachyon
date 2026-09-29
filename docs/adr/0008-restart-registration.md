@@ -83,14 +83,25 @@ wait itself times out, the tray callback logs it (`eprintln!`) before letting `W
 return, so a genuinely wedged UI thread is at least visible somewhere durable instead of silently
 producing an incomplete backup.
 
-The async loop runs `backup_every_window_for_session_end` (every open window,
-`Editor::backup_for_session_end`, which now returns whether the document ended up safe: `true` if
-there was nothing to do or the write succeeded, `false` only if a write was attempted and failed)
-and replies once done. Any window reported `false` has its title logged to stderr
+The async loop runs `save_for_session_end` (every open window's backup through
+`Editor::backup_for_session_end`, which returns whether the document ended up safe, then the
+session file) and replies once done. Any window reported `false` has its title logged to stderr
 (`tachyon: could not back up "<title>" before session end`) - there is no time left for a
 user-facing notice this late, but a full disk or a state directory that went away should not fail
 completely silently. This is a best effort, not an unconditional guarantee: a wedged UI thread, a
 persistently failing write, or a very large number of windows can still exhaust the 30 s budget.
+
+**Correction after the first reboot on the test machine (1.0.0.13).** The tray path above never
+ran in time: nothing unsaved was written and the session file stayed 7 minutes old. GPUI handles
+`WM_ENDSESSION` on its own windows, on the UI thread, by running the app's quit observers and then
+calling `std::process::exit(0)` (`gpui_windows` `handle_end_session`), so the process can end
+before the tray thread's request is ever serviced. The save therefore also runs from an
+`on_app_quit` observer (`crates/tachyon/src/app.rs`), whenever the quit did not come from
+Tachyon's own Quit action. GPUI runs these observers synchronously with every window still open
+(it clears them only afterwards), so the observer does the work in its body rather than in the
+returned future, which only gets a short timeout. The tray handler stays: it registers the
+shutdown block reason and covers a session end that reaches the tray window first. Running the
+save twice only rewrites the same files.
 
 ## Consequences
 

@@ -295,6 +295,23 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
             if cx.windows().is_empty() && (!lifecycle.resident || lifecycle.quitting) {
                 cx.quit();
             }
+            // Kept current as windows come and go, so a crash or power loss restores what was
+            // open recently rather than what was open at the last Quit. Not while quitting: Quit
+            // itself wrote the session before closing the windows one by one.
+            refresh_session(cx);
+        })
+        .detach();
+        // Every quit that did not come from Tachyon's own Quit action: on Windows, the OS ending
+        // the session. GPUI handles `WM_ENDSESSION` on its own windows by running these observers
+        // and then calling `std::process::exit`, so this is the one place guaranteed to run
+        // before the process ends, and the windows are all still open here (GPUI clears them only
+        // after the observers return). Synchronous on purpose: the returned future is only given
+        // a short timeout.
+        cx.on_app_quit(|cx| {
+            if !cx.global::<Lifecycle>().quitting {
+                save_for_session_end(cx);
+            }
+            async {}
         })
         .detach();
 
@@ -456,6 +473,11 @@ const WINDOW_SIZE: Size<Pixels> = size(px(900.), px(1000.));
 /// screen and its bottom edge under the taskbar. The Windows 11 frame is about 31 px.
 const FRAME_ALLOWANCE: Pixels = px(48.);
 
+/// Room kept below a window's content for the frame's bottom edge, which Windows draws outside the
+/// client rectangle GPUI positions (about 13 px at 125 %). Without it a window placed as low as its
+/// content allows ran 16 physical px under the taskbar.
+const BOTTOM_FRAME: Pixels = px(24.);
+
 /// One title-bar height: how far down and right each new window cascades from the last one.
 const CASCADE_STEP: Pixels = px(32.);
 
@@ -518,7 +540,7 @@ fn cascade_origin(
     // `FRAME_ALLOWANCE` spare (less than two steps at 1080p and 125 %), so it stops at the lowest
     // position that still keeps the window inside the work area and only steps right from
     // there: a new window never lands exactly on the last one.
-    let lowest = work_area.origin.y + work_area.size.height - size.height;
+    let lowest = work_area.origin.y + work_area.size.height - size.height - BOTTOM_FRAME;
     let y = (last.y + CASCADE_STEP).min(lowest).max(work_area.origin.y);
     point(x, y)
 }
@@ -553,8 +575,8 @@ fn fit_to_work_area(bounds: Bounds<Pixels>, work_area: Bounds<Pixels>) -> Bounds
         bounds.size.height.min(work_area.size.height - FRAME_ALLOWANCE).max(px(1.)),
     );
     let max_x = (work_area.origin.x + work_area.size.width - fitted.width).max(work_area.origin.x);
-    let max_y =
-        (work_area.origin.y + work_area.size.height - fitted.height).max(work_area.origin.y);
+    let max_y = (work_area.origin.y + work_area.size.height - fitted.height - BOTTOM_FRAME)
+        .max(work_area.origin.y);
     let x = bounds.origin.x.max(work_area.origin.x).min(max_x);
     let y = bounds.origin.y.max(work_area.origin.y).min(max_y);
     Bounds { origin: point(x, y), size: fitted }
@@ -726,7 +748,7 @@ fn load_file(
             .background_executor()
             .spawn(async move { tachyon_editor::load_document(&read_path) })
             .await;
-        editor.update(cx, |editor, cx| match outcome {
+        let updated = editor.update(cx, |editor, cx| match outcome {
             Ok(tachyon_editor::LoadOutcome::Loaded(loaded)) => {
                 editor.set_loaded(*loaded, cx);
                 editor.set_file(path, cx);
@@ -749,7 +771,12 @@ fn load_file(
                     editor.set_notice(notice, cx);
                 }
             }
-        })
+        });
+        // After the editor's own update, where its window can be read again: the file is now
+        // part of what a restart would reopen. Skipped if the window closed while loading.
+        if updated.is_ok() {
+            cx.update(refresh_session);
+        }
     })
     .detach();
 }
@@ -1009,10 +1036,26 @@ fn missing_files_notice(missing: &[PathBuf]) -> Option<SharedString> {
 /// handler hot exit's own `backup_now` runs from. A window with nothing worth remembering (an
 /// empty, unmodified scratch buffer) is skipped (`Editor::session_state`).
 fn write_session_now(cx: &mut App) {
+    let Some(path) = cx.try_global::<SessionPath>().map(|p| p.0.clone()) else { return };
     if cx.try_global::<tachyon_editor::Settings>().is_none_or(|s| !s.restore_session) {
+        // Off: no session is kept, and an older file must not come back if it is turned on
+        // again later.
+        let _ = std::fs::remove_file(&path);
         return;
     }
-    let Some(path) = cx.try_global::<SessionPath>().map(|p| p.0.clone()) else { return };
+    // With no document window open at all (the last one just closed, or a resident instance
+    // quitting from the tray while windowless), the file keeps what was open the last time any
+    // were: closing the last window is how most people close an app, and on Windows a resident
+    // instance keeps running after it, so a reboot would otherwise reopen nothing. Only open
+    // windows are counted, not the hidden one kept ready for the next launch.
+    let ready = cx.try_global::<ReadyWindow>().and_then(|ready| ready.0);
+    let any_open = cx
+        .windows()
+        .into_iter()
+        .any(|window| window.downcast::<Editor>().is_some_and(|editor| Some(editor) != ready));
+    if !any_open {
+        return;
+    }
     let handles: Vec<WindowHandle<Editor>> = cx
         .try_global::<WindowCascade>()
         .map_or_else(Vec::new, |cascade| cascade.0.iter().map(|(handle, _)| *handle).collect());
@@ -1025,6 +1068,25 @@ fn write_session_now(cx: &mut App) {
         }
     }
     let _ = tachyon_editor::write_session(&path, &windows);
+}
+
+/// Rewrites the session file for the windows open now, unless Quit is under way (Quit writes it
+/// itself, before it closes the windows). For changes to the set of windows: one closing, a file
+/// finishing loading.
+fn refresh_session(cx: &mut App) {
+    if !cx.global::<Lifecycle>().quitting {
+        write_session_now(cx);
+    }
+}
+
+/// Writes every window's hot-exit backup and the session file, without closing anything: what the
+/// OS ending the session (logoff, shutdown, a restart for an update) needs before the process
+/// ends. Runs from GPUI's own quit path (`on_app_quit`, above) and from the tray's
+/// `WM_ENDSESSION` handler, whichever gets there first; running twice only rewrites the same
+/// files.
+fn save_for_session_end(cx: &mut App) {
+    backup_every_window_for_session_end(cx);
+    write_session_now(cx);
 }
 
 /// The resident instance's tray icon (Windows), removed when the app quits.
@@ -1153,10 +1215,7 @@ fn show_tray(cx: &mut App) {
                 TrayMessage::EndingSession(done) => {
                     // Outside any window update, so every window is readable; the session file
                     // is what a restart after the reboot (issue #80) reopens.
-                    cx.update(|cx| {
-                        backup_every_window_for_session_end(cx);
-                        write_session_now(cx);
-                    });
+                    cx.update(save_for_session_end);
                     let _ = done.send(());
                 }
             }
@@ -1235,7 +1294,7 @@ mod tests {
 
     #[test]
     fn cascade_origin_steps_down_and_right_from_the_last_window() {
-        let last = point(px(100.), px(40.));
+        let last = point(px(100.), px(0.));
         let expected = point(last.x + CASCADE_STEP, last.y + CASCADE_STEP);
         assert_eq!(cascade_origin(Some(last), BASE, WIN_SIZE, WORK_AREA), expected);
     }
@@ -1261,9 +1320,11 @@ mod tests {
         let bottom = work_area.origin.y + work_area.size.height;
         let first = cascade_origin(Some(base), base, size, work_area);
         let second = cascade_origin(Some(first), base, size, work_area);
-        // Down as far as the work area allows (24 px of the 48 spare), then right only.
-        assert_eq!(first, point(base.x + CASCADE_STEP, bottom - size.height));
-        assert_eq!(second, point(first.x + CASCADE_STEP, bottom - size.height));
+        // Never lower than leaves room for the frame's bottom edge (here: exactly the centred
+        // height), then right only.
+        let lowest = bottom - size.height - BOTTOM_FRAME;
+        assert_eq!(first, point(base.x + CASCADE_STEP, lowest));
+        assert_eq!(second, point(first.x + CASCADE_STEP, lowest));
     }
 
     #[test]
@@ -1273,9 +1334,11 @@ mod tests {
             origin: point(px(1920.), px(40.)),
             size: Size { width: px(1920.), height: px(1040.) },
         };
+        // A window with room below it in this 1040 px tall area: it steps down and right.
+        let short = size(px(900.), px(800.));
         let last = point(px(1920.), px(40.));
         let expected = point(last.x + CASCADE_STEP, last.y + CASCADE_STEP);
-        assert_eq!(cascade_origin(Some(last), BASE, WIN_SIZE, work_area), expected);
+        assert_eq!(cascade_origin(Some(last), BASE, short, work_area), expected);
 
         // Cascading from well left of the work area's own top-left wraps, rather than landing
         // outside it.
@@ -1296,7 +1359,10 @@ mod tests {
         assert!(fitted.origin.x >= WORK_AREA.origin.x);
         assert!(fitted.origin.y >= WORK_AREA.origin.y);
         assert!(fitted.origin.x + fitted.size.width <= WORK_AREA.origin.x + WORK_AREA.size.width);
-        assert!(fitted.origin.y + fitted.size.height <= WORK_AREA.origin.y + WORK_AREA.size.height);
+        assert!(
+            fitted.origin.y + fitted.size.height + BOTTOM_FRAME
+                <= WORK_AREA.origin.y + WORK_AREA.size.height
+        );
     }
 
     #[test]
