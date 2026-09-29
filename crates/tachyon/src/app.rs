@@ -930,9 +930,13 @@ fn take_ready_window(opening: Opening, cx: &mut App) -> Result<WindowHandle<Edit
     let Opening { source, notice, .. } = opening;
     let doc = initial_document(&source, cx);
     let title = source.title();
+    let app_notice = take_pending_hotkey_notice(cx);
     let _ = handle.update(cx, |editor, window, cx| {
         window.set_window_title(&title);
         editor.set_document(doc, cx);
+        if let Some(app_notice) = app_notice {
+            editor.set_app_notice(app_notice, cx);
+        }
         fill(editor, source, None, notice, cx);
     });
     Ok(handle)
