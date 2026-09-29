@@ -264,7 +264,8 @@ pub fn set_title_bar_dark(window: &impl raw_window_handle::HasWindowHandle, dark
 /// See [`crate::set_always_on_top`].
 pub fn set_always_on_top(window: &impl raw_window_handle::HasWindowHandle, on: bool) -> bool {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos,
+        GWL_EXSTYLE, GetWindowLongPtrW, HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE,
+        SWP_NOSIZE, SetWindowPos, WS_EX_TOPMOST,
     };
     let Ok(handle) = window.window_handle() else { return false };
     let raw_window_handle::RawWindowHandle::Win32(win32) = handle.as_raw() else { return false };
@@ -273,7 +274,12 @@ pub fn set_always_on_top(window: &impl raw_window_handle::HasWindowHandle, on: b
     // SAFETY: `win32.hwnd` is the live window handle GPUI just returned; `SWP_NOMOVE |
     // SWP_NOSIZE` makes the ignored position and size arguments harmless.
     let result = unsafe { SetWindowPos(win32.hwnd.get() as _, insert_after, 0, 0, 0, 0, flags) };
-    result != 0
+    if result == 0 {
+        return false;
+    }
+    // SAFETY: as above; reading the extended style has no other effect.
+    let style = unsafe { GetWindowLongPtrW(win32.hwnd.get() as _, GWL_EXSTYLE) };
+    (style & WS_EX_TOPMOST as isize != 0) == on
 }
 
 /// See [`crate::set_window_opacity`].

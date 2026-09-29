@@ -71,6 +71,14 @@ refresh. On Windows this is `SetWindowPos` with `HWND_TOPMOST`/`HWND_NOTOPMOST` 
 so the header's pin button does not appear there and the toggle is a no-op if reached some other
 way.
 
+Windows does not always honour the call. On a windowless `--background` start, a restored note
+is the UI thread's first window; the test machine's trace showed `SetWindowPos(HWND_TOPMOST)`
+putting `WS_EX_TOPMOST` on the note's owned "Default IME" window but not on the note itself,
+while calls made later worked. So `set_always_on_top` reads `WS_EX_TOPMOST` back and reports
+whether it took. After a note's first frame, a failed pin is retried on a short backoff (50 ms
+doubling to 1.6 s, about 3 s in all, `retry_note_pin`), and every activation change applies it
+again (`Editor::apply_note_pin`).
+
 **Translucency.** `sticky_unfocused_opacity` (0.3 to 1.0, default `1.0`) is a note's opacity while
 its own window is not the active one; focused, or an ordinary (non-note) window, is always fully
 opaque. How it is drawn depends on the platform (`tachyon_platform::supports_window_opacity`):
