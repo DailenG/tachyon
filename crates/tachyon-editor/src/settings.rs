@@ -132,6 +132,7 @@ whats_new = true
 # time Tachyon starts with no files given on the command line. false: only unsaved documents come
 # back (hot exit), as before this setting existed.
 restore_session = true
+
 # Text column width: a pixel size like \"820px\" (or a bare 820), scaled by zoom, or a
 # percentage of the window like \"80%\"; \"100%\" is the widest the column can get, and a
 # minimum gap to the window frame always remains.
@@ -312,12 +313,38 @@ fn set_setting_line(text: &str, key: &str, value: &str) -> String {
         if !out.is_empty() && !out.ends_with('\n') {
             out.push('\n');
         }
+        // Appended with a blank line and the key's own comment from `DEFAULT_SETTINGS`, so it
+        // never reads as belonging to whatever comment the file happens to end with (a comment
+        // left behind when its own line was deleted, for example).
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        for comment in default_comment(key) {
+            out.push_str(comment);
+            out.push('\n');
+        }
         out.push_str(key);
         out.push_str(" = ");
         out.push_str(value);
         out.push('\n');
     }
     out
+}
+
+/// The comment lines directly above `key`'s line in `DEFAULT_SETTINGS`, in order; empty for a key
+/// the default file does not have.
+fn default_comment(key: &str) -> Vec<&'static str> {
+    let mut comment = Vec::new();
+    for line in DEFAULT_SETTINGS.lines() {
+        if line.starts_with('#') {
+            comment.push(line);
+        } else if line.split_once('=').is_some_and(|(k, _)| k.trim() == key) {
+            return comment;
+        } else {
+            comment.clear();
+        }
+    }
+    Vec::new()
 }
 
 /// Applies changed settings to every open window: the theme, and (Windows) the native title
@@ -342,6 +369,18 @@ fn apply_to_windows(cx: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_missing_key_is_appended_with_its_own_comment_not_under_a_stray_one() {
+        // The winlab file: `tips = true` deleted by hand, its comment left as the last line.
+        let text = "theme = \"dark\"\n\n# Show a faint rotating tip behind the document.\n";
+        let updated = set_setting_line(text, "restore_session", "false");
+        let expected_tail =
+            "# Show a faint rotating tip behind the document.\n\n# Restore the whole session";
+        assert!(updated.contains(expected_tail), "{updated}");
+        assert!(updated.ends_with("restore_session = false\n"), "{updated}");
+        assert!(!Settings::parse(&updated).0.restore_session);
+    }
 
     #[test]
     fn the_default_file_parses_to_the_defaults() {

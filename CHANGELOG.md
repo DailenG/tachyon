@@ -64,9 +64,14 @@ All notable user-visible changes are recorded here. The format follows
   staying in a fixed order. The checkmark is now drawn from a separate flag, never part of the
   ranked text.
 - New windows no longer open at exactly the same screen position. Each one now offsets about one
-  title-bar height down and right from the most recently opened window that is still open,
-  wrapping back to the centred position once that would put it outside the display's work area.
-  The very first window of a run is still centred, with no extra work before its first frame.
+  title-bar height down and right from the most recently opened window that is still open. On a
+  screen too short to step down (a window fitted to 1080p at 125 % has under two steps to spare),
+  it keeps stepping right at the lowest position that still fits; it wraps back to the centred
+  position only when it would pass the right edge of the display's work area. The very first
+  window of a run is still centred, with no extra work before its first frame.
+- A setting the command palette adds to `settings.toml` (one the file did not have yet) is now
+  written after a blank line under its own comment, instead of directly below whatever comment
+  the file happened to end with, where it read as belonging to another setting.
 - Windows: a secondary instance (`TACHYON_INSTANCE_ID` set, as benchmarks and tests use) no longer
   overwrites the real taskbar/Start jump list with its own private recent-files list. The jump
   list is scoped to the whole app (its AppUserModelID), unlike `Open recent`'s list, which is
