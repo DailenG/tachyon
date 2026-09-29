@@ -23,7 +23,8 @@ start as fast as a scratchpad and edit like Typora: one pane, inline WYSIWYG, no
 > Markdown-mode memory efficiency are done (Phases 1-9), each held to its measured budget. What
 > remains is owner-only (macOS signing and notarization) or a documented measurement follow-up -
 > see [ROADMAP](docs/ROADMAP.md). Download it from the
-> [latest release](https://github.com/DailenG/tachyon/releases/latest).
+> [latest release](https://github.com/DailenG/tachyon/releases/latest), or use the install buttons on
+> the [website](https://daileng.github.io/tachyon/#install).
 
 ## Highlights
 
@@ -158,8 +159,9 @@ elsewhere, plus a `SHA256SUMS.txt` to verify the download. Extract it and run `t
 with Azure Trusted Signing; macOS builds are not signed or notarized yet, so Gatekeeper will warn
 on first launch.
 
-**Windows, with automatic updates:** download `Tachyon.appinstaller` from the
-[latest release](https://github.com/DailenG/tachyon/releases/latest) and open it (or
+**Windows, with automatic updates:** download
+[`Tachyon.appinstaller`](https://github.com/DailenG/tachyon/releases/latest/download/Tachyon.appinstaller)
+(always the latest release) and open it (or
 `Add-AppxPackage -AppInstallerFile Tachyon.appinstaller` from PowerShell), then follow the prompt
 to install. This registers Tachyon as an MSIX package (also signed with Azure Trusted Signing)
 that checks for an update every time it launches and applies it in the background; a resident
