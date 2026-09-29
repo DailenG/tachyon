@@ -2635,6 +2635,21 @@ fn closing_a_note_from_the_window_frame_never_prompts(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn an_app_notice_survives_the_file_finishing_loading(cx: &mut TestAppContext) {
+    // The sticky-note hotkey conflict is found at start-up, often while a restored window is
+    // still loading its file; the load replacing the document must not take the notice with it.
+    let (editor, cx) = open("Loading notes.md...\n", cx);
+    editor.update(cx, |editor, cx| {
+        editor.set_app_notice("The sticky-note hotkey is already in use".into(), cx);
+        editor.set_document(tachyon_doc::Document::new("# Loaded\n"), cx);
+    });
+    let (notice, app_notice) =
+        editor.read_with(cx, |editor, _| (editor.notice.clone(), editor.app_notice.clone()));
+    assert_eq!(notice, None, "the document's own notice goes with the old document");
+    assert_eq!(app_notice.as_deref(), Some("The sticky-note hotkey is already in use"));
+}
+
+#[gpui::test]
 fn session_state_is_none_for_a_note(cx: &mut TestAppContext) {
     let dir = notes_dir("session-state");
     let (editor, cx) = open_note(dir.clone(), cx);

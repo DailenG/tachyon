@@ -297,6 +297,10 @@ pub struct Editor {
     /// A one-line notice shown at the top of the view (currently only the oversized-Markdown
     /// fallback; see `disk::oversized_markdown_notice`).
     pub(crate) notice: Option<SharedString>,
+    /// A one-line notice from the application rather than about this document (a sticky-note
+    /// hotkey that another app already holds). Shown when `notice` is empty, and kept when the
+    /// document is replaced, unlike `notice`: it is often set while a file is still loading.
+    pub(crate) app_notice: Option<SharedString>,
     /// This window's rotating tip (`Settings::tips`; `tips::next_tip`), drawn faintly behind the
     /// document (`render::tip_overlay`). `None` before `refresh_tip` first runs (deferred past
     /// the first frame, see `with_document`) or while tips are turned off; picked once and kept
@@ -351,6 +355,7 @@ impl Editor {
             if window.is_window_active() {
                 editor.check_disk(window, cx);
             }
+            editor.apply_note_opacity(window, cx);
         })
         .detach();
         cx.observe_window_bounds(window, |editor, window, _| editor.note_placement(window))
@@ -407,6 +412,7 @@ impl Editor {
             frame_log: crate::frame_log::FrameLog::from_env(),
             lossy: false,
             notice: None,
+            app_notice: None,
             tip: None,
             last_placement: None,
             title_override: None,
@@ -632,6 +638,7 @@ impl Editor {
     /// Applies changed settings: the theme, the rotating tip and the text column width now
     /// (zoom applies to new windows).
     pub(crate) fn apply_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.apply_note_opacity(window, cx);
         let settings = cx.try_global::<crate::Settings>().cloned().unwrap_or_default();
         let dark = settings.dark(is_dark(window.appearance()));
         self.appearance_unconfirmed = false;

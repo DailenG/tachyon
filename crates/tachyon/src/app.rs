@@ -728,10 +728,14 @@ fn open_window(opening: Opening, cx: &mut App) -> Option<WindowHandle<Editor>> {
         // `Editor::sync_title` otherwise overwrites this window's title every frame with the
         // usual file-name/scratch-buffer rule, which has no notion of "What's new".
         let fixed_title = matches!(source, Source::WhatsNew { .. }).then(|| title.to_string());
+        let app_notice = take_pending_hotkey_notice(cx);
         cx.new(|cx| {
             let mut editor = Editor::with_document(initial_document(&source, cx), window, cx);
             if let Some(fixed_title) = fixed_title {
                 editor.set_title_override(fixed_title);
+            }
+            if let Some(app_notice) = app_notice {
+                editor.set_app_notice(app_notice, cx);
             }
             fill(&mut editor, source, view, notice, cx);
             editor
@@ -926,9 +930,13 @@ fn take_ready_window(opening: Opening, cx: &mut App) -> Result<WindowHandle<Edit
     let Opening { source, notice, .. } = opening;
     let doc = initial_document(&source, cx);
     let title = source.title();
+    let app_notice = take_pending_hotkey_notice(cx);
     let _ = handle.update(cx, |editor, window, cx| {
         window.set_window_title(&title);
         editor.set_document(doc, cx);
+        if let Some(app_notice) = app_notice {
+            editor.set_app_notice(app_notice, cx);
+        }
         fill(editor, source, None, notice, cx);
     });
     Ok(handle)
@@ -1051,7 +1059,9 @@ fn note_window_options(bounds: Bounds<Pixels>, translucent: bool) -> WindowOptio
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         titlebar: Some(TitlebarOptions { appears_transparent: true, ..Default::default() }),
         app_id: Some(APP_ID.to_owned()),
-        window_background: if translucent {
+        // A transparent background only where the translucency is drawn by Tachyon itself; on
+        // Windows the OS fades the whole window instead (`Editor::apply_note_opacity`).
+        window_background: if translucent && !tachyon_platform::supports_window_opacity() {
             WindowBackgroundAppearance::Transparent
         } else {
             WindowBackgroundAppearance::Opaque
@@ -1090,7 +1100,7 @@ fn open_note_window(source: NoteSource, cx: &mut App) -> Option<WindowHandle<Edi
             let mut editor = Editor::with_document(Document::new(""), window, cx);
             editor.make_note(pinned);
             if let Some(notice) = notice.clone() {
-                editor.set_notice(notice, cx);
+                editor.set_app_notice(notice, cx);
             }
             if let Some(path) = path.clone() {
                 load_note_file(path, cx);
@@ -1102,6 +1112,14 @@ fn open_note_window(source: NoteSource, cx: &mut App) -> Option<WindowHandle<Edi
         Ok(handle) => {
             track_note_window(handle, bounds.origin, cx);
             let _ = handle.update(cx, |_, window, cx| {
+                // Again once the window is on screen: set while it was still being built, the
+                // always-on-top state did not stick for a note that opened without focus.
+                window.on_next_frame(move |window, cx| {
+                    tachyon_platform::set_always_on_top(window, pinned);
+                    if let Some(editor) = window.root::<Editor>().flatten() {
+                        editor.read(cx).apply_note_opacity(window, cx);
+                    }
+                });
                 cx.observe_window_bounds(window, |_, _, cx| cx.defer(refresh_notes_state)).detach();
                 cx.observe_window_visibility(window, |_, _, _, cx| cx.defer(refresh_notes_state))
                     .detach();
@@ -1194,15 +1212,25 @@ fn take_pending_hotkey_notice(cx: &mut App) -> Option<SharedString> {
     }
 }
 
-/// Shows `message` in whatever window is open right now (the first one found), or - nothing open
-/// yet - queues it for the next note or window to open (`take_pending_hotkey_notice`).
+/// Shows `message` in every window open right now, as an application notice that a file finishing
+/// loading does not clear (`Editor::set_app_notice`), or - nothing open yet - queues it for the
+/// next note or window to open (`take_pending_hotkey_notice`). The hidden window kept ready for
+/// the next launch does not count as open.
 fn notify_hotkey_conflict(message: SharedString, cx: &mut App) {
-    let existing = cx.windows().into_iter().find_map(|window| window.downcast::<Editor>());
-    match existing {
-        Some(handle) => {
-            let _ = handle.update(cx, |editor, _, cx| editor.set_notice(message, cx));
-        }
-        None => cx.set_global(PendingHotkeyNotice(message)),
+    let ready = cx.try_global::<ReadyWindow>().and_then(|ready| ready.0);
+    let open: Vec<WindowHandle<Editor>> = cx
+        .windows()
+        .into_iter()
+        .filter_map(|window| window.downcast::<Editor>())
+        .filter(|editor| Some(*editor) != ready)
+        .collect();
+    if open.is_empty() {
+        cx.set_global(PendingHotkeyNotice(message));
+        return;
+    }
+    for handle in open {
+        let message = message.clone();
+        let _ = handle.update(cx, |editor, _, cx| editor.set_app_notice(message, cx));
     }
 }
 

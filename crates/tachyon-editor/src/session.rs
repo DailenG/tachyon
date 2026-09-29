@@ -292,6 +292,13 @@ impl Editor {
         self.notice = Some(notice);
         cx.notify();
     }
+
+    /// Shows `notice` as an application notice (`Editor::app_notice`), which survives the
+    /// document being replaced.
+    pub fn set_app_notice(&mut self, notice: gpui::SharedString, cx: &mut Context<Self>) {
+        self.app_notice = Some(notice);
+        cx.notify();
+    }
 }
 
 #[cfg(test)]

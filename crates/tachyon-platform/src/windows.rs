@@ -276,6 +276,37 @@ pub fn set_always_on_top(window: &impl raw_window_handle::HasWindowHandle, on: b
     result != 0
 }
 
+/// See [`crate::set_window_opacity`].
+pub fn set_window_opacity(window: &impl raw_window_handle::HasWindowHandle, opacity: f32) -> bool {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GWL_EXSTYLE, GetWindowLongPtrW, LWA_ALPHA, SetLayeredWindowAttributes, SetWindowLongPtrW,
+        WS_EX_LAYERED,
+    };
+    let Ok(handle) = window.window_handle() else { return false };
+    let raw_window_handle::RawWindowHandle::Win32(win32) = handle.as_raw() else { return false };
+    let hwnd = win32.hwnd.get() as _;
+    let alpha = crate::opacity_to_alpha(opacity);
+    // SAFETY: `hwnd` is the live window handle GPUI just returned; reading its extended style has
+    // no other effect.
+    let style = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) };
+    let layered = WS_EX_LAYERED as isize;
+    if alpha == 255 {
+        if style & layered != 0 {
+            // SAFETY: as above; only the layered bit is cleared, the rest of the style kept.
+            unsafe { SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style & !layered) };
+        }
+        return true;
+    }
+    if style & layered == 0 {
+        // SAFETY: as above; only the layered bit is added, the rest of the style kept.
+        unsafe { SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style | layered) };
+    }
+    // SAFETY: `hwnd` is live and now layered, which `SetLayeredWindowAttributes` requires;
+    // `LWA_ALPHA` uses only the alpha argument.
+    let result = unsafe { SetLayeredWindowAttributes(hwnd, 0, alpha, LWA_ALPHA) };
+    result != 0
+}
+
 /// See [`crate::register_restart`].
 pub fn register_restart() {
     let command_line = wide(crate::RESTART_COMMAND_LINE);
