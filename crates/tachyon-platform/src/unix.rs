@@ -463,6 +463,14 @@ pub fn set_always_on_top(_window: &impl raw_window_handle::HasWindowHandle, _on:
     false
 }
 
+/// See [`crate::set_window_opacity`]: nothing at the OS level here.
+pub fn set_window_opacity(
+    _window: &impl raw_window_handle::HasWindowHandle,
+    _opacity: f32,
+) -> bool {
+    false
+}
+
 /// No global-hotkey API here yet: Linux compositors bind `tachyon --note` directly (the
 /// README's Hyprland example), and macOS has no binding surface yet either. See
 /// [`crate::register_global_hotkey`].

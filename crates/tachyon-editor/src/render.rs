@@ -125,7 +125,12 @@ impl Render for Editor {
         // Translucency (issue #69): a sticky note renders at `sticky_unfocused_opacity` while
         // its window is not active, header included - focused, or an ordinary window, it is
         // always fully opaque.
-        let note_opacity = if self.is_note() && !window.is_window_active() {
+        // Only where the OS cannot fade the whole window itself (`tachyon_platform::
+        // supports_window_opacity`; see `Editor::apply_note_opacity` for where it can).
+        let note_opacity = if self.is_note()
+            && !window.is_window_active()
+            && !tachyon_platform::supports_window_opacity()
+        {
             cx.try_global::<crate::settings::Settings>()
                 .map_or(1.0, |settings| settings.sticky_unfocused_opacity)
         } else {
@@ -549,7 +554,7 @@ impl Editor {
     /// fallback: see `disk::oversized_markdown_notice`), a normal (not floating) row so it pushes
     /// the document down rather than covering its first line.
     fn mode_notice(&self) -> Option<AnyElement> {
-        let notice = self.notice.clone()?;
+        let notice = self.notice.clone().or_else(|| self.app_notice.clone())?;
         let theme = &self.theme;
         Some(
             div()

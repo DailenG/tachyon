@@ -86,6 +86,31 @@ pub fn supports_always_on_top() -> bool {
     cfg!(target_os = "windows")
 }
 
+/// Whether [`set_window_opacity`] applies a whole-window alpha at the OS level: Windows (a layered
+/// window with `LWA_ALPHA`). Elsewhere the caller draws the window's content translucent over a
+/// transparent window background instead, which the compositor honours on Linux; on Windows it
+/// does not (DWM composited such a window as if opaque on the test machine).
+pub fn supports_window_opacity() -> bool {
+    cfg!(target_os = "windows")
+}
+
+/// Sets `window`'s whole-window opacity, from 0.0 to 1.0, frame and content together (Windows:
+/// `WS_EX_LAYERED` plus `SetLayeredWindowAttributes(LWA_ALPHA)`; 1.0 removes the layered style
+/// again so an opaque window is an ordinary one). Returns whether it took effect; a no-op
+/// returning `false` where [`supports_window_opacity`] is `false`.
+pub fn set_window_opacity(window: &impl raw_window_handle::HasWindowHandle, opacity: f32) -> bool {
+    imp::set_window_opacity(window, opacity)
+}
+
+/// `opacity` as the 0-255 alpha `SetLayeredWindowAttributes` takes, clamped. Pure, so it is
+/// tested on every platform.
+pub fn opacity_to_alpha(opacity: f32) -> u8 {
+    if opacity.is_nan() {
+        return 255;
+    }
+    (opacity.clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
 /// Sets whether `window` stays above other windows (Windows: `SetWindowPos(HWND_TOPMOST` /
 /// `HWND_NOTOPMOST, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)`). Returns whether it took effect;
 /// a no-op returning `false` where [`supports_always_on_top`] is `false`.
@@ -530,6 +555,16 @@ mod tests {
     /// Regression for the exact bit pattern, not merely `RESTART_FLAGS`'s own defining
     /// expression: a typo (`&` for `|`, or the wrong constant) would silently change which
     /// restart reasons Tachyon opts out of, and only a literal expected value catches that.
+    #[test]
+    fn opacity_to_alpha_rounds_and_clamps() {
+        assert_eq!(opacity_to_alpha(1.0), 255);
+        assert_eq!(opacity_to_alpha(0.7), 179);
+        assert_eq!(opacity_to_alpha(0.0), 0);
+        assert_eq!(opacity_to_alpha(1.5), 255, "clamped, not wrapped");
+        assert_eq!(opacity_to_alpha(-1.0), 0);
+        assert_eq!(opacity_to_alpha(f32::NAN), 255, "a bad value leaves the window opaque");
+    }
+
     #[test]
     fn restart_flags_allow_reboot_and_patch_but_not_crash_or_hang() {
         const RESTART_NO_CRASH: u32 = 0b0001;

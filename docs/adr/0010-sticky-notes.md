@@ -73,10 +73,19 @@ way.
 
 **Translucency.** `sticky_unfocused_opacity` (0.3 to 1.0, default `1.0`) is a note's opacity while
 its own window is not the active one; focused, or an ordinary (non-note) window, is always fully
-opaque. Below 1.0 the window is also opened with `WindowBackgroundAppearance::Transparent` instead
-of `Opaque` (`note_window_options`), since requesting a transparent background unconditionally
-would cost every note a compositor blend even at the fully-opaque default. This is the one
-approved exception to `DESIGN_DIRECTION.md`'s "no translucency" rule (see that document).
+opaque. How it is drawn depends on the platform (`tachyon_platform::supports_window_opacity`):
+
+- On Windows the OS fades the whole window: `WS_EX_LAYERED` with `SetLayeredWindowAttributes
+  (LWA_ALPHA)`, set by `Editor::apply_note_opacity` when the window's activation changes, when
+  settings are saved and after the note's first frame, and removed again (layered style cleared)
+  at full opacity.
+- Elsewhere the window is opened with `WindowBackgroundAppearance::Transparent` (only below 1.0,
+  so the fully-opaque default costs no compositor blend) and `render` draws the note at that
+  opacity; Linux compositors honour the alpha.
+
+The first build used the second path on Windows too, and on the test machine DWM composited the
+note as if opaque: the unfocused colours were the focused ones blended over black. This is the
+one approved exception to `DESIGN_DIRECTION.md`'s "no translucency" rule (see that document).
 
 **Restore.** A resident primary's open notes live in their own state file,
 `state_dir()/notes-<instance>.txt` - the same hand-rolled, NUL-separated, path-last format as
@@ -126,8 +135,6 @@ point, not before it.
   a person types in for a long time, not a transient popup - the compact custom header already
   gets the quieter chrome the issue asked about ("smaller, quieter window") without adopting a
   window kind meant for menus and tooltips.
-- **Layered-window per-pixel alpha** (Windows `WS_EX_LAYERED` plus `SetLayeredWindowAttributes`)
-  for translucency instead of a transparent swap chain: rejected in favor of GPUI's own
-  `WindowBackgroundAppearance::Transparent`, which already exists for this purpose and keeps the
-  translucency path identical across platforms instead of adding a second, Windows-only
-  compositing mechanism alongside it.
+- **A transparent swap chain on Windows too** (GPUI's `WindowBackgroundAppearance::Transparent`,
+  one path on every platform): tried first, and on the test machine DWM ignored the window's
+  alpha, so an unfocused note only darkened. Windows uses the layered-window alpha instead.

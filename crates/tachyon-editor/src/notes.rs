@@ -395,6 +395,21 @@ impl Editor {
         self.note = Some(NoteState { pinned, autosave_task: None, saved_version: None });
     }
 
+    /// A sticky note's whole-window translucency where the OS provides it (Windows; see
+    /// `tachyon_platform::supports_window_opacity`): `sticky_unfocused_opacity` while the window
+    /// is not active, opaque while it is. Called when activation changes, when settings are saved,
+    /// and after the note's first frame. Elsewhere `render` draws the content translucent instead.
+    pub fn apply_note_opacity(&self, window: &Window, cx: &App) {
+        if !self.is_note() || !tachyon_platform::supports_window_opacity() {
+            return;
+        }
+        let unfocused = cx
+            .try_global::<crate::settings::Settings>()
+            .map_or(1.0, |settings| settings.sticky_unfocused_opacity);
+        let opacity = if window.is_window_active() { 1.0 } else { unfocused };
+        tachyon_platform::set_window_opacity(window, opacity);
+    }
+
     pub fn is_note(&self) -> bool {
         self.note.is_some()
     }
