@@ -1053,8 +1053,9 @@ enum NoteSource {
 /// everywhere the native one would have been; see `TitlebarOptions::appears_transparent`'s own
 /// doc comment), and `WindowBackgroundAppearance::Transparent` only when translucency is
 /// actually on (`sticky_unfocused_opacity < 1.0`) - requesting it unconditionally would cost
-/// every note a compositor blend even at the fully-opaque default.
-fn note_window_options(bounds: Bounds<Pixels>, translucent: bool) -> WindowOptions {
+/// every note a compositor blend even at the fully-opaque default. `focus` is false for a
+/// restored note, so it opens without taking focus from the active window.
+fn note_window_options(bounds: Bounds<Pixels>, translucent: bool, focus: bool) -> WindowOptions {
     WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         titlebar: Some(TitlebarOptions { appears_transparent: true, ..Default::default() }),
@@ -1068,7 +1069,7 @@ fn note_window_options(bounds: Bounds<Pixels>, translucent: bool) -> WindowOptio
         },
         is_minimizable: false,
         show: true,
-        focus: true,
+        focus,
         ..Default::default()
     }
 }
@@ -1082,6 +1083,9 @@ fn note_window_options(bounds: Bounds<Pixels>, translucent: bool) -> WindowOptio
 /// note is recorded as soon as its first autosave gives it a file, not only when it next moves.
 fn open_note_window(source: NoteSource, cx: &mut App) -> Option<WindowHandle<Editor>> {
     let settings = cx.try_global::<tachyon_editor::Settings>().cloned().unwrap_or_default();
+    // A new note is always the user's request (hotkey, `--note`, tray, palette), so it comes to
+    // the front; restored notes open where they were without taking focus from anything.
+    let activate = matches!(source, NoteSource::New);
     let (bounds, pinned, path) = match source {
         NoteSource::New => (initial_note_bounds(cx), settings.sticky_on_top, None),
         NoteSource::Restore { path, bounds, pinned } => {
@@ -1090,7 +1094,7 @@ fn open_note_window(source: NoteSource, cx: &mut App) -> Option<WindowHandle<Edi
     };
     let translucent = settings.sticky_unfocused_opacity < 1.0;
     let notice = take_pending_hotkey_notice(cx);
-    let options = note_window_options(bounds, translucent);
+    let options = note_window_options(bounds, translucent, activate);
     let result = cx.open_window(options, move |window, cx| {
         tachyon_platform::set_window_icon(window);
         let dark = Theme::for_window(window, cx).dark;
@@ -1112,6 +1116,13 @@ fn open_note_window(source: NoteSource, cx: &mut App) -> Option<WindowHandle<Edi
         Ok(handle) => {
             track_note_window(handle, bounds.origin, cx);
             let _ = handle.update(cx, |_, window, cx| {
+                // `focus: true` alone only shows the window activated when Windows' foreground
+                // lock allows it, which on the test machine was the first note only; later ones
+                // opened behind the active window. `activate_window` works around the lock the
+                // same way `show_window` does for an ordinary window.
+                if activate {
+                    window.activate_window();
+                }
                 // Again once the window is on screen: set while it was still being built, the
                 // always-on-top state did not stick for a note that opened without focus.
                 window.on_next_frame(move |window, cx| {
@@ -1216,7 +1227,16 @@ fn take_pending_hotkey_notice(cx: &mut App) -> Option<SharedString> {
 /// loading does not clear (`Editor::set_app_notice`), or - nothing open yet - queues it for the
 /// next note or window to open (`take_pending_hotkey_notice`). The hidden window kept ready for
 /// the next launch does not count as open.
+///
+/// Deferred: the conflict is found inside a window's own update (the first window's
+/// `on_next_frame`, or a settings save), and GPUI refuses to update a window from inside its own
+/// update, so an immediate `handle.update` on that window failed silently and no notice showed.
 fn notify_hotkey_conflict(message: SharedString, cx: &mut App) {
+    cx.defer(move |cx| deliver_hotkey_conflict(message, cx));
+}
+
+/// `notify_hotkey_conflict`'s delivery, outside any window update.
+fn deliver_hotkey_conflict(message: SharedString, cx: &mut App) {
     let ready = cx.try_global::<ReadyWindow>().and_then(|ready| ready.0);
     let open: Vec<WindowHandle<Editor>> = cx
         .windows()
