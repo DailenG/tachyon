@@ -300,6 +300,14 @@ pub struct Editor {
     /// the first frame, see `with_document`) or while tips are turned off; picked once and kept
     /// for the rest of the window's life otherwise.
     pub(crate) tip: Option<SharedString>,
+    /// The window's placement (normal rectangle, maximized) as last seen while it was on screen,
+    /// kept current by bounds and visibility observers (`with_document`). The session file uses
+    /// it instead of reading the window when it saves: at a real Windows shutdown the window's
+    /// maximized state is already gone by the time Tachyon is told the session is ending (seen on
+    /// the test machine: `IsZoomed` false for a window that was maximized until then), and a
+    /// minimized window has no useful placement either. `None` until the window is first seen on
+    /// screen.
+    pub(crate) last_placement: Option<(Bounds<Pixels>, bool)>,
     /// Fixed window title, if set: for a special document whose title should not follow the
     /// usual file-name / scratch-buffer rule (the What's new window; see `tachyon::whats_new`).
     /// Set once, right after the editor is created (`set_title_override`); nothing clears it.
@@ -342,6 +350,10 @@ impl Editor {
             }
         })
         .detach();
+        cx.observe_window_bounds(window, |editor, window, _| editor.note_placement(window))
+            .detach();
+        cx.observe_window_visibility(window, |editor, _, window, _| editor.note_placement(window))
+            .detach();
         let list = ListState::new(doc.blocks().len(), ListAlignment::Top, px(1000.));
         let reported = is_dark(window.appearance());
         let hint = cx.try_global::<AppearanceHint>().map(|hint| hint.dark);
@@ -393,6 +405,7 @@ impl Editor {
             lossy: false,
             notice: None,
             tip: None,
+            last_placement: None,
             title_override: None,
         };
         editor.doc.take_splices();
