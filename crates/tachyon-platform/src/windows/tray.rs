@@ -43,8 +43,9 @@ const WM_TRAY: u32 = WM_APP + 1;
 const NIN_KEYSELECT: u32 = NIN_SELECT | NINF_KEY;
 /// Context menu commands.
 const CMD_NEW_WINDOW: usize = 1;
-const CMD_ABOUT: usize = 2;
-const CMD_QUIT: usize = 3;
+const CMD_NEW_NOTE: usize = 2;
+const CMD_ABOUT: usize = 3;
+const CMD_QUIT: usize = 4;
 
 /// The image in [`ICO`] best suited to `size` pixels: the smallest at least that large, else the
 /// largest. Returns its bytes (a DIB, as `CreateIconFromResourceEx` takes it).
@@ -358,10 +359,12 @@ fn context_menu(hwnd: HWND, x: i32, y: i32) -> usize {
     if menu.is_null() {
         return 0;
     }
-    let (new_window, about, quit) =
-        (wide("New window"), wide("About Tachyon"), wide("Quit Tachyon"));
+    let (new_window, new_note, about, quit) =
+        (wide("New window"), wide("New sticky note"), wide("About Tachyon"), wide("Quit Tachyon"));
     // SAFETY: `menu` is ours; the item strings outlive the calls (the menu copies them).
     unsafe { AppendMenuW(menu, MF_STRING, CMD_NEW_WINDOW, new_window.as_ptr()) };
+    // SAFETY: as above.
+    unsafe { AppendMenuW(menu, MF_STRING, CMD_NEW_NOTE, new_note.as_ptr()) };
     // SAFETY: as above; a separator has no string.
     unsafe { AppendMenuW(menu, MF_SEPARATOR, 0, ptr::null()) };
     // SAFETY: as above.
@@ -410,6 +413,7 @@ unsafe extern "system" fn window_proc(
                     let (x, y) = words(wparam);
                     match context_menu(hwnd, x, y) {
                         CMD_NEW_WINDOW => (state.on_event)(TrayEvent::Open),
+                        CMD_NEW_NOTE => (state.on_event)(TrayEvent::NewNote),
                         CMD_ABOUT => (state.on_event)(TrayEvent::About),
                         CMD_QUIT => (state.on_event)(TrayEvent::Quit),
                         _ => {}

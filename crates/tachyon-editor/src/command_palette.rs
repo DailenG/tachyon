@@ -44,6 +44,7 @@ struct Command {
 /// adds one row here.
 const COMMANDS: &[Command] = &[
     Command { name: "New window", effect: CommandEffect::Action("tachyon::NewWindow") },
+    Command { name: "New sticky note", effect: CommandEffect::Action("tachyon::NewNote") },
     Command { name: "Open", effect: CommandEffect::Action("tachyon::Open") },
     Command { name: "Save", effect: CommandEffect::Action("editor::Save") },
     Command { name: "Save As", effect: CommandEffect::Action("editor::SaveAs") },

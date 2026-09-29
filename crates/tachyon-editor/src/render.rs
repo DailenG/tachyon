@@ -8,8 +8,8 @@ use std::sync::Arc;
 use gpui::{
     AnyElement, Context, ElementInputHandler, Entity, FontWeight, HighlightStyle, IntoElement,
     MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit, Pixels, Render, SharedString, Size,
-    StyledImage as _, StyledText, TextLayout, UnderlineStyle, Window, canvas, div, fill, img, list,
-    prelude::*, px, relative, size,
+    StyledImage as _, StyledText, TextLayout, UnderlineStyle, Window, WindowControlArea, canvas,
+    div, fill, img, list, prelude::*, px, relative, size,
 };
 use tachyon_doc::raw_segment_lens;
 use tachyon_md::{BlockKind, LineInfo, LineKind, Marker, ParsedBlock};
@@ -121,6 +121,18 @@ impl Render for Editor {
             .clone()
             .filter_map(|i| self.list.bounds_for_item(i).map(|b| (i, b)))
             .collect();
+        // Translucency (issue #69): a sticky note renders at `sticky_unfocused_opacity` while
+        // its window is not active, header included - focused, or an ordinary window, it is
+        // always fully opaque.
+        let note_opacity = if self.is_note() && !window.is_window_active() {
+            cx.try_global::<crate::settings::Settings>()
+                .map_or(1.0, |settings| settings.sticky_unfocused_opacity)
+        } else {
+            1.0
+        };
+        // A note's compact layout keeps a smaller frame gap (1 rem, matching `px_4`'s own
+        // one-rem text inset) than an ordinary window's `py_6` (1.5 rem).
+        let list_padding_y = window.rem_size() * if self.is_note() { 1. } else { 1.5 };
         div()
             .id("editor")
             .key_context(KEY_CONTEXT)
@@ -133,6 +145,7 @@ impl Render for Editor {
             .font_family(self.theme.text_font.clone())
             .text_size(self.theme.text_size)
             .line_height(relative(1.6))
+            .opacity(note_opacity)
             .on_action(cx.listener(Self::backspace))
             .on_action(cx.listener(Self::delete))
             .on_action(cx.listener(Self::delete_word_left))
@@ -191,6 +204,7 @@ impl Render for Editor {
             .on_action(cx.listener(Self::save))
             .on_action(cx.listener(Self::save_as))
             .on_action(cx.listener(Self::close_window))
+            .on_action(cx.listener(Self::toggle_note_pin))
             .on_action(cx.listener(Self::toggle_frame_stats))
             .on_action(cx.listener(Self::toggle_text_mode))
             .on_mouse_down(
@@ -211,6 +225,7 @@ impl Render for Editor {
                 MouseButton::Left,
                 cx.listener(|editor, _, _, _| editor.selecting = false),
             )
+            .children(self.note_header(cx))
             .children(self.mode_notice())
             .children(self.tip_overlay())
             .child(
@@ -222,7 +237,7 @@ impl Render for Editor {
                 )
                 .w_full()
                 .flex_1()
-                .py_6(),
+                .py(list_padding_y),
             )
             .child(
                 canvas(
@@ -559,6 +574,10 @@ impl Editor {
     /// only thing in that space. Decorative: no id and no mouse handler, so it is neither
     /// hit-tested nor selectable.
     fn tip_overlay(&self) -> Option<AnyElement> {
+        // No Pro Tip in a sticky note's compact layout.
+        if self.is_note() {
+            return None;
+        }
         let tip = self.tip.clone()?;
         let theme = &self.theme;
         Some(
@@ -581,6 +600,90 @@ impl Editor {
                 )
                 .into_any_element(),
         )
+    }
+
+    /// The sticky note's compact header, replacing the native title bar
+    /// (`crates/tachyon/src/app.rs`'s `note_window_options` sets `TitlebarOptions::
+    /// appears_transparent`): a drag area showing the note's name (`Editor::title`), a pin
+    /// toggle - only when `tachyon_platform::supports_always_on_top()` says the platform does
+    /// anything with it - and a close button. `None` for an ordinary editor window. The drag
+    /// area sets `WindowControlArea::Drag` (Windows/macOS's own hit-test convention for a
+    /// custom title bar) and calls `Window::start_window_move` on a plain mouse-down, covering
+    /// the platforms where the hit-test area alone does not initiate the move.
+    fn note_header(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.is_note() {
+            return None;
+        }
+        let theme = &self.theme;
+        let editor = cx.entity();
+        let pinned = self.note_pinned();
+        let close_editor = editor.clone();
+        let mut header = div()
+            .id("note-header")
+            .flex()
+            .flex_none()
+            .items_center()
+            .h(theme.scaled(px(28.)))
+            .px_2()
+            .gap_2()
+            .bg(theme.surface.raised)
+            .border_b_1()
+            .border_color(theme.border.subtle)
+            .window_control_area(WindowControlArea::Drag)
+            .on_mouse_down(MouseButton::Left, move |_event: &MouseDownEvent, window, _cx| {
+                window.start_window_move();
+            })
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .text_size(theme.scaled(px(12.)))
+                    .text_color(theme.text.muted)
+                    .child(SharedString::from(self.title())),
+            );
+        if tachyon_platform::supports_always_on_top() {
+            let pin_editor = editor.clone();
+            header = header.child(
+                div()
+                    .id("note-pin")
+                    .flex_none()
+                    .size(theme.scaled(px(20.)))
+                    .rounded(theme.radius_small)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .cursor_pointer()
+                    .when(pinned, |d| d.bg(theme.accent).text_color(theme.text.on_accent))
+                    .when(!pinned, |d| d.text_color(theme.text.muted))
+                    .child(if pinned { "\u{25cf}" } else { "\u{25cb}" })
+                    .on_mouse_down(MouseButton::Left, move |_event: &MouseDownEvent, window, cx| {
+                        pin_editor.update(cx, |editor, cx| {
+                            editor.toggle_note_pin(&crate::editor::ToggleNotePin, window, cx);
+                        });
+                    }),
+            );
+        }
+        header = header.child(
+            div()
+                .id("note-close")
+                .flex_none()
+                .size(theme.scaled(px(20.)))
+                .rounded(theme.radius_small)
+                .flex()
+                .items_center()
+                .justify_center()
+                .cursor_pointer()
+                .text_color(theme.text.muted)
+                .window_control_area(WindowControlArea::Close)
+                .child("\u{2715}")
+                .on_mouse_down(MouseButton::Left, move |_event: &MouseDownEvent, window, cx| {
+                    close_editor.update(cx, |editor, cx| {
+                        editor.close_window(&crate::editor::CloseWindow, window, cx);
+                    });
+                }),
+        );
+        Some(header.into_any_element())
     }
 }
 

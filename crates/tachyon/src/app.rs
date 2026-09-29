@@ -5,8 +5,8 @@ use std::time::Instant;
 use futures::StreamExt as _;
 use gpui::{
     App, Bounds, Context, Global, KeyBinding, PathPromptOptions, Pixels, Point, QuitMode,
-    SharedString, Size, TitlebarOptions, WindowAppearance, WindowBounds, WindowHandle,
-    WindowOptions, actions, point, prelude::*, px, size,
+    SharedString, Size, TitlebarOptions, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowHandle, WindowOptions, actions, point, prelude::*, px, size,
 };
 use tachyon_doc::Document;
 use tachyon_editor::{Editor, Theme};
@@ -16,7 +16,7 @@ use crate::cli::{self, Cli};
 use crate::startup::Startup;
 use crate::whats_new;
 
-actions!(tachyon, [Quit, NewWindow, Open, OpenSettings, WhatsNew]);
+actions!(tachyon, [Quit, NewWindow, Open, OpenSettings, WhatsNew, NewNote]);
 
 const APP_ID: &str = "tachyon";
 
@@ -62,7 +62,7 @@ impl Source {
         if cli.paste {
             sources.push(Source::Clipboard);
         }
-        if sources.is_empty() {
+        if sources.is_empty() && !cli.note {
             sources.push(Source::Sample);
         }
         sources
@@ -156,6 +156,18 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
         });
         receiver
     });
+    // Sticky notes (issue #69) have their own small state file, read the same way and
+    // sharing the same start-up budget (`SETTINGS_WAIT`, below) - never gated by
+    // `restore_session`: notes are outside the regular session on purpose (ADR 0009).
+    let notes_state_file = tachyon_platform::state_dir()
+        .map(|dir| dir.join(format!("notes-{}.txt", crate::instance_id())));
+    let notes_state_read = listener.as_ref().and_then(|_| notes_state_file.clone()).map(|file| {
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        std::thread::spawn(move || {
+            let _ = sender.send(tachyon_editor::read_notes_state(&file));
+        });
+        receiver
+    });
     let primary_backups = listener
         .as_ref()
         .and_then(|_| tachyon_platform::state_dir())
@@ -183,6 +195,16 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
         }
         if is_primary && let Some(file) = session_file.clone() {
             cx.set_global(SessionPath(file));
+        }
+        if is_primary && let Some(file) = notes_state_file.clone() {
+            cx.set_global(NotesStatePath(file));
+        }
+        if let Some(dir) = tachyon_platform::documents_dir() {
+            cx.set_global(tachyon_editor::NotesDir(dir.join("tachyon").join("notes")));
+        }
+        cx.set_global(tachyon_editor::NotesChanged(refresh_notes_state));
+        if is_primary && resident {
+            cx.set_global(tachyon_editor::StickyHotkeyRegistration { sync: sync_hotkey });
         }
 
         // Before any window opens or a notification could be posted (`App::set_app_identity`'s
@@ -212,6 +234,9 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
         });
         cx.on_action(|_: &NewWindow, cx| {
             show_window(Opening::plain(Source::Blank), cx);
+        });
+        cx.on_action(|_: &NewNote, cx| {
+            open_note_window(NoteSource::New, cx);
         });
         cx.on_action(|_: &WhatsNew, cx| {
             if !whats_new::NOTES.is_empty() {
@@ -279,6 +304,7 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
                 // Session restore (issue #79): written first, while every window is still open
                 // and, outside that update, readable - the window Quit came from included.
                 write_session_now(cx);
+                write_notes_state_now(cx);
                 let windows = cx.windows();
                 if windows.is_empty() {
                     cx.quit();
@@ -350,7 +376,22 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
                 read.recv_timeout(deadline.saturating_duration_since(Instant::now())).ok()
             })
             .unwrap_or_default();
+        let notes_state: Vec<tachyon_editor::NoteWindowState> = notes_state_read
+            .and_then(|read| {
+                read.recv_timeout(deadline.saturating_duration_since(Instant::now())).ok()
+            })
+            .unwrap_or_default();
         let restore_session = settings.restore_session;
+        // Every listed note whose file still exists reopens (issue #69) - unconditional,
+        // unlike the regular session: notes are not gated by `restore_session` (ADR 0009).
+        let mut note_openings: Vec<NoteSource> = tachyon_editor::existing_notes(notes_state)
+            .into_iter()
+            .map(|note| NoteSource::Restore {
+                path: note.path,
+                bounds: note.bounds,
+                pinned: note.pinned,
+            })
+            .collect();
         let primary_backups = primary_backups.filter(|_| settings.hot_exit);
         cx.set_global(settings);
         if let Some(file) = settings_file {
@@ -382,15 +423,22 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
         // A background start with nothing to open (login autostart) stays
         // windowless until the first launch arrives, which brings the restored documents along.
         let about = cli.about;
-        let mut openings: Vec<Opening> = if resident && cli.background && cli.opens_nothing() {
+        let note = cli.note;
+        let windowless_background = resident && cli.background && cli.opens_nothing();
+        let mut openings: Vec<Opening> = if windowless_background {
             cx.set_global(PendingRestore(session_openings));
             // No window will open to carry the theme to the tray's context menu (Windows) the
             // way `open_window` and `prepare_ready_window` do, so it is resolved here instead,
             // the one time this path is windowless.
             tachyon_platform::set_popup_menu_dark(resolved_dark(cx));
-            // No first frame will come either: register for restart right away rather than
-            // waiting for one that never happens.
+            // No first frame will come either: register for restart, and sync the sticky-note
+            // hotkey, right away rather than waiting for one that never happens - and reopen
+            // any restored notes right away for the same reason (issue #69).
             tachyon_editor::sync_restart_registration(cx);
+            tachyon_editor::sync_sticky_hotkey(cx);
+            for note in note_openings.drain(..) {
+                open_note_window(note, cx);
+            }
             Vec::new()
         } else if about {
             // `--about` shows the About window, not a document window; restored documents (hot
@@ -449,14 +497,31 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
                     if is_primary {
                         check_whats_new(cx);
                         // After the first frame, never before it (issue #80); a no-op unless
-                        // `RestartRegistration` was set above (resident primary only).
+                        // `RestartRegistration`/`StickyHotkeyRegistration` were set above
+                        // (resident primary only).
                         tachyon_editor::sync_restart_registration(cx);
+                        tachyon_editor::sync_sticky_hotkey(cx);
                     }
                     for opening in deferred {
                         open_window(opening, cx);
                     }
+                    for note in note_openings {
+                        open_note_window(note, cx);
+                    }
                 });
             });
+        } else {
+            // Nothing opened as the first window (every source failed, or an `--about`-only
+            // launch with no session/hot-exit backups to restore): restored notes have no
+            // frame to wait for either, so they open right away, the same as the windowless
+            // `--background` branch above (already drained to empty there, so this is a no-op
+            // in that case).
+            for note in note_openings {
+                open_note_window(note, cx);
+            }
+        }
+        if note {
+            open_note_window(NoteSource::New, cx);
         }
         if about {
             tachyon_editor::open_about(cx);
@@ -898,6 +963,320 @@ fn open_paths(paths: Vec<PathBuf>, cx: &mut App) {
     cx.activate(true);
 }
 
+
+// ---------------------------------------------------------------------------------------------
+// Sticky notes (issue #69): quick, autosaved Markdown windows. `tachyon_editor::notes` holds the
+// naming rules and the state-file format; everything here is the window itself - creating one,
+// restoring the notes state file's own list at start-up, and the global hotkey that opens one
+// from anywhere.
+// ---------------------------------------------------------------------------------------------
+
+/// A sticky note's default size: 360x360 logical pixels, cascaded like any other window
+/// (`cascade_origin`, reused - it is pure and does not care which cascade feeds it) but tracked
+/// separately from ordinary document windows (`NoteCascade`, not `WindowCascade`): a note must
+/// never appear in `write_session_now`'s own walk, since it is outside the regular session on
+/// purpose (ADR 0009).
+const NOTE_SIZE: Size<Pixels> = size(px(360.), px(360.));
+
+/// Notes opened so far, oldest first, each with the origin it opened at - `WindowCascade`'s own
+/// counterpart for notes, used only by `initial_note_bounds`'s cascade and `write_notes_state_now`'s
+/// walk (never the regular session file's).
+struct NoteCascade(Vec<(WindowHandle<Editor>, Point<Pixels>)>);
+
+impl Global for NoteCascade {}
+
+fn track_note_window(handle: WindowHandle<Editor>, origin: Point<Pixels>, cx: &mut App) {
+    if cx.has_global::<NoteCascade>() {
+        cx.global_mut::<NoteCascade>().0.push((handle, origin));
+    } else {
+        cx.set_global(NoteCascade(vec![(handle, origin)]));
+    }
+}
+
+/// `last_window_origin`'s own counterpart for notes.
+fn last_note_origin(cx: &mut App) -> Option<Point<Pixels>> {
+    cx.try_global::<NoteCascade>()?;
+    let open: Vec<_> = cx.windows().iter().map(|window| window.window_id()).collect();
+    let cascade = &mut cx.global_mut::<NoteCascade>().0;
+    cascade.retain(|(handle, _)| open.contains(&handle.window_id()));
+    let (handle, opened_at) = *cascade.last()?;
+    let current = handle.update(cx, |_, window, _| window.window_bounds().get_bounds().origin);
+    Some(current.unwrap_or(opened_at))
+}
+
+/// `NOTE_SIZE`, shrunk to fit the primary display's work area exactly like `initial_bounds`
+/// shrinks `WINDOW_SIZE`; the first note is centred there, every later one cascades from the last
+/// still-open note (`cascade_origin`).
+fn initial_note_bounds(cx: &mut App) -> Bounds<Pixels> {
+    let Some(display) = cx.primary_display() else {
+        return Bounds::centered(None, NOTE_SIZE, cx);
+    };
+    let visible = display.visible_bounds();
+    let fitted = size(
+        NOTE_SIZE.width.min(visible.size.width - FRAME_ALLOWANCE),
+        NOTE_SIZE.height.min(visible.size.height - FRAME_ALLOWANCE),
+    );
+    let centered = Bounds::centered_at(visible.center(), fitted);
+    let last = last_note_origin(cx);
+    Bounds { origin: cascade_origin(last, centered.origin, fitted, visible), size: fitted }
+}
+
+/// `clamp_to_work_area`'s own counterpart for a restored note, falling back to
+/// `initial_note_bounds` instead of `initial_bounds` (`fit_to_work_area` itself is shared: pure,
+/// and independent of which cascade it is for).
+fn clamp_note_to_work_area(bounds: Bounds<Pixels>, cx: &mut App) -> Bounds<Pixels> {
+    let Some(display) = cx.primary_display() else { return initial_note_bounds(cx) };
+    fit_to_work_area(bounds, display.visible_bounds())
+}
+
+/// What a note window opens with: blank (the hotkey, `--note`, the palette row, the tray) or
+/// restored from the notes state file at a resident start, at its own recorded bounds and pin
+/// state.
+enum NoteSource {
+    New,
+    Restore { path: PathBuf, bounds: Bounds<Pixels>, pinned: bool },
+}
+
+/// A note's window options: its own compact size, a title bar the application draws itself
+/// (`tachyon_editor::Editor::render`'s compact header - drag area, pin, close - covers
+/// everywhere the native one would have been; see `TitlebarOptions::appears_transparent`'s own
+/// doc comment), and `WindowBackgroundAppearance::Transparent` only when translucency is
+/// actually on (`sticky_unfocused_opacity < 1.0`) - requesting it unconditionally would cost
+/// every note a compositor blend even at the fully-opaque default.
+fn note_window_options(bounds: Bounds<Pixels>, translucent: bool) -> WindowOptions {
+    WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(bounds)),
+        titlebar: Some(TitlebarOptions { appears_transparent: true, ..Default::default() }),
+        app_id: Some(APP_ID.to_owned()),
+        window_background: if translucent {
+            WindowBackgroundAppearance::Transparent
+        } else {
+            WindowBackgroundAppearance::Opaque
+        },
+        is_minimizable: false,
+        show: true,
+        focus: true,
+        ..Default::default()
+    }
+}
+
+/// Opens a sticky note window (issue #69): blank, or restored from disk at its own bounds and
+/// pin state. Always-on-top is applied right away (`tachyon_platform::set_always_on_top`) -
+/// `Editor::make_note` only records the pin *state*; making the OS call is the application's job,
+/// the same way `set_title_bar_dark` is. Bounds/visibility observers keep the notes state file
+/// current for the rest of this window's life (a move, a resize, or the pin toggling from inside
+/// the note); `refresh_notes_state` also runs once right after it opens, so a brand new blank
+/// note is recorded as soon as its first autosave gives it a file, not only when it next moves.
+fn open_note_window(source: NoteSource, cx: &mut App) -> Option<WindowHandle<Editor>> {
+    let settings = cx.try_global::<tachyon_editor::Settings>().cloned().unwrap_or_default();
+    let (bounds, pinned, path) = match source {
+        NoteSource::New => (initial_note_bounds(cx), settings.sticky_on_top, None),
+        NoteSource::Restore { path, bounds, pinned } => {
+            (clamp_note_to_work_area(bounds, cx), pinned, Some(path))
+        }
+    };
+    let translucent = settings.sticky_unfocused_opacity < 1.0;
+    let notice = take_pending_hotkey_notice(cx);
+    let options = note_window_options(bounds, translucent);
+    let result = cx.open_window(options, move |window, cx| {
+        tachyon_platform::set_window_icon(window);
+        let dark = Theme::for_window(window, cx).dark;
+        tachyon_platform::set_title_bar_dark(window, dark);
+        tachyon_platform::set_always_on_top(window, pinned);
+        cx.new(|cx| {
+            let mut editor = Editor::with_document(Document::new(""), window, cx);
+            editor.make_note(pinned);
+            if let Some(notice) = notice.clone() {
+                editor.set_notice(notice, cx);
+            }
+            if let Some(path) = path.clone() {
+                load_note_file(path, cx);
+            }
+            editor
+        })
+    });
+    match result {
+        Ok(handle) => {
+            track_note_window(handle, bounds.origin, cx);
+            let _ = handle.update(cx, |_, window, cx| {
+                cx.observe_window_bounds(window, |_, _, cx| cx.defer(refresh_notes_state))
+                    .detach();
+                cx.observe_window_visibility(window, |_, _, _, cx| cx.defer(refresh_notes_state))
+                    .detach();
+            });
+            refresh_notes_state(cx);
+            Some(handle)
+        }
+        Err(e) => {
+            eprintln!("tachyon: failed to open a sticky note: {e:#}");
+            None
+        }
+    }
+}
+
+/// Reads a restored note's file in the background (`tachyon_editor::load_document`, the same
+/// Markdown/plain-text/size-limit rules any other file gets), off the UI thread. Unlike an
+/// ordinary window's `load_file`, there is no "Loading..." placeholder (a note is always small
+/// enough that this is brief) and nothing recorded to reapply once it lands (notes keep no
+/// caret/scroll/mode - see `tachyon_editor::notes`'s own module doc comment); a file that
+/// vanished or failed to read between the state file listing it and this read running is left as
+/// a blank, unnamed note rather than showing an error string in a small chrome-less window - it
+/// simply never had this path assigned, so its own next autosave (typing something) names it
+/// afresh.
+fn load_note_file(path: PathBuf, cx: &mut Context<Editor>) {
+    cx.spawn(async move |editor, cx| {
+        let read_path = path.clone();
+        let outcome = cx
+            .background_executor()
+            .spawn(async move { tachyon_editor::load_document(&read_path) })
+            .await;
+        let _ = editor.update(cx, |editor, cx| {
+            if let Ok(tachyon_editor::LoadOutcome::Loaded(loaded)) = outcome {
+                editor.set_loaded(*loaded, cx);
+                editor.adopt_note_file(path, cx);
+            }
+        });
+    })
+    .detach();
+}
+
+/// Where the notes state file lives for this instance - set only for a resident primary, the
+/// same gating `SessionPath` uses: a standalone or secondary process never restores or persists
+/// notes of its own.
+struct NotesStatePath(PathBuf);
+
+impl Global for NotesStatePath {}
+
+/// Every currently open note's record (`Editor::note_window_state`), via `NoteCascade` - the
+/// counterpart to `write_session_now`'s own walk over `WindowCascade`, kept as a wholly separate
+/// pass since a note is never in that file (ADR 0009).
+fn write_notes_state_now(cx: &mut App) {
+    let Some(path) = cx.try_global::<NotesStatePath>().map(|p| p.0.clone()) else { return };
+    let handles: Vec<WindowHandle<Editor>> = cx
+        .try_global::<NoteCascade>()
+        .map_or_else(Vec::new, |cascade| cascade.0.iter().map(|(handle, _)| *handle).collect());
+    let mut notes = Vec::new();
+    for handle in handles {
+        if let Ok(Some(state)) = handle.update(cx, |editor, _, _| editor.note_window_state()) {
+            notes.push(state);
+        }
+    }
+    let _ = tachyon_editor::write_notes_state(&path, &notes);
+}
+
+/// Rewrites the notes state file for the notes open right now: a note's set changing (opened,
+/// closed, named for the first time), moving, resizing, or its pin toggling
+/// (`tachyon_editor::NotesChanged`'s own hook, set to this once in `run`) - unlike the regular
+/// session file, always, even mid-Quit: a note's own state has nowhere else it would still get
+/// written from.
+fn refresh_notes_state(cx: &mut App) {
+    write_notes_state_now(cx);
+}
+
+/// A one-line notice ("the sticky-note hotkey is already in use") set aside for the next note or
+/// window to show, when none is open yet at the moment the conflict is discovered (most often
+/// start-up, before the first window opens). Applied directly to whatever is already open
+/// instead, when there is one (`notify_hotkey_conflict`).
+struct PendingHotkeyNotice(SharedString);
+
+impl Global for PendingHotkeyNotice {}
+
+fn take_pending_hotkey_notice(cx: &mut App) -> Option<SharedString> {
+    if cx.has_global::<PendingHotkeyNotice>() {
+        Some(cx.remove_global::<PendingHotkeyNotice>().0)
+    } else {
+        None
+    }
+}
+
+/// Shows `message` in whatever window is open right now (the first one found), or - nothing open
+/// yet - queues it for the next note or window to open (`take_pending_hotkey_notice`).
+fn notify_hotkey_conflict(message: SharedString, cx: &mut App) {
+    let existing = cx.windows().into_iter().find_map(|window| window.downcast::<Editor>());
+    match existing {
+        Some(handle) => {
+            let _ = handle.update(cx, |editor, _, cx| editor.set_notice(message, cx));
+        }
+        None => cx.set_global(PendingHotkeyNotice(message)),
+    }
+}
+
+/// The global hotkey currently registered for `sticky_hotkey`, if any - `None` while the setting
+/// is empty, unsupported on this platform, or a previous attempt failed. Compared against the
+/// setting's own current text (`sync_hotkey`) so a settings save that did not actually change
+/// `sticky_hotkey` never unregisters and re-registers for nothing.
+struct StickyHotkey {
+    spec: String,
+    _guard: Option<tachyon_platform::GlobalHotkey>,
+}
+
+impl Global for StickyHotkey {}
+
+/// Registers `hotkey`, forwarding a press to this process's own async loop over a channel - the
+/// same pattern `show_tray` uses for its own platform thread: `on_press` runs on
+/// `tachyon_platform`'s dedicated hotkey thread, so it cannot touch GPUI state directly.
+fn register_sticky_hotkey(
+    hotkey: tachyon_platform::Hotkey,
+    cx: &mut App,
+) -> Result<tachyon_platform::GlobalHotkey, tachyon_platform::HotkeyError> {
+    let (tx, mut rx) = futures::channel::mpsc::unbounded::<()>();
+    let guard = tachyon_platform::register_global_hotkey(
+        hotkey,
+        Box::new(move || {
+            let _ = tx.unbounded_send(());
+        }),
+    )?;
+    cx.spawn(async move |cx| {
+        while rx.next().await.is_some() {
+            cx.update(|cx| {
+                open_note_window(NoteSource::New, cx);
+                cx.activate(true);
+            });
+        }
+    })
+    .detach();
+    Ok(guard)
+}
+
+/// `tachyon_editor::StickyHotkeyRegistration`'s `sync` implementation: diffs the `sticky_hotkey`
+/// setting against whatever is currently registered (`StickyHotkey`), and only touches the
+/// platform hotkey if it actually changed - called once after the first frame and again on every
+/// settings save (`tachyon_editor::sync_sticky_hotkey`'s own doc comment). An empty setting or an
+/// unsupported platform (`HotkeyError::Unsupported` - Linux and macOS today) both mean no hotkey,
+/// quietly; only `HotkeyError::InUse` is surfaced to the user (`notify_hotkey_conflict`) - the
+/// one failure a person can actually do something about (close whatever else is using it, or
+/// change the setting).
+fn sync_hotkey(cx: &mut App) {
+    let spec = cx
+        .try_global::<tachyon_editor::Settings>()
+        .map(|settings| settings.sticky_hotkey.clone())
+        .unwrap_or_default();
+    if cx.try_global::<StickyHotkey>().is_some_and(|current| current.spec == spec) {
+        return;
+    }
+    let guard = match tachyon_platform::Hotkey::parse(&spec) {
+        None => None,
+        Some(hotkey) => match register_sticky_hotkey(hotkey, cx) {
+            Ok(guard) => Some(guard),
+            Err(tachyon_platform::HotkeyError::InUse) => {
+                eprintln!("tachyon: the sticky-note hotkey ({spec}) is already in use");
+                notify_hotkey_conflict(
+                    format!("The sticky-note hotkey ({spec}) is already in use by another app")
+                        .into(),
+                    cx,
+                );
+                None
+            }
+            Err(tachyon_platform::HotkeyError::Unsupported) => None,
+            Err(tachyon_platform::HotkeyError::Failed(message)) => {
+                eprintln!("tachyon: could not register the sticky-note hotkey: {message}");
+                None
+            }
+        },
+    };
+    cx.set_global(StickyHotkey { spec, _guard: guard });
+}
+
 /// A line for `cargo xtask bench-startup`, flushed immediately.
 fn report_line(line: &str) {
     let mut stdout = std::io::stdout().lock();
@@ -1049,10 +1428,15 @@ fn write_session_now(cx: &mut App) {
     // instance keeps running after it, so a reboot would otherwise reopen nothing. Only open
     // windows are counted, not the hidden one kept ready for the next launch.
     let ready = cx.try_global::<ReadyWindow>().and_then(|ready| ready.0);
-    let any_open = cx
-        .windows()
-        .into_iter()
-        .any(|window| window.downcast::<Editor>().is_some_and(|editor| Some(editor) != ready));
+    // A note window never counts: it is never part of this file (ADR 0009), so its own
+    // opening or closing must not make an otherwise-windowless instance rewrite this one -
+    // that would wipe what was open the last time an ordinary document window was.
+    let any_open = cx.windows().into_iter().any(|window| {
+        window.downcast::<Editor>().is_some_and(|editor| {
+            Some(editor) != ready
+                && editor.update(cx, |editor, _, _| !editor.is_note()).unwrap_or(false)
+        })
+    });
     if !any_open {
         return;
     }
@@ -1087,6 +1471,7 @@ fn refresh_session(cx: &mut App) {
 fn save_for_session_end(cx: &mut App) {
     backup_every_window_for_session_end(cx);
     write_session_now(cx);
+    write_notes_state_now(cx);
 }
 
 /// The resident instance's tray icon (Windows), removed when the app quits.
@@ -1140,8 +1525,17 @@ enum TrayMessage {
 fn backup_every_window_for_session_end(cx: &mut App) {
     for window in cx.windows() {
         if let Some(editor) = window.downcast::<Editor>() {
-            let outcome = editor
-                .update(cx, |editor, _, cx| (editor.title(), editor.backup_for_session_end(cx)));
+            let outcome = editor.update(cx, |editor, _, cx| {
+                // A sticky note is never a hot-exit backup (`notes.rs`'s own module doc
+                // comment): its own file is flushed here instead, the same synchronous,
+                // cannot-be-deferred write `backup_for_session_end` is for an ordinary window.
+                let safe = if editor.is_note() {
+                    editor.flush_note(cx)
+                } else {
+                    editor.backup_for_session_end(cx)
+                };
+                (editor.title(), safe)
+            });
             if let Ok((title, false)) = outcome {
                 eprintln!("tachyon: could not back up \"{title}\" before session end");
             }
@@ -1207,6 +1601,10 @@ fn show_tray(cx: &mut App) {
                             tachyon_editor::open_about(cx);
                             cx.activate(true);
                         }
+                        TrayEvent::NewNote => {
+                            open_note_window(NoteSource::New, cx);
+                            cx.activate(true);
+                        }
                         TrayEvent::Quit => cx.dispatch_action(&Quit),
                         // Intercepted above, before it ever reaches this channel.
                         TrayEvent::EndSession => {}
@@ -1241,6 +1639,13 @@ fn serve_forwarded_launches(listener: Listener, cx: &mut App) {
             if cli.about {
                 cx.update(|cx| {
                     tachyon_editor::open_about(cx);
+                    cx.activate(true);
+                });
+                continue;
+            }
+            if cli.note {
+                cx.update(|cx| {
+                    open_note_window(NoteSource::New, cx);
                     cx.activate(true);
                 });
                 continue;

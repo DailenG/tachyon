@@ -633,6 +633,7 @@ fn a_100_percent_content_width_still_leaves_a_frame_gap(cx: &mut TestAppContext)
             whats_new: true,
             restore_session: true,
             content_width: crate::ContentWidth::Percent(100.),
+            ..Default::default()
         })
     });
     let (editor, cx) = open("hello\n", cx);
@@ -1783,6 +1784,7 @@ fn theme_row_order(initial: crate::ThemeChoice, cx: &mut TestAppContext) -> Vec<
             whats_new: true,
             restore_session: true,
             content_width: crate::ContentWidth::default(),
+            ..Default::default()
         });
     });
     let (editor, cx) = open("text\n", cx);
@@ -1837,6 +1839,7 @@ fn command_palette_theme_light_applies_at_once_and_persists_keeping_a_comment(
             whats_new: true,
             restore_session: true,
             content_width: crate::ContentWidth::default(),
+            ..Default::default()
         });
         cx.set_global(crate::SettingsFile(file.clone()));
     });
@@ -1877,6 +1880,7 @@ fn command_palette_whats_new_toggle_turns_it_off_and_persists_keeping_other_line
             whats_new: true,
             restore_session: true,
             content_width: crate::ContentWidth::default(),
+            ..Default::default()
         });
         cx.set_global(crate::SettingsFile(file.clone()));
     });
@@ -1959,6 +1963,7 @@ fn settings_choose_theme_and_zoom_and_saving_them_applies_at_once(cx: &mut TestA
             whats_new: true,
             restore_session: true,
             content_width: crate::ContentWidth::default(),
+            ..Default::default()
         });
         cx.set_global(crate::SettingsFile(file.clone()));
     });
@@ -2038,6 +2043,7 @@ fn prompts_use_the_theme_the_settings_choose(cx: &mut TestAppContext) {
             whats_new: true,
             restore_session: true,
             content_width: crate::ContentWidth::default(),
+            ..Default::default()
         })
     });
     let (_editor, cx) = open("", cx);
@@ -2415,6 +2421,7 @@ fn tips_false_in_settings_keeps_the_tip_hidden(cx: &mut TestAppContext) {
             whats_new: true,
             restore_session: true,
             content_width: crate::ContentWidth::default(),
+            ..Default::default()
         })
     });
     let (editor, cx) = open("", cx);
@@ -2447,6 +2454,7 @@ fn saving_tips_false_hides_an_already_shown_tip(cx: &mut TestAppContext) {
             whats_new: true,
             restore_session: true,
             content_width: crate::ContentWidth::default(),
+            ..Default::default()
         });
         cx.set_global(crate::SettingsFile(file.clone()));
     });
@@ -2510,4 +2518,150 @@ fn restore_view_switches_mode_but_refuses_markdown_above_the_size_limit(cx: &mut
         tachyon_doc::DocMode::Plain,
         "refused above the size limit, the same as a manual toggle"
     );
+}
+
+
+// -------------------------------------------------------------------------------------------
+// Sticky notes (issue #69).
+// -------------------------------------------------------------------------------------------
+
+/// A fresh, empty notes folder for a test, removed first if an earlier run left it.
+fn notes_dir(name: &str) -> std::path::PathBuf {
+    let dir =
+        std::env::temp_dir().join(format!("tachyon-notes-editor-tests-{}-{name}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    dir
+}
+
+/// Opens a blank sticky note (unpinned, so the pin-toggle test has something to flip) with
+/// `dir` as its `NotesDir`: the same injectable-global seam `backup_dir`'s callers use for
+/// `Backups`, so autosave never touches a real per-user path in a test.
+fn open_note(
+    dir: std::path::PathBuf,
+    cx: &mut TestAppContext,
+) -> (Entity<Editor>, &mut VisualTestContext) {
+    cx.update(crate::init);
+    cx.update(|cx| cx.set_global(crate::NotesDir(dir)));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        let mut editor = Editor::new("", window, cx);
+        editor.make_note(false);
+        editor
+    });
+    cx.run_until_parked();
+    (editor, cx)
+}
+
+const AUTOSAVE_PAUSE: std::time::Duration = std::time::Duration::from_millis(1600);
+
+#[gpui::test]
+fn a_note_autosaves_into_the_notes_folder_after_the_typing_pause_with_no_prompt(
+    cx: &mut TestAppContext,
+) {
+    let dir = notes_dir("autosave");
+    let (editor, cx) = open_note(dir.clone(), cx);
+    cx.simulate_input("# Grocery list");
+    cx.run_until_parked();
+    assert!(!dir.exists(), "the pause has not elapsed yet");
+
+    cx.executor().advance_clock(AUTOSAVE_PAUSE);
+    cx.run_until_parked();
+    assert!(cx.windows().len() == 1, "autosave never prompts or closes the window");
+
+    let entries: Vec<_> = std::fs::read_dir(&dir).expect("folder created").flatten().collect();
+    assert_eq!(entries.len(), 1, "exactly one file, named from the heading");
+    let path = entries[0].path();
+    assert_eq!(path.file_stem().and_then(|s| s.to_str()), Some("Grocery list"));
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "# Grocery list");
+    assert_eq!(editor.read_with(cx, |e, _| e.file().map(|p| p.to_path_buf())), Some(path));
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[gpui::test]
+fn an_empty_note_writes_nothing_and_emptying_a_saved_one_deletes_its_file(cx: &mut TestAppContext) {
+    let dir = notes_dir("empty");
+
+    // Never typed into: closing it writes nothing at all, not even the folder.
+    let (_editor, note_cx) = open_note(dir.clone(), cx);
+    note_cx.simulate_keystrokes("secondary-w");
+    note_cx.run_until_parked();
+    assert!(!dir.exists(), "an untouched note creates no folder");
+
+    let (editor, note_cx) = open_note(dir.clone(), cx);
+    note_cx.simulate_input("Draft");
+    note_cx.executor().advance_clock(AUTOSAVE_PAUSE);
+    note_cx.run_until_parked();
+    let path = editor.read_with(note_cx, |e, _| e.file().expect("named by autosave").to_owned());
+    assert!(path.exists(), "the first save wrote the file");
+
+    note_cx.simulate_keystrokes("secondary-a backspace");
+    note_cx.executor().advance_clock(AUTOSAVE_PAUSE);
+    note_cx.run_until_parked();
+    assert!(!path.exists(), "emptying it deletes the file");
+    assert!(editor.read_with(note_cx, |e, _| e.file().is_none()));
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[gpui::test]
+fn closing_a_note_never_prompts_even_with_unsaved_text(cx: &mut TestAppContext) {
+    let dir = notes_dir("close-no-prompt");
+    let (_editor, cx) = open_note(dir.clone(), cx);
+    cx.simulate_input("Typed just now, well inside the debounce window");
+    // No prompt builder is installed (unlike `unsaved_close_prompt_works_from_the_keyboard`):
+    // if `close_window` ever fell through to the ordinary `should_close` path for a note, this
+    // would panic instead of closing.
+    cx.simulate_keystrokes("secondary-w");
+    cx.run_until_parked();
+    assert!(cx.windows().is_empty(), "closed at once, no prompt");
+
+    // The close flushed the text immediately, not waiting for the debounce.
+    let entries: Vec<_> = std::fs::read_dir(&dir).expect("folder created").flatten().collect();
+    assert_eq!(entries.len(), 1);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[gpui::test]
+fn session_state_is_none_for_a_note(cx: &mut TestAppContext) {
+    let dir = notes_dir("session-state");
+    let (editor, cx) = open_note(dir.clone(), cx);
+    cx.simulate_input("Some text");
+    cx.executor().advance_clock(AUTOSAVE_PAUSE);
+    cx.run_until_parked();
+    let state = editor.update_in(cx, |e, window, cx| e.session_state(window, cx));
+    assert!(state.is_none(), "a note is never part of the regular session file");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[gpui::test]
+fn ctrl_shift_t_toggles_the_pinned_state_and_it_is_written_to_the_notes_state_file(
+    cx: &mut TestAppContext,
+) {
+    let dir = notes_dir("pin-toggle");
+    let (editor, cx) = open_note(dir.clone(), cx);
+    // A real, positive-size placement for `note_window_state` to record (`Editor::last_placement`
+    // only ever holds one after the window has actually been seen at some bounds).
+    cx.simulate_resize(gpui::size(gpui::px(360.), gpui::px(360.)));
+    cx.run_until_parked();
+    assert!(!editor.read_with(cx, |e, _| e.note_pinned()), "starts unpinned");
+
+    cx.simulate_keystrokes("ctrl-shift-t");
+    cx.run_until_parked();
+    assert!(editor.read_with(cx, |e, _| e.note_pinned()), "toggled on");
+
+    // Name it - an unnamed note records nothing (`Editor::note_window_state`) - then write its
+    // record through the real notes-state-file functions, the same ones the application uses.
+    cx.simulate_input("Reminder");
+    cx.executor().advance_clock(AUTOSAVE_PAUSE);
+    cx.run_until_parked();
+    let record = editor
+        .read_with(cx, |e, _| e.note_window_state())
+        .expect("a named note has a record");
+    assert!(record.pinned, "the toggle is reflected in the record");
+
+    let state_path = dir.join("notes-state.txt");
+    crate::write_notes_state(&state_path, std::slice::from_ref(&record)).unwrap();
+    assert_eq!(crate::read_notes_state(&state_path), vec![record]);
+
+    std::fs::remove_dir_all(&dir).ok();
 }

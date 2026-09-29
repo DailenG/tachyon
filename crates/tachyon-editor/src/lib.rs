@@ -13,6 +13,7 @@ mod frame_stats;
 mod links;
 mod lists;
 mod movement;
+mod notes;
 mod picker;
 mod prompt;
 mod render;
@@ -28,12 +29,15 @@ pub use crate::editor::{
     ClipboardReader, CloseWindow, Editor, HtmlClipboard, KEY_CONTEXT, OpenPaths, Save, SaveAs,
     key_bindings,
 };
+pub use crate::notes::{
+    NoteWindowState, NotesChanged, NotesDir, existing_notes, read_notes_state, write_notes_state,
+};
 pub use crate::picker::{RecentFiles, RecentFilesOs};
 pub use crate::prompt::keyboard_prompt;
 pub use crate::session::{MAX_SESSION_WINDOWS, Target, WindowState, read_session, write_session};
 pub use crate::settings::{
-    ContentWidth, DEFAULT_SETTINGS, RestartRegistration, Settings, SettingsFile, ThemeChoice,
-    sync_restart_registration,
+    ContentWidth, DEFAULT_SETTINGS, RestartRegistration, Settings, SettingsFile,
+    StickyHotkeyRegistration, ThemeChoice, sync_restart_registration, sync_sticky_hotkey,
 };
 pub use crate::theme::{AppearanceHint, Theme};
 
