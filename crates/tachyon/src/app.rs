@@ -1053,8 +1053,9 @@ enum NoteSource {
 /// everywhere the native one would have been; see `TitlebarOptions::appears_transparent`'s own
 /// doc comment), and `WindowBackgroundAppearance::Transparent` only when translucency is
 /// actually on (`sticky_unfocused_opacity < 1.0`) - requesting it unconditionally would cost
-/// every note a compositor blend even at the fully-opaque default.
-fn note_window_options(bounds: Bounds<Pixels>, translucent: bool) -> WindowOptions {
+/// every note a compositor blend even at the fully-opaque default. `focus` is false for a
+/// restored note, so it opens without taking focus from the active window.
+fn note_window_options(bounds: Bounds<Pixels>, translucent: bool, focus: bool) -> WindowOptions {
     WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         titlebar: Some(TitlebarOptions { appears_transparent: true, ..Default::default() }),
@@ -1068,7 +1069,7 @@ fn note_window_options(bounds: Bounds<Pixels>, translucent: bool) -> WindowOptio
         },
         is_minimizable: false,
         show: true,
-        focus: true,
+        focus,
         ..Default::default()
     }
 }
@@ -1093,7 +1094,7 @@ fn open_note_window(source: NoteSource, cx: &mut App) -> Option<WindowHandle<Edi
     };
     let translucent = settings.sticky_unfocused_opacity < 1.0;
     let notice = take_pending_hotkey_notice(cx);
-    let options = note_window_options(bounds, translucent);
+    let options = note_window_options(bounds, translucent, activate);
     let result = cx.open_window(options, move |window, cx| {
         tachyon_platform::set_window_icon(window);
         let dark = Theme::for_window(window, cx).dark;
