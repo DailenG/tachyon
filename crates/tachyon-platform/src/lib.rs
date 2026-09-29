@@ -112,8 +112,10 @@ pub fn opacity_to_alpha(opacity: f32) -> u8 {
 }
 
 /// Sets whether `window` stays above other windows (Windows: `SetWindowPos(HWND_TOPMOST` /
-/// `HWND_NOTOPMOST, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)`). Returns whether it took effect;
-/// a no-op returning `false` where [`supports_always_on_top`] is `false`.
+/// `HWND_NOTOPMOST, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)`). Returns whether the window's
+/// state now matches `on` (Windows: `WS_EX_TOPMOST` read back after the call, since a call that
+/// reports success can still leave the style unchanged; see ADR 0010); a no-op returning `false`
+/// where [`supports_always_on_top`] is `false`.
 pub fn set_always_on_top(window: &impl raw_window_handle::HasWindowHandle, on: bool) -> bool {
     imp::set_always_on_top(window, on)
 }

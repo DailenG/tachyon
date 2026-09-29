@@ -356,6 +356,7 @@ impl Editor {
                 editor.check_disk(window, cx);
             }
             editor.apply_note_opacity(window, cx);
+            editor.apply_note_pin(window);
         })
         .detach();
         cx.observe_window_bounds(window, |editor, window, _| editor.note_placement(window))

@@ -1123,12 +1123,16 @@ fn open_note_window(source: NoteSource, cx: &mut App) -> Option<WindowHandle<Edi
                 if activate {
                     window.activate_window();
                 }
-                // Again once the window is on screen: set while it was still being built, the
-                // always-on-top state did not stick for a note that opened without focus.
+                // Again once the window is on screen, retried until it sticks: set while it was
+                // still being built, the pin did not stick for a note that opened without focus,
+                // and on a windowless `--background` start even the first-frame call left the
+                // note without `WS_EX_TOPMOST` (only the IME window it owned got it) while a later
+                // call worked (ADR 0010).
                 window.on_next_frame(move |window, cx| {
-                    tachyon_platform::set_always_on_top(window, pinned);
-                    if let Some(editor) = window.root::<Editor>().flatten() {
-                        editor.read(cx).apply_note_opacity(window, cx);
+                    let Some(editor) = window.root::<Editor>().flatten() else { return };
+                    editor.read(cx).apply_note_opacity(window, cx);
+                    if !editor.read(cx).apply_note_pin(window) {
+                        retry_note_pin(handle, cx);
                     }
                 });
                 cx.observe_window_bounds(window, |_, _, cx| cx.defer(refresh_notes_state)).detach();
@@ -1143,6 +1147,24 @@ fn open_note_window(source: NoteSource, cx: &mut App) -> Option<WindowHandle<Edi
             None
         }
     }
+}
+
+/// Re-applies a note's pin (`Editor::apply_note_pin`) on a short backoff until the window's
+/// always-on-top state matches it, giving up after about three seconds (the window stays as it
+/// is, and the next activation change applies the pin again). Stops early once the window is
+/// gone.
+fn retry_note_pin(handle: WindowHandle<Editor>, cx: &mut App) {
+    const DELAYS_MS: [u64; 6] = [50, 100, 200, 400, 800, 1600];
+    cx.spawn(async move |cx| {
+        for delay in DELAYS_MS {
+            cx.background_executor().timer(std::time::Duration::from_millis(delay)).await;
+            let applied = handle.update(cx, |editor, window, _| editor.apply_note_pin(window));
+            if applied.unwrap_or(true) {
+                return;
+            }
+        }
+    })
+    .detach();
 }
 
 /// Reads a restored note's file in the background (`tachyon_editor::load_document`, the same

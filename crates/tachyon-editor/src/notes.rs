@@ -395,6 +395,18 @@ impl Editor {
         self.note = Some(NoteState { pinned, autosave_task: None, saved_version: None });
     }
 
+    /// Applies the note's pin to its OS window (`tachyon_platform::set_always_on_top`) and
+    /// returns whether the window now matches it; `true` for an ordinary window or where the
+    /// platform has no always-on-top. Called after the note's first frame (retried from there
+    /// until it sticks, see `open_note_window`) and on every activation change.
+    pub fn apply_note_pin(&self, window: &Window) -> bool {
+        if !tachyon_platform::supports_always_on_top() {
+            return true;
+        }
+        let Some(note) = self.note.as_ref() else { return true };
+        tachyon_platform::set_always_on_top(window, note.pinned)
+    }
+
     /// A sticky note's whole-window translucency where the OS provides it (Windows; see
     /// `tachyon_platform::supports_window_opacity`): `sticky_unfocused_opacity` while the window
     /// is not active, opaque while it is. Called when activation changes, when settings are saved,
