@@ -180,6 +180,21 @@ fn floor_char_boundary(rope: &ropey::Rope, mut byte_idx: usize) -> usize {
     byte_idx
 }
 
+/// `window`'s placement for the session file: GPUI's save/restore pair `window_bounds` (the normal,
+/// unmaximized rectangle, in the coordinates a window is created with, so it lands exactly where it
+/// was; `bounds` is offset from those on Windows), and whether it is maximized. The flag also asks
+/// `is_maximized` (`IsZoomed` on Windows), which on the test machine reported a title-bar-button
+/// maximize that `window_bounds` missed.
+fn current_placement(window: &Window) -> (Bounds<Pixels>, bool) {
+    let (bounds, maximized) = match window.window_bounds() {
+        gpui::WindowBounds::Maximized(bounds) => (bounds, true),
+        gpui::WindowBounds::Windowed(bounds) | gpui::WindowBounds::Fullscreen(bounds) => {
+            (bounds, false)
+        }
+    };
+    (bounds, maximized || window.is_maximized())
+}
+
 impl Editor {
     /// This window's session record, or `None` if there is nothing worth remembering: an
     /// untouched scratch buffer (no file, never modified - the sample, a fresh New Window, the
@@ -189,6 +204,14 @@ impl Editor {
     /// `Editor::slot`; `Editor::should_close`'s own `backup_now`, run moments later as each
     /// window closes, is what actually writes it, so this only needs to fix the path the
     /// session file will name); a clean, file-backed document is recorded by its path directly.
+    /// Records the window's placement, if it is on screen (shown and not minimized): see
+    /// `Editor::last_placement`.
+    pub(crate) fn note_placement(&mut self, window: &Window) {
+        if window.is_visible() {
+            self.last_placement = Some(current_placement(window));
+        }
+    }
+
     pub fn session_state(
         &mut self,
         window: &mut Window,
@@ -206,16 +229,9 @@ impl Editor {
         // was. `bounds` is offset from those coordinates on Windows (each restore drifted 15 px
         // down at 125 %), and for a maximized window it is the maximized rectangle, not the one
         // to restore to.
-        // The maximized flag also asks `is_maximized` (`IsZoomed` on Windows): on the test
-        // machine a window maximized with its title-bar button still came back from
-        // `window_bounds` as `Windowed`, while `IsZoomed` reported it correctly.
-        let (bounds, placement_maximized) = match window.window_bounds() {
-            gpui::WindowBounds::Maximized(bounds) => (bounds, true),
-            gpui::WindowBounds::Windowed(bounds) | gpui::WindowBounds::Fullscreen(bounds) => {
-                (bounds, false)
-            }
-        };
-        let maximized = placement_maximized || window.is_maximized();
+        // The placement last seen on screen (`note_placement`), not the window's state right
+        // now: saving at a Windows session end otherwise recorded maximized windows as normal.
+        let (bounds, maximized) = self.last_placement.unwrap_or_else(|| current_placement(window));
         Some(WindowState {
             target,
             bounds,

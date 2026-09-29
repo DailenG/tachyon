@@ -21,7 +21,12 @@ session on top of that, not just the unsaved half of it, and Tachyon should too 
   resident instance quitting), the file keeps what was open the last time any were: closing the
   last window is how most people close an app, and a resident instance keeps running after it.
   With the setting off, Quit deletes the file, so an old session cannot come back when it is
-  turned on again.
+  turned on again. A window's placement (normal rectangle, maximized) is recorded by bounds and
+  visibility observers whenever it changes while the window is on screen
+  (`Editor::last_placement`), and the file uses that record rather than reading the window at save
+  time: at a real Windows shutdown a maximized window no longer reports itself maximized by the
+  time the session end reaches Tachyon (seen on the test machine, and not reproducible by sending
+  the same messages without a real shutdown), and a minimized window has no useful placement.
   For each window worth remembering, in the order it was opened
   (`WindowCascade`): its file path (a clean, file-backed document) or its hot-exit backup id (an
   unsaved one - hot exit already keeps its text; the session file only needs to name the same
