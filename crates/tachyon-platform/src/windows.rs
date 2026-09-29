@@ -312,15 +312,7 @@ pub fn resize_without_activating(
     // SAFETY: `hwnd` is live; `SWP_NOMOVE | SWP_NOZORDER` make the position and insert-after
     // arguments ignored.
     let result = unsafe {
-        SetWindowPos(
-            hwnd,
-            ptr::null_mut(),
-            0,
-            0,
-            width + frame_width,
-            height + frame_height,
-            flags,
-        )
+        SetWindowPos(hwnd, ptr::null_mut(), 0, 0, width + frame_width, height + frame_height, flags)
     };
     result != 0
 }
