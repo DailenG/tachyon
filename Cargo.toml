@@ -4,7 +4,7 @@ members = ["crates/*", "xtask"]
 default-members = ["crates/tachyon"]
 
 [workspace.package]
-version = "1.1.0"
+version = "1.1.1"
 edition = "2024"
 # Matches rust-toolchain.toml; the only toolchain CI builds with.
 rust-version = "1.98"

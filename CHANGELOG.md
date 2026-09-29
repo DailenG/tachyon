@@ -6,6 +6,14 @@ All notable user-visible changes are recorded here. The format follows
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-09-29
+
+### Fixed
+
+- Windows: a sticky note can be dragged by its header again. The header's mouse-down handler
+  consumed the press, so the OS never started the drag (resizing from the edges was unaffected).
+  A double-click on the header is still ignored rather than maximizing the note.
+
 ## [1.1.0] - 2026-09-29
 
 ### Added

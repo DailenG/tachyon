@@ -636,7 +636,13 @@ impl Editor {
             .border_b_1()
             .border_color(theme.border.subtle)
             .window_control_area(WindowControlArea::Drag)
-            .on_mouse_down(MouseButton::Left, move |_event: &MouseDownEvent, window, cx| {
+            .on_mouse_down(MouseButton::Left, move |event: &MouseDownEvent, window, cx| {
+                // Where the OS drags the title area itself (Windows), the press must reach it:
+                // consuming it here stops the drag. A double-click is still consumed, since
+                // the OS would otherwise maximize the note.
+                if tachyon_platform::os_drags_title_areas() && event.click_count < 2 {
+                    return;
+                }
                 // Not on to the editor below: a drag must not also move the caret.
                 cx.stop_propagation();
                 window.start_window_move();

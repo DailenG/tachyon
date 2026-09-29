@@ -176,7 +176,7 @@ first.
 [`nightly`](https://github.com/DailenG/tachyon/releases/tag/nightly) prerelease. Install once from
 [`Tachyon.appinstaller`](https://github.com/DailenG/tachyon/releases/download/nightly/Tachyon.appinstaller)
 the same way as above; it then updates itself on every launch. An already-installed stable MSIX
-(`1.1.0.0`) updates in place the same way, no uninstall needed, because a nightly's version is
+(`1.1.1.0`) updates in place the same way, no uninstall needed, because a nightly's version is
 always higher than the stable release it followed. There is no path back from nightly to the
 stable release with that same version without uninstalling first (it would be a downgrade); switch
 channels only if you want a tested, versioned build instead of main's latest commit.

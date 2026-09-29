@@ -86,6 +86,14 @@ pub fn supports_always_on_top() -> bool {
     cfg!(target_os = "windows")
 }
 
+/// Whether the OS drags a window by an area the application marks as its title bar, with no
+/// `Window::start_window_move` call: Windows (`WM_NCHITTEST` answering `HTCAPTION`). There a
+/// handler that consumes the press also stops the drag, since GPUI then never passes
+/// `WM_NCLBUTTONDOWN` on to `DefWindowProc`.
+pub fn os_drags_title_areas() -> bool {
+    cfg!(target_os = "windows")
+}
+
 /// Whether [`set_window_opacity`] applies a whole-window alpha at the OS level: Windows (a layered
 /// window with `LWA_ALPHA`). Elsewhere the caller draws the window's content translucent over a
 /// transparent window background instead, which the compositor honours on Linux; on Windows it
