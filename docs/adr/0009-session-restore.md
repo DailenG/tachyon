@@ -24,9 +24,10 @@ session on top of that, not just the unsaved half of it, and Tachyon should too 
   turned on again. A window's placement (normal rectangle, maximized) is recorded by bounds and
   visibility observers whenever it changes while the window is on screen
   (`Editor::last_placement`), and the file uses that record rather than reading the window at save
-  time: at a real Windows shutdown a maximized window no longer reports itself maximized by the
-  time the session end reaches Tachyon (seen on the test machine, and not reproducible by sending
-  the same messages without a real shutdown), and a minimized window has no useful placement.
+  time, so a window minimized when the session is saved comes back as it was before. (An earlier
+  finding that Windows un-maximized windows during a real shutdown was a test-harness artefact:
+  the tester's screenshot helper restored each window before capturing it. A later reboot with a
+  50 ms state log showed the window maximized until the process ended, and saved as maximized.)
   For each window worth remembering, in the order it was opened
   (`WindowCascade`): its file path (a clean, file-backed document) or its hot-exit backup id (an
   unsaved one - hot exit already keeps its text; the session file only needs to name the same
