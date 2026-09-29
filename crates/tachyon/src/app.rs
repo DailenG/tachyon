@@ -491,7 +491,10 @@ fn last_window_origin(cx: &mut App) -> Option<Point<Pixels>> {
     let cascade = &mut cx.global_mut::<WindowCascade>().0;
     cascade.retain(|(handle, _)| open.contains(&handle.window_id()));
     let (handle, opened_at) = *cascade.last()?;
-    Some(handle.update(cx, |_, window, _| window.bounds().origin).unwrap_or(opened_at))
+    // `window_bounds`, not `bounds`: the same coordinates a window is created with (the normal,
+    // unmaximized client rectangle); `bounds` is offset from them on Windows.
+    let current = handle.update(cx, |_, window, _| window.window_bounds().get_bounds().origin);
+    Some(current.unwrap_or(opened_at))
 }
 
 /// Where a new window of `size` should go: `CASCADE_STEP` down and right from `last` (the most
@@ -507,12 +510,17 @@ fn cascade_origin(
     work_area: Bounds<Pixels>,
 ) -> Point<Pixels> {
     let Some(last) = last else { return base };
-    let next = point(last.x + CASCADE_STEP, last.y + CASCADE_STEP);
-    let fits = next.x >= work_area.origin.x
-        && next.y >= work_area.origin.y
-        && next.x + size.width <= work_area.origin.x + work_area.size.width
-        && next.y + size.height <= work_area.origin.y + work_area.size.height;
-    if fits { next } else { base }
+    let x = last.x + CASCADE_STEP;
+    if x < work_area.origin.x || x + size.width > work_area.origin.x + work_area.size.width {
+        return base;
+    }
+    // Down too while there is room. On a short screen the window fitted to it leaves only
+    // `FRAME_ALLOWANCE` spare (less than two steps at 1080p and 125 %), so it stops at the lowest
+    // position that still keeps the window inside the work area and only steps right from
+    // there: a new window never lands exactly on the last one.
+    let lowest = work_area.origin.y + work_area.size.height - size.height;
+    let y = (last.y + CASCADE_STEP).min(lowest).max(work_area.origin.y);
+    point(x, y)
 }
 
 /// `WINDOW_SIZE`, shrunk to fit with its frame in the primary display's work area. The very
@@ -1233,13 +1241,29 @@ mod tests {
     }
 
     #[test]
-    fn cascade_origin_wraps_back_to_the_centred_position_past_the_work_area_edge() {
-        // One step further would push the 900x1000 window past the 1920x1080 work area.
+    fn cascade_origin_wraps_back_to_the_centred_position_past_the_right_edge() {
+        // One step further would push the 900 px wide window past the 1920 px work area.
         let last = point(px(1000.), px(50.));
         assert_eq!(cascade_origin(Some(last), BASE, WIN_SIZE, WORK_AREA), BASE);
+    }
 
-        let last = point(px(100.), px(50.));
-        assert_eq!(cascade_origin(Some(last), BASE, WIN_SIZE, WORK_AREA), BASE);
+    #[test]
+    fn cascade_origin_steps_right_only_when_there_is_no_room_to_step_down() {
+        // The winlab case: 1080p at 125 % leaves a 816 px tall work area and a window fitted to
+        // it (768 px), so no step down fits. Each new window must still move, never land exactly
+        // on the last one, and keep its frame on screen.
+        let work_area = Bounds {
+            origin: point(px(0.), px(0.)),
+            size: Size { width: px(1536.), height: px(816.) },
+        };
+        let size = Size { width: px(900.), height: px(768.) };
+        let base = point(px(318.), px(24.));
+        let bottom = work_area.origin.y + work_area.size.height;
+        let first = cascade_origin(Some(base), base, size, work_area);
+        let second = cascade_origin(Some(first), base, size, work_area);
+        // Down as far as the work area allows (24 px of the 48 spare), then right only.
+        assert_eq!(first, point(base.x + CASCADE_STEP, bottom - size.height));
+        assert_eq!(second, point(first.x + CASCADE_STEP, bottom - size.height));
     }
 
     #[test]

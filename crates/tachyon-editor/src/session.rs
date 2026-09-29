@@ -200,10 +200,22 @@ impl Editor {
         } else {
             Target::File(self.file.clone()?)
         };
+        // `window_bounds`, not `bounds` and `is_maximized`: GPUI's own save/restore pair. It gives
+        // the normal (unmaximized) rectangle in the coordinates `WindowBounds` takes when a window
+        // is created, plus whether it is maximized, so a restored window lands exactly where it
+        // was. `bounds` is offset from those coordinates on Windows (each restore drifted 15 px
+        // down at 125 %), and for a maximized window it is the maximized rectangle, not the one
+        // to restore to.
+        let (bounds, maximized) = match window.window_bounds() {
+            gpui::WindowBounds::Maximized(bounds) => (bounds, true),
+            gpui::WindowBounds::Windowed(bounds) | gpui::WindowBounds::Fullscreen(bounds) => {
+                (bounds, false)
+            }
+        };
         Some(WindowState {
             target,
-            bounds: window.bounds(),
-            maximized: window.is_maximized(),
+            bounds,
+            maximized,
             caret: self.head(),
             scroll: self.viewport_offset(),
             mode: self.doc.mode(),
