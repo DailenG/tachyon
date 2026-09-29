@@ -139,3 +139,27 @@
     block.appendChild(button);
   });
 })();
+
+// Download buttons that name a release asset (`data-asset` is the end of its file name, whose
+// version part changes every release) point straight at the latest release's file. Without
+// JavaScript, or if GitHub's API is unreachable or rate-limited, they keep their static link to
+// the latest release page.
+(function () {
+  var buttons = document.querySelectorAll("a[data-asset]");
+  if (!buttons.length || !window.fetch) return;
+  fetch("https://api.github.com/repos/DailenG/tachyon/releases/latest")
+    .then(function (response) {
+      return response.ok ? response.json() : null;
+    })
+    .then(function (release) {
+      if (!release || !release.assets) return;
+      buttons.forEach(function (button) {
+        var suffix = button.getAttribute("data-asset");
+        var asset = release.assets.find(function (a) {
+          return a.name.endsWith(suffix);
+        });
+        if (asset) button.href = asset.browser_download_url;
+      });
+    })
+    .catch(function () {});
+})();
