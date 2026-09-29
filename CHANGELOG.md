@@ -31,23 +31,26 @@ All notable user-visible changes are recorded here. The format follows
   with its unsaved documents after a reboot, a Windows Update install, or signing out and back
   in - the same windowless start login autostart already uses. Registered only after the first
   window's first frame, never before it, and unregistered the moment hot exit is turned off. A
-  session end (logoff, sign-out, shutdown or restart) now blocks shutdown with a "Tachyon is
-  saving unsaved documents" reason (Windows' own "this is preventing shutdown" screen, which the
-  user can still force) for up to 30 s while every open window's unsaved-document backup is
-  written synchronously, closing a gap where text edited in the last 1.5 s before the session
-  ended could otherwise be lost; this is a best effort, not an unconditional guarantee - a
-  document that still could not be backed up in time, or a wait that timed out, is reported to
-  stderr rather than lost silently.
+  session end (logoff, sign-out, shutdown or restart) now writes every open window's
+  unsaved-document backup and the session file before the process ends, closing a gap where text
+  edited in the last 1.5 s before the session ended could be lost; the shutdown shows a "Tachyon
+  is saving unsaved documents" reason while it runs. This is a best effort, not an unconditional
+  guarantee: a document that still could not be backed up is reported to stderr rather than lost
+  silently.
 - Session restore, on top of hot exit: Quit now writes a small session file (each open window's
   file or backup id, position, size, maximized state, caret, scroll and Markdown/plain-text
-  mode, before the windows close), and the next start with no files on the command line reopens
+  mode, before the windows close; also kept current as windows close and files load, so a crash
+  or power loss restores what was open recently), and the next start with no files on the command
+  line reopens
   everything in the same places - clean files too, not just the unsaved documents hot exit
   already restored. A launch with files restores the session first, then opens and focuses the
   new files. A missing file is skipped, listed in a one-line notice on the first restored
   window; window bounds are clamped to fit the current display, since monitors change between
   sessions. `restore_session = true` (default on) in `settings.toml`, and a "Restore session on
-  start" command palette row; off keeps today's hot-exit-only behaviour (`app::write_session_now`,
-  `tachyon_editor::session`; [ADR 0009](docs/adr/0009-session-restore.md)).
+  start" command palette row; off keeps today's hot-exit-only behaviour and deletes the session
+  file. Closing the last window keeps what it showed for next time, as closing an app does
+  (`app::write_session_now`, `tachyon_editor::session`; [ADR
+  0009](docs/adr/0009-session-restore.md)).
 
 ### Fixed
 

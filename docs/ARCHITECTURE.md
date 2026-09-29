@@ -537,15 +537,15 @@ On Windows, a resident primary with `hot_exit` on also registers for an OS resta
 `tachyon_editor::RestartRegistration`/`sync_restart_registration`): after the first window's first
 frame (never before it), so a reboot, a Windows Update install, or signing out and back in with
 "Automatically save my restartable apps..." brings Tachyon back the same way autostart does
-([ADR 0008](adr/0008-restart-registration.md)). The tray's hidden window also handles
+([ADR 0008](adr/0008-restart-registration.md)). A session end (logoff, shutdown, a restart for
+an update) saves every open window's hot-exit backup and the session file before the process
+ends. The main path is an `on_app_quit` observer for any quit that did not come from Tachyon's own
+Quit action: GPUI answers `WM_ENDSESSION` on its own windows by running the quit observers, with
+every window still open, and then exiting the process. The tray's hidden window also handles
 `WM_QUERYENDSESSION` (registers a shutdown block reason, "Tachyon is saving unsaved documents",
-and answers TRUE at once) and `WM_ENDSESSION`: a real session end (`TrayEvent::EndSession`) blocks
-the tray thread - and so the window procedure, since the process may be killed as soon as it
-returns - until every open window's hot-exit backup is written synchronously or 30 s pass,
-whichever comes first, then clears the block reason. Windows shows its own "Tachyon is preventing
-shutdown" screen (with that reason) if the wait runs long, rather than the process silently
-appearing hung; the user can still force the shutdown through it. A document that could not be
-backed up, or a wait that timed out, is reported to stderr - a best effort, not a guarantee.
+and answers TRUE at once) and `WM_ENDSESSION` (asks the UI thread for the same save and waits up
+to 30 s, then clears the reason), for a session end that reaches the tray window first. A document
+that could not be backed up is reported to stderr: a best effort, not a guarantee.
 
 **About window** (`crates/tachyon-editor/src/about.rs`). A separate GPUI window, opened on
 demand by the `About` action (tray, `tachyon --about` forwarded like other launches, and a
