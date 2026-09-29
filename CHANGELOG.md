@@ -52,6 +52,21 @@ All notable user-visible changes are recorded here. The format follows
   window is on screen, so a window minimized when the session is saved comes back as it was. Closing the last window keeps what it showed for next time, as closing an app does
   (`app::write_session_now`, `tachyon_editor::session`; [ADR
   0009](docs/adr/0009-session-restore.md)).
+- Sticky notes (issue #69): `tachyon --note`, the global hotkey in `sticky_hotkey` (Windows only;
+  default `"win+shift+n"`, empty turns it off), the command palette's "New sticky note" row, or
+  the tray's "New sticky note" item opens a small, compact (360x360) always-on-top window with its
+  own drag/pin/close header instead of the native title bar. Each note is a Markdown file,
+  autosaved with no Save prompt to `<Documents>/tachyon/notes/`, named from its first heading or
+  line (a timestamp if there is nothing usable), the name fixed after its first save; an empty
+  note writes no file, and one emptied out is deleted. `sticky_on_top` (default on) sets whether a
+  new note starts always-on-top, toggled per note with its pin button or `Ctrl+Shift+T`; on
+  Linux, where there is no OS-level always-on-top yet, the pin button does not appear. A note can
+  fade to `sticky_unfocused_opacity` (0.3 to 1.0, default 1.0/off) while its window is not
+  focused. On a resident start, every note that was open reopens where it was, including a
+  windowless `--background` start - kept in its own state file, entirely outside the regular
+  session and hot exit. Linux has no general global-hotkey API on Wayland, so a compositor
+  keybinding calling `tachyon --note` takes its place (see the README) ([ADR
+  0010](docs/adr/0010-sticky-notes.md)).
 
 ### Fixed
 

@@ -83,7 +83,8 @@ impl Render for Editor {
         self.theme.content_width = self.content_width.resolve(
             self.theme.zoom,
             viewport.width,
-            window.rem_size() * CONTENT_WIDTH_GAP_REMS,
+            // A sticky note is small: a one-rem frame gap, not the full one.
+            window.rem_size() * if self.is_note() { 1. } else { CONTENT_WIDTH_GAP_REMS },
         );
         // `ListState` caches each item's own measured size; nothing else tells it that a
         // block's wrapped height changed when only its *available width* did - a plain window

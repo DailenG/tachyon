@@ -325,6 +325,7 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
             // open recently rather than what was open at the last Quit. Not while quitting: Quit
             // itself wrote the session before closing the windows one by one.
             refresh_session(cx);
+            refresh_notes_state(cx);
         })
         .detach();
         // Every quit that did not come from Tachyon's own Quit action: on Windows, the OS ending
@@ -1166,11 +1167,14 @@ fn write_notes_state_now(cx: &mut App) {
 
 /// Rewrites the notes state file for the notes open right now: a note's set changing (opened,
 /// closed, named for the first time), moving, resizing, or its pin toggling
-/// (`tachyon_editor::NotesChanged`'s own hook, set to this once in `run`) - unlike the regular
-/// session file, always, even mid-Quit: a note's own state has nowhere else it would still get
-/// written from.
+/// (`tachyon_editor::NotesChanged`'s own hook, set to this once in `run`).
 fn refresh_notes_state(cx: &mut App) {
-    write_notes_state_now(cx);
+    // Not while quitting: Quit wrote the state for every open note before closing them, and each
+    // note's close afterwards would otherwise rewrite it without the notes already gone, ending
+    // with an empty list and nothing to restore.
+    if !cx.global::<Lifecycle>().quitting {
+        write_notes_state_now(cx);
+    }
 }
 
 /// A one-line notice ("the sticky-note hotkey is already in use") set aside for the next note or

@@ -2622,6 +2622,20 @@ fn closing_a_note_never_prompts_even_with_unsaved_text(cx: &mut TestAppContext) 
 }
 
 #[gpui::test]
+fn closing_a_note_from_the_window_frame_never_prompts(cx: &mut TestAppContext) {
+    // Alt+F4, the taskbar or the Windows close area: the platform asks `should_close`, not the
+    // editor's own Close action. Without a prompt builder a prompt would not answer, and the
+    // window would stay open.
+    let dir = notes_dir("frame-close-no-prompt");
+    let (_editor, cx) = open_note(dir.clone(), cx);
+    cx.simulate_input("Typed just now, well inside the debounce window");
+    assert!(cx.simulate_close(), "the frame close goes through without asking");
+    let entries: Vec<_> = std::fs::read_dir(&dir).expect("folder created").flatten().collect();
+    assert_eq!(entries.len(), 1, "the text was saved on the way out");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[gpui::test]
 fn session_state_is_none_for_a_note(cx: &mut TestAppContext) {
     let dir = notes_dir("session-state");
     let (editor, cx) = open_note(dir.clone(), cx);

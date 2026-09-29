@@ -16,3 +16,4 @@ that supersedes the old one.
 | [0007](0007-versions-and-release-channels.md) | Versions and release channels | Accepted |
 | [0008](0008-restart-registration.md) | Restart registration and session-end backup | Accepted |
 | [0009](0009-session-restore.md) | Session restore on top of hot exit | Accepted |
+| [0010](0010-sticky-notes.md) | Sticky notes | Accepted |

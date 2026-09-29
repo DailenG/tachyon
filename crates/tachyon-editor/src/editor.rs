@@ -509,6 +509,12 @@ impl Editor {
     /// Unsaved changes: ask first. Returns whether the window may close now.
     fn should_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         self.flush_pending_paste(cx);
+        // A sticky note saves itself and never asks, however it is closed: its own close button,
+        // Alt+F4, the taskbar or the Windows close area.
+        if self.is_note() {
+            self.flush_note(cx);
+            return true;
+        }
         if !self.is_modified() {
             self.discard_backup();
             return true;

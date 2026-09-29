@@ -25,14 +25,16 @@ These are not planned for the application. Proposing one needs benchmark evidenc
 - **Bundled or custom fonts in the app**, including a brand typeface for UI text. Loading, registering, and warming up a font costs startup time and binary size. The editor uses system fonts; the wordmark exists only as outlined vector artwork.
 - **Remote assets**: web fonts, remote images, or anything fetched over the network for branding.
 - **Gradients in the editor chrome.** The cyan → blue → violet gradient belongs to brand assets (icons, README, website, release artwork), not to UI surfaces, text, controls, or states.
-- **Shadows, blur, translucency, and backdrop effects** (for example acrylic or mica materials) on editor surfaces.
+- **Shadows, blur, translucency, and backdrop effects** (for example acrylic or mica materials) on editor surfaces. (Sticky notes are an approved, owner-reviewed exception: `sticky_unfocused_opacity`, off by default, applied only while a note's own window is unfocused, and measured against the startup and per-frame budgets like any other Measure-class change - see [ADR 0010](../adr/0010-sticky-notes.md). Nowhere else in the editor.)
 - **Animation and transitions**: splash screens, fades, hover or focus transitions, animated or blinking carets, animated logos. Window open and close animations are deliberately turned off (ADR 0004).
 - **Brand imagery inside the app**: logos or artwork on the editing canvas, empty states, or
   overlays; raster images loaded at startup. (The About window's signature artwork is an
   approved exception - see below - decoded only when that window opens, never on the startup
   path.)
 - **Anything added before the first frame for branding**: reading theme or asset files, decoding images, or rasterizing vector artwork at startup. Icons are prepared at build time.
-- **Custom-drawn window chrome** replacing the native title bar.
+- **Custom-drawn window chrome** replacing the native title bar. Owner-approved exception
+  (issue #69, ADR 0010): sticky notes only, whose compact header (drag area, pin, close) is what
+  keeps a note small. Normal windows keep the native title bar.
 - **New screens justified only by branding**, such as onboarding or a splash. These would also
   be new features, which need a separate product decision. (An About window is approved for
   1.0 - see the Brand intensity table below - not as a precedent for other branding-only screens.)

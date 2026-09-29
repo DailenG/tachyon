@@ -62,6 +62,10 @@ pub struct WindowState {
 /// currently open windows, well under that in ordinary use.
 pub fn write_session(path: &Path, windows: &[WindowState]) -> std::io::Result<()> {
     let windows = &windows[..windows.len().min(MAX_SESSION_WINDOWS)];
+    // The state folder may not exist yet on a fresh profile.
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
     let mut out = format!("version = {SESSION_VERSION}\n");
     for window in windows {
         out.push('\0');

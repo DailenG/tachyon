@@ -332,6 +332,11 @@ fn parse_note(record: &str) -> Option<NoteWindowState> {
 /// Writes `notes` to `path` atomically (see `write_atomically`), truncated to `MAX_NOTES`.
 pub fn write_notes_state(path: &Path, notes: &[NoteWindowState]) -> std::io::Result<()> {
     let notes = &notes[..notes.len().min(MAX_NOTES)];
+    // The state folder may not exist yet: a first start at login that opens only notes creates
+    // nothing else there first.
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
     let mut out = format!("version = {NOTES_VERSION}\n");
     for note in notes {
         out.push('\0');
