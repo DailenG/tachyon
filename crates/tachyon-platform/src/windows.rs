@@ -677,13 +677,20 @@ pub fn set_autostart(exe: &Path, enabled: bool) -> io::Result<()> {
 pub fn documents_dir() -> Option<PathBuf> {
     use windows_sys::Win32::Foundation::S_OK;
     use windows_sys::Win32::System::Com::CoTaskMemFree;
-    use windows_sys::Win32::UI::Shell::{FOLDERID_Documents, KF_FLAG_DEFAULT, SHGetKnownFolderPath};
+    use windows_sys::Win32::UI::Shell::{
+        FOLDERID_Documents, KF_FLAG_DEFAULT, SHGetKnownFolderPath,
+    };
 
     let mut path: *mut u16 = ptr::null_mut();
     // SAFETY: `path` receives a `CoTaskMemFree`-owned wide string on `S_OK`, freed below;
     // `FOLDERID_Documents` and the NULL token outlive the call.
     let result = unsafe {
-        SHGetKnownFolderPath(&FOLDERID_Documents, KF_FLAG_DEFAULT as u32, ptr::null_mut(), &mut path)
+        SHGetKnownFolderPath(
+            &FOLDERID_Documents,
+            KF_FLAG_DEFAULT as u32,
+            ptr::null_mut(),
+            &mut path,
+        )
     };
     if result != S_OK {
         return None;

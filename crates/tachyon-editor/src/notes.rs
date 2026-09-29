@@ -559,7 +559,10 @@ mod tests {
     #[test]
     fn title_from_text_falls_back_to_the_first_non_empty_line() {
         assert_eq!(title_from_text("\n\nJust a line\n\nmore\n"), "Just a line");
-        assert_eq!(title_from_text("#no-space-so-not-a-heading\nrest\n"), "no-space-so-not-a-heading");
+        assert_eq!(
+            title_from_text("#no-space-so-not-a-heading\nrest\n"),
+            "no-space-so-not-a-heading"
+        );
     }
 
     #[test]
@@ -623,7 +626,11 @@ mod tests {
     }
 
     fn sample_note() -> NoteWindowState {
-        NoteWindowState { path: PathBuf::from("/home/user/tachyon/notes/Draft.md"), bounds: sample_bounds(), pinned: true }
+        NoteWindowState {
+            path: PathBuf::from("/home/user/tachyon/notes/Draft.md"),
+            bounds: sample_bounds(),
+            pinned: true,
+        }
     }
 
     #[test]
@@ -664,8 +671,8 @@ mod tests {
 
     #[test]
     fn writes_and_reads_notes_state_back_through_a_real_file() {
-        let dir = std::env::temp_dir()
-            .join(format!("tachyon-notes-state-test-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("tachyon-notes-state-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp dir");
         let path = dir.join("notes.txt");
         let notes = vec![sample_note()];
@@ -676,7 +683,8 @@ mod tests {
 
     #[test]
     fn a_huge_notes_file_is_ignored_without_reading_it() {
-        let dir = std::env::temp_dir().join(format!("tachyon-notes-huge-test-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("tachyon-notes-huge-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("huge.txt");
         let file = std::fs::File::create(&path).unwrap();
@@ -687,7 +695,8 @@ mod tests {
 
     #[test]
     fn existing_notes_skips_one_whose_file_is_gone() {
-        let dir = std::env::temp_dir().join(format!("tachyon-notes-existing-test-{}", std::process::id()));
+        let dir = std::env::temp_dir()
+            .join(format!("tachyon-notes-existing-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let present = dir.join("present.md");
         std::fs::write(&present, "hi").unwrap();
@@ -700,7 +709,8 @@ mod tests {
 
     #[test]
     fn write_note_to_disk_names_the_note_and_then_keeps_the_same_path() {
-        let dir = std::env::temp_dir().join(format!("tachyon-notes-write-test-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("tachyon-notes-write-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let path = match write_note_to_disk(&dir, None, "# Grocery list\n\nMilk\n") {
             NoteWrite::Saved(path) => path,
@@ -720,7 +730,8 @@ mod tests {
 
     #[test]
     fn write_note_to_disk_makes_a_second_note_with_the_same_title_unique() {
-        let dir = std::env::temp_dir().join(format!("tachyon-notes-unique-test-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("tachyon-notes-unique-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let first = match write_note_to_disk(&dir, None, "# Draft\n") {
             NoteWrite::Saved(path) => path,
@@ -737,7 +748,8 @@ mod tests {
 
     #[test]
     fn write_note_to_disk_deletes_an_emptied_file_and_never_creates_the_folder_for_nothing() {
-        let dir = std::env::temp_dir().join(format!("tachyon-notes-empty-test-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("tachyon-notes-empty-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
 
         // Never typed into: no folder appears.

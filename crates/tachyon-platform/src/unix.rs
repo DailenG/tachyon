@@ -593,9 +593,6 @@ mod documents_dir_tests {
     fn xdg_documents_dir_accepts_an_absolute_path_without_home() {
         let home = std::path::Path::new("/home/alice");
         let contents = "XDG_DOCUMENTS_DIR=\"/mnt/docs\"\n";
-        assert_eq!(
-            parse_user_dirs_documents(contents, home),
-            Some(PathBuf::from("/mnt/docs"))
-        );
+        assert_eq!(parse_user_dirs_documents(contents, home), Some(PathBuf::from("/mnt/docs")));
     }
 }

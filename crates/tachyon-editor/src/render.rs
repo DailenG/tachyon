@@ -658,11 +658,14 @@ impl Editor {
                     .when(pinned, |d| d.bg(theme.accent).text_color(theme.text.on_accent))
                     .when(!pinned, |d| d.text_color(theme.text.muted))
                     .child(if pinned { "\u{25cf}" } else { "\u{25cb}" })
-                    .on_mouse_down(MouseButton::Left, move |_event: &MouseDownEvent, window, cx| {
-                        pin_editor.update(cx, |editor, cx| {
-                            editor.toggle_note_pin(&crate::editor::ToggleNotePin, window, cx);
-                        });
-                    }),
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        move |_event: &MouseDownEvent, window, cx| {
+                            pin_editor.update(cx, |editor, cx| {
+                                editor.toggle_note_pin(&crate::editor::ToggleNotePin, window, cx);
+                            });
+                        },
+                    ),
             );
         }
         header = header.child(

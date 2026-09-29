@@ -2520,15 +2520,14 @@ fn restore_view_switches_mode_but_refuses_markdown_above_the_size_limit(cx: &mut
     );
 }
 
-
 // -------------------------------------------------------------------------------------------
 // Sticky notes (issue #69).
 // -------------------------------------------------------------------------------------------
 
 /// A fresh, empty notes folder for a test, removed first if an earlier run left it.
 fn notes_dir(name: &str) -> std::path::PathBuf {
-    let dir =
-        std::env::temp_dir().join(format!("tachyon-notes-editor-tests-{}-{name}", std::process::id()));
+    let dir = std::env::temp_dir()
+        .join(format!("tachyon-notes-editor-tests-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     dir
 }
@@ -2668,9 +2667,8 @@ fn ctrl_shift_t_toggles_the_pinned_state_and_it_is_written_to_the_notes_state_fi
     cx.simulate_input("Reminder");
     cx.executor().advance_clock(AUTOSAVE_PAUSE);
     cx.run_until_parked();
-    let record = editor
-        .read_with(cx, |e, _| e.note_window_state())
-        .expect("a named note has a record");
+    let record =
+        editor.read_with(cx, |e, _| e.note_window_state()).expect("a named note has a record");
     assert!(record.pinned, "the toggle is reflected in the record");
 
     let state_path = dir.join("notes-state.txt");

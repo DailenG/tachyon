@@ -964,7 +964,6 @@ fn open_paths(paths: Vec<PathBuf>, cx: &mut App) {
     cx.activate(true);
 }
 
-
 // ---------------------------------------------------------------------------------------------
 // Sticky notes (issue #69): quick, autosaved Markdown windows. `tachyon_editor::notes` holds the
 // naming rules and the state-file format; everything here is the window itself - creating one,
@@ -1100,8 +1099,7 @@ fn open_note_window(source: NoteSource, cx: &mut App) -> Option<WindowHandle<Edi
         Ok(handle) => {
             track_note_window(handle, bounds.origin, cx);
             let _ = handle.update(cx, |_, window, cx| {
-                cx.observe_window_bounds(window, |_, _, cx| cx.defer(refresh_notes_state))
-                    .detach();
+                cx.observe_window_bounds(window, |_, _, cx| cx.defer(refresh_notes_state)).detach();
                 cx.observe_window_visibility(window, |_, _, _, cx| cx.defer(refresh_notes_state))
                     .detach();
             });
