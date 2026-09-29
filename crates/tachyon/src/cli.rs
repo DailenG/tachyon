@@ -24,6 +24,7 @@ Options:
       --quit           Ask the running instance to quit (unsaved documents are
                        kept and reopen at the next start)
       --about          Show the About window
+      --note           Open a new sticky note
       --desktop-entry <on|off>
                        Add Tachyon to the application launcher and \"Open with\"
                        menus, or remove it (Linux)
@@ -58,6 +59,8 @@ pub struct Cli {
     pub quit: bool,
     /// Show the About window instead of opening a document.
     pub about: bool,
+    /// Open a new sticky note instead of an ordinary document window.
+    pub note: bool,
     /// Primary prints one `tachyon-launch` line per forwarded launch once its
     /// window has drawn, then closes it (`cargo xtask bench-startup --warm`).
     pub report_launches: bool,
@@ -83,6 +86,7 @@ pub fn parse(
             Long("background") => cli.background = true,
             Long("quit") => cli.quit = true,
             Long("about") => cli.about = true,
+            Long("note") => cli.note = true,
             Long("status") => return Ok(Command::Status),
             Long("desktop-entry") => {
                 return match parser.value()?.to_str() {
@@ -118,9 +122,9 @@ impl Cli {
         self.background || self.resident.unwrap_or_else(tachyon_platform::resident_by_default)
     }
 
-    /// Nothing to open: no files, no clipboard.
+    /// Nothing to open: no files, no clipboard, no sticky note.
     pub fn opens_nothing(&self) -> bool {
-        self.files.is_empty() && !self.paste
+        self.files.is_empty() && !self.paste && !self.note
     }
 
     /// Arguments for the primary instance. Paths are made absolute because the
@@ -132,6 +136,9 @@ impl Cli {
         }
         if self.about {
             args.push("--about".to_owned());
+        }
+        if self.note {
+            args.push("--note".to_owned());
         }
         if self.paste {
             args.push("--paste".to_owned());
@@ -187,6 +194,18 @@ mod tests {
         assert_eq!(args, vec!["--about", "--"]);
         match parse(args) {
             Ok(Command::Run(cli)) => assert!(cli.about),
+            _ => panic!("forwarded arguments must parse"),
+        }
+    }
+
+    #[test]
+    fn note_is_forwarded_to_the_running_instance() {
+        assert!(run(&["--note"]).note);
+        assert!(!run(&["--note"]).opens_nothing(), "a note is something to open");
+        let args = run(&["--note"]).forward_args().expect("no paths");
+        assert_eq!(args, vec!["--note", "--"]);
+        match parse(args) {
+            Ok(Command::Run(cli)) => assert!(cli.note),
             _ => panic!("forwarded arguments must parse"),
         }
     }

@@ -35,8 +35,10 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{ASFW_ANY, AllowSetForegroundWi
 
 use crate::protocol;
 
+mod hotkey;
 mod jump_list;
 mod tray;
+pub use hotkey::{GlobalHotkey, register_global_hotkey};
 pub use tray::{Tray, set_popup_menu_dark, set_window_icon, show_tray};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
@@ -257,6 +259,21 @@ pub fn set_title_bar_dark(window: &impl raw_window_handle::HasWindowHandle, dark
         )
     };
     result == 0
+}
+
+/// See [`crate::set_always_on_top`].
+pub fn set_always_on_top(window: &impl raw_window_handle::HasWindowHandle, on: bool) -> bool {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos,
+    };
+    let Ok(handle) = window.window_handle() else { return false };
+    let raw_window_handle::RawWindowHandle::Win32(win32) = handle.as_raw() else { return false };
+    let insert_after = if on { HWND_TOPMOST } else { HWND_NOTOPMOST };
+    let flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE;
+    // SAFETY: `win32.hwnd` is the live window handle GPUI just returned; `SWP_NOMOVE |
+    // SWP_NOSIZE` makes the ignored position and size arguments harmless.
+    let result = unsafe { SetWindowPos(win32.hwnd.get() as _, insert_after, 0, 0, 0, 0, flags) };
+    result != 0
 }
 
 /// See [`crate::register_restart`].
@@ -653,6 +670,60 @@ pub fn set_autostart(exe: &Path, enabled: bool) -> io::Result<()> {
         ERROR_SUCCESS => Ok(()),
         code => Err(io::Error::from_raw_os_error(code as i32)),
     }
+}
+
+/// See [`crate::documents_dir`]: the shell's own resolution of the Documents known folder,
+/// which follows a OneDrive redirect if the user has set one up.
+pub fn documents_dir() -> Option<PathBuf> {
+    use windows_sys::Win32::Foundation::S_OK;
+    use windows_sys::Win32::System::Com::CoTaskMemFree;
+    use windows_sys::Win32::UI::Shell::{
+        FOLDERID_Documents, KF_FLAG_DEFAULT, SHGetKnownFolderPath,
+    };
+
+    let mut path: *mut u16 = ptr::null_mut();
+    // SAFETY: `path` receives a `CoTaskMemFree`-owned wide string on `S_OK`, freed below;
+    // `FOLDERID_Documents` and the NULL token outlive the call.
+    let result = unsafe {
+        SHGetKnownFolderPath(
+            &FOLDERID_Documents,
+            KF_FLAG_DEFAULT as u32,
+            ptr::null_mut(),
+            &mut path,
+        )
+    };
+    if result != S_OK {
+        return None;
+    }
+    let text = pwstr_to_string(path);
+    // SAFETY: `path` was allocated by `SHGetKnownFolderPath` above, which documents
+    // `CoTaskMemFree` as the way to release it; not read again after this.
+    unsafe { CoTaskMemFree(path.cast()) };
+    text.map(PathBuf::from)
+}
+
+/// Copies a NUL-terminated wide string into a Rust `String`: the caller only has a pointer, as
+/// [`documents_dir`]'s `SHGetKnownFolderPath` call returns, not a length.
+fn pwstr_to_string(raw: *const u16) -> Option<String> {
+    if raw.is_null() {
+        return None;
+    }
+    let mut len = 0usize;
+    loop {
+        // SAFETY: offsetting by `len` wide characters stays within the NUL-terminated string
+        // `SHGetKnownFolderPath` returned; this reads nothing yet.
+        let at = unsafe { raw.add(len) };
+        // SAFETY: `at` is that same string's `len`-th wide character, guaranteed readable up to
+        // and including its terminating NUL.
+        if unsafe { at.read() } == 0 {
+            break;
+        }
+        len += 1;
+    }
+    // SAFETY: the loop above confirmed `len` wide characters before the terminator, all part of
+    // one allocation.
+    let text = unsafe { std::slice::from_raw_parts(raw, len) };
+    Some(String::from_utf16_lossy(text))
 }
 
 #[cfg(test)]

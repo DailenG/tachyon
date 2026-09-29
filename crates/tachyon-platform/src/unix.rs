@@ -458,6 +458,73 @@ pub fn note_recently_used(file: &std::path::Path) {
 #[cfg(target_os = "macos")]
 pub fn note_recently_used(_file: &std::path::Path) {}
 
+/// No native "always on top" call here yet: see [`crate::set_always_on_top`].
+pub fn set_always_on_top(_window: &impl raw_window_handle::HasWindowHandle, _on: bool) -> bool {
+    false
+}
+
+/// No global-hotkey API here yet: Linux compositors bind `tachyon --note` directly (the
+/// README's Hyprland example), and macOS has no binding surface yet either. See
+/// [`crate::register_global_hotkey`].
+pub enum GlobalHotkey {}
+
+pub fn register_global_hotkey(
+    _hotkey: crate::Hotkey,
+    _on_press: Box<dyn Fn() + Send + 'static>,
+) -> Result<GlobalHotkey, crate::HotkeyError> {
+    Err(crate::HotkeyError::Unsupported)
+}
+
+/// `$HOME`, as a path; `None` if unset or empty.
+fn env_home() -> Option<PathBuf> {
+    std::env::var_os("HOME").filter(|value| !value.is_empty()).map(PathBuf::from)
+}
+
+/// See [`crate::documents_dir`]: `$HOME/Documents`. macOS has no `user-dirs.dirs` equivalent.
+#[cfg(target_os = "macos")]
+pub fn documents_dir() -> Option<PathBuf> {
+    env_home().map(|home| home.join("Documents"))
+}
+
+/// See [`crate::documents_dir`]: `user-dirs.dirs`' `XDG_DOCUMENTS_DIR`, or `$HOME/Documents` if
+/// that file is missing, unreadable, or has no such line.
+#[cfg(not(target_os = "macos"))]
+pub fn documents_dir() -> Option<PathBuf> {
+    let home = env_home()?;
+    let config_home = std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".config"));
+    let contents = fs::read_to_string(config_home.join("user-dirs.dirs")).ok();
+    let dir = contents.as_deref().and_then(|contents| parse_user_dirs_documents(contents, &home));
+    Some(dir.unwrap_or_else(|| home.join("Documents")))
+}
+
+/// The unquoted, `$HOME`-expanded value of a `user-dirs.dirs` `XDG_DOCUMENTS_DIR="..."` line
+/// (`xdg-user-dirs-update`'s own format: double-quoted, with a literal `$HOME` token as the only
+/// substitution it ever writes), split out so the exact quoting is unit-tested without a real
+/// config file. Comment lines and any other key are ignored; the first matching line wins, as
+/// `xdg-user-dirs-update` never writes more than one.
+#[cfg(not(target_os = "macos"))]
+fn parse_user_dirs_documents(contents: &str, home: &std::path::Path) -> Option<PathBuf> {
+    for line in contents.lines() {
+        let line = line.trim();
+        let Some(rest) = line.strip_prefix("XDG_DOCUMENTS_DIR") else { continue };
+        let Some(rest) = rest.trim_start().strip_prefix('=') else { continue };
+        let Some(quoted) = rest.trim().strip_prefix('"').and_then(|s| s.strip_suffix('"')) else {
+            continue;
+        };
+        return Some(match quoted.strip_prefix("$HOME") {
+            Some(suffix) => {
+                let suffix = suffix.strip_prefix('/').unwrap_or(suffix);
+                if suffix.is_empty() { home.to_path_buf() } else { home.join(suffix) }
+            }
+            None => PathBuf::from(quoted),
+        });
+    }
+    None
+}
+
 #[cfg(all(test, not(target_os = "macos")))]
 mod autostart_tests {
     use super::*;
@@ -494,5 +561,38 @@ mod autostart_tests {
             Some("Ubuntu 24.04.1 LTS".to_owned())
         );
         assert_eq!(pretty_name("NAME=Ubuntu\nID=ubuntu\n"), None);
+    }
+}
+
+#[cfg(all(test, not(target_os = "macos")))]
+mod documents_dir_tests {
+    use super::*;
+
+    #[test]
+    fn xdg_documents_dir_expands_home_in_a_quoted_line() {
+        let home = std::path::Path::new("/home/alice");
+        let contents = "XDG_DESKTOP_DIR=\"$HOME/Desktop\"\nXDG_DOCUMENTS_DIR=\"$HOME/Documents\"\n";
+        assert_eq!(parse_user_dirs_documents(contents, home), Some(home.join("Documents")));
+    }
+
+    #[test]
+    fn xdg_documents_dir_ignores_a_commented_out_line() {
+        let home = std::path::Path::new("/home/alice");
+        let contents = "# XDG_DOCUMENTS_DIR=\"$HOME/Nope\"\n";
+        assert_eq!(parse_user_dirs_documents(contents, home), None);
+    }
+
+    #[test]
+    fn xdg_documents_dir_is_none_when_the_key_is_missing() {
+        let home = std::path::Path::new("/home/alice");
+        let contents = "XDG_DESKTOP_DIR=\"$HOME/Desktop\"\n";
+        assert_eq!(parse_user_dirs_documents(contents, home), None);
+    }
+
+    #[test]
+    fn xdg_documents_dir_accepts_an_absolute_path_without_home() {
+        let home = std::path::Path::new("/home/alice");
+        let contents = "XDG_DOCUMENTS_DIR=\"/mnt/docs\"\n";
+        assert_eq!(parse_user_dirs_documents(contents, home), Some(PathBuf::from("/mnt/docs")));
     }
 }

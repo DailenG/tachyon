@@ -30,7 +30,7 @@ flowchart LR
 | Crate | Status | Depends on GPUI | Responsibility |
 |---|---|---|---|
 | `tachyon` | exists | yes | Binary: CLI, single-instance claim, startup sequencing, windows |
-| `tachyon-platform` | exists | no | OS integration GPUI lacks: single-instance IPC, autostart, DWM transitions and title-bar mode, the Windows jump list and freedesktop recently-used list, the Linux system appearance at start-up (later: hotkey, backdrop) |
+| `tachyon-platform` | exists | no | OS integration GPUI lacks: single-instance IPC, autostart, DWM transitions and title-bar mode, the Windows jump list and freedesktop recently-used list, the Linux system appearance at start-up, a global hotkey and always-on-top for sticky notes (Windows) |
 | `xtask` | exists | no | `ci`, `bench-startup` |
 | `tachyon-text` | exists | **never** | Rope buffer, edit log, grouped undo, offset mapping, UTF-8↔UTF-16, line endings |
 | `tachyon-md` | exists | **never** | `pulldown-cmark` wrapper → owned block IR with source maps; bare-URL autolinks and code highlighting as IR passes |
@@ -475,6 +475,18 @@ statically and release shaders are precompiled with `fxc.exe`.
 windows never render; Tachyon exits with an error instead (forwarding to a running instance still
 works).
 
+**Sticky-note hotkey and window hints** (issue #69, [ADR 0010](adr/0010-sticky-notes.md)).
+`tachyon_platform::register_global_hotkey` (Windows only; `HotkeyError::Unsupported` elsewhere)
+runs `RegisterHotKey` on its own dedicated thread with a `GetMessageW` loop, since a hotkey ties
+to the registering thread's message queue rather than a window; dropping the returned
+`GlobalHotkey` posts that same thread its own `WM_QUIT` and joins it, so `UnregisterHotKey`
+always runs on the thread that registered it, exactly as the API requires. `set_always_on_top`
+(`SetWindowPos` with `HWND_TOPMOST`/`HWND_NOTOPMOST`, Windows only; `supports_always_on_top()`
+reports `false` elsewhere, so a note's pin button does not appear) and `documents_dir` (the
+Documents known folder: `SHGetKnownFolderPath` on Windows, `XDG_DOCUMENTS_DIR` or
+`$HOME/Documents` on Linux/BSD, `$HOME/Documents` on macOS) round out what a sticky note needs
+from the platform layer.
+
 ## Startup
 
 The budget is launch to first frame, p95 < 50 ms ([ADR 0004](adr/0004-startup-budget-and-gate.md)).
@@ -523,7 +535,9 @@ for that frame (the same `on_next_frame` hook `check_whats_new` already uses), s
 another platform window synchronously costs 40-60 ms on Windows and previously ran before the
 first window ever painted. `--background` carries a restored session the same way it already
 carries bare hot-exit backups (`PendingRestore`). Off (`restore_session = false`), the session
-file is neither written nor read, and behaviour is exactly hot exit alone, as before this feature.
+file is neither written nor read, and behaviour is exactly hot exit alone, as before this
+feature. A sticky note is excluded from this file entirely, by design
+(`Editor::session_state` returns `None` for one); see Sticky notes, below.
 
 On Windows a resident primary shows a tray icon (`tachyon_platform::Tray`: a hidden window with
 its own message loop on a `tray` thread, events forwarded to GPUI over a channel); clicking it
@@ -546,6 +560,26 @@ every window still open, and then exiting the process. The tray's hidden window 
 and answers TRUE at once) and `WM_ENDSESSION` (asks the UI thread for the same save and waits up
 to 30 s, then clears the reason), for a session end that reaches the tray window first. A document
 that could not be backed up is reported to stderr: a best effort, not a guarantee.
+
+**Sticky notes** (issue #69, [ADR 0010](adr/0010-sticky-notes.md); `tachyon_editor::notes`,
+`crates/tachyon/src/app.rs`'s note-window functions). A note is an ordinary `Editor` window
+flagged by `Editor::make_note`, opened compact (360x360) with a custom drag/pin/close header
+instead of the native title bar (`note_window_options`/`Editor::note_header`). `tachyon --note`,
+the `sticky_hotkey` global hotkey (Windows only), the command palette's "New sticky note" row,
+and the tray's "New sticky note" item all open one the same way
+(`open_note_window(NoteSource::New, _)`). Each note autosaves to
+`<documents_dir>/tachyon/notes/` on the same debounce hot exit's own backup uses, on its own
+window closing, and at Quit and session end (`Editor::flush_note`, replacing the ordinary
+backup and session paths for a note window - `is_note()` guards both
+`backup::Editor::schedule_backup`/`backup_for_session_end` and
+`session::Editor::session_state` into no-ops). Every open note's own state (path, bounds, pin)
+lives in its own file, `state_dir()/notes-<instance>.txt`
+(`tachyon_editor::{read,write}_notes_state`), rewritten on the same events a session file would
+care about, except while the primary is quitting (Quit already wrote it once, before closing
+windows one by one). Every listed note whose file still exists reopens unconditionally at a
+resident start - never gated by `restore_session`, since notes are deliberately outside that
+mechanism - deferred to right after the first window's first frame like the rest of a restored
+session, or immediately for a windowless `--background` start.
 
 **About window** (`crates/tachyon-editor/src/about.rs`). A separate GPUI window, opened on
 demand by the `About` action (tray, `tachyon --about` forwarded like other launches, and a

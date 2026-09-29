@@ -5397,6 +5397,8 @@ dependencies = [
 name = "tachyon-editor"
 version = "1.0.0"
 dependencies = [
+ "chrono",
+ "futures",
  "gpui",
  "ropey",
  "tachyon-doc",

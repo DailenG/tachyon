@@ -74,6 +74,7 @@ actions!(
         ToggleFrameStats,
         ToggleTextMode,
         CloseWindow,
+        ToggleNotePin,
     ]
 );
 
@@ -156,6 +157,7 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("ctrl-alt-f", ToggleFrameStats, c),
         KeyBinding::new("ctrl-shift-m", ToggleTextMode, c),
         KeyBinding::new("secondary-w", CloseWindow, c),
+        KeyBinding::new("ctrl-shift-t", ToggleNotePin, c),
     ]
 }
 
@@ -310,6 +312,9 @@ pub struct Editor {
     /// usual file-name / scratch-buffer rule (the What's new window; see `tachyon::whats_new`).
     /// Set once, right after the editor is created (`set_title_override`); nothing clears it.
     title_override: Option<String>,
+    /// Sticky-note state (`notes.rs`): `Some` only for a sticky note window
+    /// (`Editor::make_note`), `None` for an ordinary editor window.
+    pub(crate) note: Option<crate::notes::NoteState>,
 }
 
 /// Zoom levels `Ctrl+=` and `Ctrl+-` step through, as in browsers.
@@ -405,6 +410,7 @@ impl Editor {
             tip: None,
             last_placement: None,
             title_override: None,
+            note: None,
         };
         editor.doc.take_splices();
         editor.update_active();
@@ -461,6 +467,14 @@ impl Editor {
     /// changes. Save As on an overridden document (the What's new window) gives it a file, so
     /// this reverts to the ordinary rule from then on rather than keeping a stale fixed title.
     pub fn title(&self) -> String {
+        if self.is_note() {
+            return self
+                .file
+                .as_ref()
+                .and_then(|p| p.file_stem())
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "Sticky note".to_owned());
+        }
         if self.file.is_none()
             && let Some(title) = &self.title_override
         {
@@ -495,6 +509,12 @@ impl Editor {
     /// Unsaved changes: ask first. Returns whether the window may close now.
     fn should_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         self.flush_pending_paste(cx);
+        // A sticky note saves itself and never asks, however it is closed: its own close button,
+        // Alt+F4, the taskbar or the Windows close area.
+        if self.is_note() {
+            self.flush_note(cx);
+            return true;
+        }
         if !self.is_modified() {
             self.discard_backup();
             return true;
@@ -946,6 +966,7 @@ impl Editor {
     fn after_edit(&mut self, cx: &mut Context<Self>) {
         self.editing = true;
         self.schedule_backup(cx);
+        self.schedule_note_autosave(cx);
         self.goal_x = None;
         self.refresh_find(cx);
         self.reparse(self.head(), cx);
@@ -1651,6 +1672,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.is_note() {
+            self.close_note(window, cx);
+            return;
+        }
         if self.should_close(window, cx) {
             window.remove_window();
         }

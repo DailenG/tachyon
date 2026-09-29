@@ -12,7 +12,7 @@ use crate::disk::DiskStamp;
 use crate::editor::{Editor, write_atomically};
 
 /// How long after an edit the backup is written: typing bursts share one write.
-const BACKUP_DELAY: Duration = Duration::from_millis(1500);
+pub(crate) const BACKUP_DELAY: Duration = Duration::from_millis(1500);
 
 /// Where unsaved documents are backed up. Each has a `<slot>.md` file with its text (original line
 /// endings) and, if it belongs to a file, a `<slot>.path` file: `stamp <version>` on the first
@@ -161,7 +161,9 @@ impl Editor {
     /// failed, so the caller (`crates/tachyon/src/app.rs`) can report exactly which document was
     /// not preserved.
     pub fn backup_for_session_end(&mut self, cx: &mut Context<Self>) -> bool {
-        if !cx.has_global::<Backups>() || !self.is_modified() {
+        // Sticky notes are never hot-exit backups: `crates/tachyon/src/app.rs`'s
+        // `backup_every_window_for_session_end` calls `Editor::flush_note` for one instead.
+        if self.is_note() || !cx.has_global::<Backups>() || !self.is_modified() {
             return true;
         }
         self.backup_now(cx)
@@ -175,7 +177,9 @@ impl Editor {
     /// calling `backup_now` directly (never through this method), so hot exit still restores it -
     /// only the *periodic*, typing-pause backup is skipped.
     pub(crate) fn schedule_backup(&mut self, cx: &mut Context<Self>) {
-        if !cx.has_global::<Backups>() {
+        // A sticky note autosaves to its own file instead (`Editor::schedule_note_autosave`)
+        // and is never a hot-exit backup.
+        if self.is_note() || !cx.has_global::<Backups>() {
             return;
         }
         if !self.is_modified() {

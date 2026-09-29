@@ -62,6 +62,10 @@ pub struct WindowState {
 /// currently open windows, well under that in ordinary use.
 pub fn write_session(path: &Path, windows: &[WindowState]) -> std::io::Result<()> {
     let windows = &windows[..windows.len().min(MAX_SESSION_WINDOWS)];
+    // The state folder may not exist yet on a fresh profile.
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
     let mut out = format!("version = {SESSION_VERSION}\n");
     for window in windows {
         out.push('\0');
@@ -129,7 +133,10 @@ fn parse_session(text: &str) -> Vec<WindowState> {
 
 /// The next field's value: `record`'s next line must read `expected = ...`, else the whole
 /// record is malformed (`None`) and dropped by `parse_session`'s `filter_map`.
-fn next_field<'a>(fields: &mut impl Iterator<Item = &'a str>, expected: &str) -> Option<&'a str> {
+pub(crate) fn next_field<'a>(
+    fields: &mut impl Iterator<Item = &'a str>,
+    expected: &str,
+) -> Option<&'a str> {
     let (key, value) = fields.next()?.split_once('=')?;
     (key.trim() == expected).then(|| value.trim())
 }
@@ -216,6 +223,12 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<WindowState> {
+        // A sticky note is never part of the regular session file (ADR 0009 excludes it): it
+        // has its own state file instead (`notes.rs`, `crates/tachyon/src/app.rs`'s
+        // `write_notes_state_now`).
+        if self.is_note() {
+            return None;
+        }
         self.flush_pending_paste(cx);
         let target = if self.is_modified() {
             Target::Backup(self.slot(cx)?)

@@ -71,6 +71,9 @@ impl ContentWidth {
     }
 }
 
+/// `Settings::sticky_hotkey`'s own default: see the setting's doc comment.
+const DEFAULT_STICKY_HOTKEY: &str = "win+shift+n";
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
     pub theme: ThemeChoice,
@@ -90,6 +93,19 @@ pub struct Settings {
     pub restore_session: bool,
     /// The text column's width (`render::Editor::render_block`, `tip_overlay`).
     pub content_width: ContentWidth,
+    /// The global hotkey that opens a new sticky note (issue #69), as written in
+    /// `settings.toml` (`tachyon_platform::Hotkey::parse`'s own syntax, e.g. "win+shift+n");
+    /// empty means off. Windows only - `tachyon_platform::register_global_hotkey` answers
+    /// `HotkeyError::Unsupported` elsewhere, which is treated the same as empty (no hotkey),
+    /// not reported as an error.
+    pub sticky_hotkey: String,
+    /// Whether a new sticky note starts always-on-top; a per-window toggle
+    /// (`Editor::toggle_note_pin`, `Ctrl+Shift+T`) can still turn it off for one note.
+    pub sticky_on_top: bool,
+    /// A sticky note's opacity while its window is not focused, 0.3 to 1.0; 1.0 (the
+    /// default) turns translucency off. Focused, a note is always fully opaque. Normal
+    /// (non-note) windows are never affected.
+    pub sticky_unfocused_opacity: f32,
 }
 
 impl Default for Settings {
@@ -102,6 +118,9 @@ impl Default for Settings {
             whats_new: true,
             restore_session: true,
             content_width: ContentWidth::default(),
+            sticky_hotkey: DEFAULT_STICKY_HOTKEY.to_owned(),
+            sticky_on_top: true,
+            sticky_unfocused_opacity: 1.0,
         }
     }
 }
@@ -137,6 +156,19 @@ restore_session = true
 # percentage of the window like \"80%\"; \"100%\" is the widest the column can get, and a
 # minimum gap to the window frame always remains.
 content_width = \"820px\"
+
+# Sticky notes (issue #69): a global hotkey that opens a new one, e.g. \"win+shift+n\"
+# (Windows only; empty turns it off). Linux users bind `tachyon --note` in their
+# compositor instead (see the README).
+sticky_hotkey = \"win+shift+n\"
+
+# Whether a new sticky note starts always-on-top; the pin button and Ctrl+Shift+T still
+# toggle it per note.
+sticky_on_top = true
+
+# A sticky note\'s opacity while unfocused, from 0.3 to 1.0; 1.0 turns this off. Focused,
+# a note is always opaque.
+sticky_unfocused_opacity = 1.0
 ";
 
 impl Settings {
@@ -195,6 +227,28 @@ impl Settings {
                         "{number}: content_width is a pixel width of at least {CONTENT_WIDTH_MIN_PX}px (e.g. \"820px\") or a percentage from 1% to 100% (e.g. \"80%\")"
                     )),
                 },
+                "sticky_hotkey" => {
+                    if unquoted.is_empty() || tachyon_platform::Hotkey::parse(unquoted).is_some() {
+                        settings.sticky_hotkey = unquoted.to_owned();
+                    } else {
+                        problems.push(format!(
+                            "{number}: sticky_hotkey is empty (off) or a combination like \"win+shift+n\""
+                        ));
+                    }
+                }
+                "sticky_on_top" => match value {
+                    "true" => settings.sticky_on_top = true,
+                    "false" => settings.sticky_on_top = false,
+                    _ => problems.push(format!("{number}: sticky_on_top is true or false")),
+                },
+                "sticky_unfocused_opacity" => match value.parse::<f32>() {
+                    Ok(opacity) if (0.3..=1.0).contains(&opacity) => {
+                        settings.sticky_unfocused_opacity = opacity;
+                    }
+                    _ => problems.push(format!(
+                        "{number}: sticky_unfocused_opacity is a number from 0.3 to 1.0"
+                    )),
+                },
                 other => problems.push(format!("{number}: unknown setting `{other}`")),
             }
         }
@@ -243,6 +297,29 @@ pub fn sync_restart_registration(cx: &mut App) {
     let Some(restart) = cx.try_global::<RestartRegistration>().copied() else { return };
     let hot_exit = cx.try_global::<Settings>().is_none_or(|s| s.hot_exit);
     if hot_exit { (restart.register)() } else { (restart.unregister)() }
+}
+
+/// Ties the `sticky_hotkey` setting to registering/unregistering a system-wide hotkey
+/// (issue #69), the same `RestartRegistration` pattern: a `Copy` struct of one plain `fn`
+/// pointer, set only by a resident primary instance (`crates/tachyon/src/app.rs`'s
+/// `Lifecycle`) - a standalone (`-n`) or secondary process never registers a global hotkey
+/// of its own. `sync`'s own implementation (`crates/tachyon/src/app.rs`) diffs the setting
+/// against whatever is currently registered, so calling this when nothing changed is cheap.
+#[derive(Clone, Copy)]
+pub struct StickyHotkeyRegistration {
+    pub sync: fn(&mut App),
+}
+
+impl Global for StickyHotkeyRegistration {}
+
+/// Called once after the first window's first frame (or immediately for a windowless
+/// `--background` primary), and again whenever `sticky_hotkey` changes (a settings-file
+/// save; see `apply_to_windows`). A no-op if `StickyHotkeyRegistration` was never set - not
+/// a resident primary instance, so there is nothing to tie the setting to.
+pub fn sync_sticky_hotkey(cx: &mut App) {
+    if let Some(reg) = cx.try_global::<StickyHotkeyRegistration>().copied() {
+        (reg.sync)(cx);
+    }
 }
 
 impl Editor {
@@ -353,6 +430,7 @@ fn default_comment(key: &str) -> Vec<&'static str> {
 /// per-window effect but belongs with every other side effect of a settings change.
 fn apply_to_windows(cx: &mut App) {
     sync_restart_registration(cx);
+    sync_sticky_hotkey(cx);
     for window in cx.windows() {
         if let Some(editor) = window.downcast::<Editor>() {
             let _ = editor.update(cx, |editor, window, cx| {
@@ -403,6 +481,7 @@ mod tests {
                 whats_new: false,
                 restore_session: false,
                 content_width: ContentWidth::default(),
+                ..Default::default()
             }
         );
         assert_eq!(

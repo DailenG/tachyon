@@ -80,7 +80,63 @@ start as fast as a scratchpad and edit like Typora: one pane, inline WYSIWYG, no
 | Undo / redo | `Ctrl+Z` / `Ctrl+Shift+Z` |
 | Select all | `Ctrl+A` |
 | Document start / end | `Ctrl+Home` / `Ctrl+End` |
+| Toggle a note's always-on-top pin | `Ctrl+Shift+T` (sticky notes only) |
 | Leave editing (click, type or move the caret to resume) | `Escape` |
+
+## Sticky notes
+
+A sticky note is a small, always-editable scratch window meant to stay open and out of the way.
+Open one with `tachyon --note` on the command line, the global hotkey in the `sticky_hotkey`
+setting (default `win+shift+n`, Windows only - see below), the command palette's "New sticky
+note" row, or, on Windows, the tray icon's "New sticky note" item.
+
+Each note is a Markdown file, autosaved as you type (after a short pause, like hot exit's own
+backup) with no Save prompt, in `<Documents>/tachyon/notes/` (`~/Documents/tachyon/notes/` on
+Linux and macOS; the shell's real Documents folder on Windows, which may be OneDrive-redirected).
+Its file name comes from its first Markdown heading or line the first time it saves, falling
+back to a `note-YYYYMMDD-HHMMSS` timestamp if there is nothing usable to name it from; once
+named, a note's file name never changes, even if you edit the heading later. A note with nothing
+ever typed into it writes no file at all, and one that is typed into and then emptied out again
+has its file deleted.
+
+Three settings in `settings.toml` (`Ctrl+,`) control sticky notes:
+
+- `sticky_hotkey` (default `"win+shift+n"`): the global hotkey that opens a new note from
+  anywhere, in `Ctrl+Alt+Shift+Win+<letter or digit>` combinations (e.g. `"ctrl+shift+n"`);
+  empty turns it off. Windows only.
+- `sticky_on_top` (default `true`): whether a new note starts always-on-top.
+- `sticky_unfocused_opacity` (default `1.0`, range `0.3`-`1.0`): a note's opacity while its
+  window is not focused; `1.0` turns this off. A focused note is always fully opaque, and
+  ordinary (non-note) windows are never affected.
+
+Each note has its own compact header instead of the native title bar, with a drag area, a pin
+button and a close button. The pin button and `Ctrl+Shift+T` toggle that note's always-on-top
+state on or off individually (Windows: `SetWindowPos(HWND_TOPMOST)`); always-on-top is not
+implemented on Linux yet, so the pin button does not appear there.
+
+Every note that is open when a resident instance quits reopens, in the same place and pin state,
+the next time that instance starts - including a windowless `--background` start (login
+autostart) - kept in its own state file, entirely separate from the regular session file and
+hot exit's backups.
+
+**Linux:** Wayland has no general system-wide hotkey API, so `sticky_hotkey` does nothing there.
+Bind a key to `tachyon --note` in your compositor instead. On Hyprland with
+[omarchy](https://github.com/basecamp/omarchy)'s Lua bindings, add a line to a file under
+`~/.config/hypr/bindings/` (or `~/.local/share/omarchy/default/hypr/bindings/`):
+
+```lua
+o.bind("SUPER + SHIFT + N", "New sticky note", "tachyon --note")
+```
+
+On a plain `hyprland.conf` (no omarchy Lua layer), the equivalent is:
+
+```
+bind = SUPER SHIFT, N, exec, tachyon --note
+```
+
+Pick a combination that is not already bound to something else in your config; omarchy's own
+default bindings use `SUPER SHIFT N` for its terminal editor, so choose a different one if you
+use those defaults.
 
 ## Performance budgets
 
@@ -166,13 +222,15 @@ after a reboot, a Windows Update install, or signing out and back in with "Autom
 restartable apps and restart them when I sign back in" (Settings > Accounts > Sign-in options) -
 the same windowless start autostart uses, reopening whatever was unsaved.
 
-`cargo xtask dist` builds a release archive in `target/dist/`. `tachyon --help` lists all options. Settings live in `settings.toml` (`Ctrl+,` opens it): theme,
-zoom of new windows, whether Quit keeps unsaved documents, whether the whole session (open files,
-window position and size, caret and scroll) is restored at the next start with no files given on
-the command line, whether a faint rotating tip shows behind the document, whether an update opens
-a "What's new" window (the command palette's "What's new" row opens it any time regardless), and
-the text column width (a pixel size like `820px` or a percentage like `80%`, always leaving a
-minimum gap to the window frame).
+`cargo xtask dist` builds a release archive in `target/dist/`. `tachyon --help` lists all options.
+Settings live in `settings.toml` (`Ctrl+,` opens it): theme, zoom of new windows, whether Quit
+keeps unsaved documents, whether the whole session (open files, window position and size, caret
+and scroll) is restored at the next start with no files given on the command line, whether a
+faint rotating tip shows behind the document, whether an update opens a "What's new" window (the
+command palette's "What's new" row opens it any time regardless), the text column width (a pixel
+size like `820px` or a percentage like `80%`, always leaving a minimum gap to the window frame),
+and sticky notes' own global hotkey (`sticky_hotkey`, Windows only), whether a new note starts
+always-on-top (`sticky_on_top`), and its opacity while unfocused (`sticky_unfocused_opacity`).
 
 ## Development
 
