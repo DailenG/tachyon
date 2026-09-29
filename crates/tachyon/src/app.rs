@@ -304,6 +304,9 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
                 // Session restore (issue #79): written first, while every window is still open
                 // and, outside that update, readable - the window Quit came from included.
                 write_session_now(cx);
+                // Notes first get their text onto disk: a note typed into but not yet saved has no
+                // file, so no record in the notes state, until its first save names it.
+                flush_every_note(cx);
                 write_notes_state_now(cx);
                 let windows = cx.windows();
                 if windows.is_empty() {
@@ -1208,7 +1211,8 @@ fn notify_hotkey_conflict(message: SharedString, cx: &mut App) {
 /// setting's own current text (`sync_hotkey`) so a settings save that did not actually change
 /// `sticky_hotkey` never unregisters and re-registers for nothing.
 struct StickyHotkey {
-    spec: String,
+    /// The hotkey the setting asks for (`None`: off or unparseable), whether or not it registered.
+    hotkey: Option<tachyon_platform::Hotkey>,
     _guard: Option<tachyon_platform::GlobalHotkey>,
 }
 
@@ -1253,10 +1257,17 @@ fn sync_hotkey(cx: &mut App) {
         .try_global::<tachyon_editor::Settings>()
         .map(|settings| settings.sticky_hotkey.clone())
         .unwrap_or_default();
-    if cx.try_global::<StickyHotkey>().is_some_and(|current| current.spec == spec) {
+    let wanted = tachyon_platform::Hotkey::parse(&spec);
+    // Compared as parsed hotkeys, so "win+shift+n" and "Win+Shift+N" are the same one.
+    if cx.try_global::<StickyHotkey>().is_some_and(|current| current.hotkey == wanted) {
         return;
     }
-    let guard = match tachyon_platform::Hotkey::parse(&spec) {
+    // The old registration goes first: Windows refuses to register a combination this process
+    // still holds, and a changed setting would otherwise report its own hotkey as in use.
+    if cx.has_global::<StickyHotkey>() {
+        cx.remove_global::<StickyHotkey>();
+    }
+    let guard = match wanted {
         None => None,
         Some(hotkey) => match register_sticky_hotkey(hotkey, cx) {
             Ok(guard) => Some(guard),
@@ -1276,7 +1287,7 @@ fn sync_hotkey(cx: &mut App) {
             }
         },
     };
-    cx.set_global(StickyHotkey { spec, _guard: guard });
+    cx.set_global(StickyHotkey { hotkey: wanted, _guard: guard });
 }
 
 /// A line for `cargo xtask bench-startup`, flushed immediately.
@@ -1524,6 +1535,20 @@ enum TrayMessage {
 /// went away) is reported to stderr by its title: there is no time left for a user-facing notice
 /// this late, but the failure should still be visible somewhere durable rather than silently
 /// losing the text.
+/// Writes every open sticky note's text to its file now (`Editor::flush_note`), so each has a file
+/// and so a record in the notes state.
+fn flush_every_note(cx: &mut App) {
+    for window in cx.windows() {
+        if let Some(editor) = window.downcast::<Editor>() {
+            let _ = editor.update(cx, |editor, _, cx| {
+                if editor.is_note() {
+                    editor.flush_note(cx);
+                }
+            });
+        }
+    }
+}
+
 fn backup_every_window_for_session_end(cx: &mut App) {
     for window in cx.windows() {
         if let Some(editor) = window.downcast::<Editor>() {

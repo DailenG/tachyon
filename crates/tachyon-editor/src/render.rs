@@ -631,7 +631,9 @@ impl Editor {
             .border_b_1()
             .border_color(theme.border.subtle)
             .window_control_area(WindowControlArea::Drag)
-            .on_mouse_down(MouseButton::Left, move |_event: &MouseDownEvent, window, _cx| {
+            .on_mouse_down(MouseButton::Left, move |_event: &MouseDownEvent, window, cx| {
+                // Not on to the editor below: a drag must not also move the caret.
+                cx.stop_propagation();
                 window.start_window_move();
             })
             .child(
@@ -661,6 +663,8 @@ impl Editor {
                     .on_mouse_down(
                         MouseButton::Left,
                         move |_event: &MouseDownEvent, window, cx| {
+                            // Not on to the header's drag or the editor's caret handling.
+                            cx.stop_propagation();
                             pin_editor.update(cx, |editor, cx| {
                                 editor.toggle_note_pin(&crate::editor::ToggleNotePin, window, cx);
                             });
@@ -682,6 +686,8 @@ impl Editor {
                 .window_control_area(WindowControlArea::Close)
                 .child("\u{2715}")
                 .on_mouse_down(MouseButton::Left, move |_event: &MouseDownEvent, window, cx| {
+                    // Not on to the header's drag or the editor's caret handling.
+                    cx.stop_propagation();
                     close_editor.update(cx, |editor, cx| {
                         editor.close_window(&crate::editor::CloseWindow, window, cx);
                     });
