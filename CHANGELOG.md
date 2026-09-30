@@ -10,6 +10,9 @@ All notable user-visible changes are recorded here. The format follows
 
 - The command palette also opens with `F1`, and with a right-click in the document, when
   `Ctrl+Shift+P` is taken by another app.
+- Clicking outside the command palette, Go to heading, or Open recent closes it. That click does
+  not also move the caret.
+
 
 ## [1.1.1] - 2026-09-29
 

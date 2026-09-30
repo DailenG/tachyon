@@ -1788,6 +1788,21 @@ fn right_click_opens_the_command_palette(cx: &mut TestAppContext) {
     assert_eq!(title, Some("Command Palette"));
 }
 
+#[gpui::test]
+fn click_outside_the_picker_closes_it_without_moving_the_caret(cx: &mut TestAppContext) {
+    let (editor, cx) = open("one two\n", cx);
+    editor.update(cx, |editor, cx| editor.move_to(4, false, cx));
+    let before = selection(&editor, cx);
+    cx.simulate_keystrokes("secondary-shift-p");
+    cx.simulate_mouse_down(
+        gpui::point(gpui::px(8.), gpui::px(8.)),
+        gpui::MouseButton::Left,
+        gpui::Modifiers::none(),
+    );
+    assert!(editor.read_with(cx, |editor, _| editor.picker.is_none()));
+    assert_eq!(selection(&editor, cx), before, "the dismiss click is not a caret click");
+}
+
 /// Filters the palette to the three "Theme: ..." rows and returns their labels in list order,
 /// with `initial` set as the current theme (so a different one carries the checkmark each time).
 /// The checkmark must never change this order - see `Item::marked`'s doc comment for the bug
