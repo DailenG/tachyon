@@ -66,7 +66,7 @@ start as fast as a scratchpad and edit like Typora: one pane, inline WYSIWYG, no
 | Open | `Ctrl+O` |
 | Save / Save As | `Ctrl+S` / `Ctrl+Shift+S` |
 | Close window / Quit | `Ctrl+W` / `Ctrl+Q` |
-| Command palette | `Ctrl+Shift+P` |
+| Command palette | `Ctrl+Shift+P` (also `F1`); right-click the document |
 | Settings | `Ctrl+,` |
 | Open recent / quick open (the same picker) | `Ctrl+R` or `Ctrl+P` |
 | Find | `Ctrl+F` |

@@ -226,6 +226,16 @@ impl Render for Editor {
                     );
                 }),
             )
+            // Right-click opens the palette directly. A one-item menu would be a second click
+            // with nothing else to choose, and a native popup window is not supported on Windows.
+            // Built only on the click: no extra element while the button is up.
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|editor, _: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    editor.open_command_palette(&crate::editor::OpenCommandPalette, window, cx);
+                }),
+            )
             .on_mouse_up(MouseButton::Left, cx.listener(|editor, _, _, _| editor.selecting = false))
             .on_mouse_up_out(
                 MouseButton::Left,

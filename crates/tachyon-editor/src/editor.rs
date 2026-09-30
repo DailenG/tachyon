@@ -112,6 +112,9 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("secondary-r", OpenRecent, c),
         KeyBinding::new("secondary-p", OpenRecent, c),
         KeyBinding::new("secondary-shift-p", OpenCommandPalette, c),
+        // F1 is the fallback when another app owns Ctrl+Shift+P globally. Listed after the
+        // primary so the palette still shows Ctrl+Shift+P (`shortcut_for` takes the first).
+        KeyBinding::new("f1", OpenCommandPalette, c),
         KeyBinding::new("ctrl-h", Replace, c),
         KeyBinding::new("cmd-alt-f", Replace, c),
         KeyBinding::new("secondary-enter", ReplaceAll, c),

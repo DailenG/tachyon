@@ -1768,6 +1768,26 @@ fn command_palette_shows_shortcuts_from_the_keymap(cx: &mut TestAppContext) {
     assert_eq!(shortcut.as_deref(), Some(expected), "read from the actual key_bindings()");
 }
 
+#[gpui::test]
+fn f1_opens_the_command_palette(cx: &mut TestAppContext) {
+    let (editor, cx) = open("text\n", cx);
+    cx.simulate_keystrokes("f1");
+    let title = editor.read_with(cx, |e, _| e.picker.as_ref().map(|picker| picker.title));
+    assert_eq!(title, Some("Command Palette"));
+}
+
+#[gpui::test]
+fn right_click_opens_the_command_palette(cx: &mut TestAppContext) {
+    let (editor, cx) = open("text\n", cx);
+    cx.simulate_mouse_down(
+        gpui::point(gpui::px(8.), gpui::px(8.)),
+        gpui::MouseButton::Right,
+        gpui::Modifiers::none(),
+    );
+    let title = editor.read_with(cx, |e, _| e.picker.as_ref().map(|picker| picker.title));
+    assert_eq!(title, Some("Command Palette"));
+}
+
 /// Filters the palette to the three "Theme: ..." rows and returns their labels in list order,
 /// with `initial` set as the current theme (so a different one carries the checkmark each time).
 /// The checkmark must never change this order - see `Item::marked`'s doc comment for the bug

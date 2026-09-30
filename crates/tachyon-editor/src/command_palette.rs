@@ -1,4 +1,5 @@
-//! The command palette (`Ctrl+Shift+P`/`Cmd+Shift+P`): every user-facing action and setting in
+//! The command palette (`Ctrl+Shift+P`/`Cmd+Shift+P`, also `F1`, or a right-click): every
+//! user-facing action and setting in
 //! one filterable list, reusing the picker overlay (`picker.rs`). `Ctrl+P`/`Cmd+P` opens the
 //! same Open recent picker as a quick-open shortcut (an extra binding in `editor.rs`'s
 //! `key_bindings`), so there is nothing new to build for it here.
