@@ -94,6 +94,21 @@ pub fn os_drags_title_areas() -> bool {
     cfg!(target_os = "windows")
 }
 
+/// Whether [`register_global_hotkey`] can register a system-wide shortcut: Windows only. Linux
+/// and macOS have no such API here, so a sticky-note hotkey is not shown as if it worked.
+pub fn supports_global_hotkey() -> bool {
+    cfg!(target_os = "windows")
+}
+
+/// `spec` as the palette and menus write a hotkey (`Win+Shift+N`), or `None` when this platform
+/// has no global hotkey, the spec is empty, or it does not parse.
+pub fn global_hotkey_label(spec: &str) -> Option<String> {
+    if !supports_global_hotkey() {
+        return None;
+    }
+    Hotkey::parse(spec).map(|hotkey| hotkey.to_string())
+}
+
 /// Whether [`set_window_opacity`] applies a whole-window alpha at the OS level: Windows (a layered
 /// window with `LWA_ALPHA`). Elsewhere the caller draws the window's content translucent over a
 /// transparent window background instead, which the compositor honours on Linux; on Windows it
@@ -186,7 +201,8 @@ pub enum TrayEvent {
     Open,
     /// The "New sticky note" menu item.
     NewNote,
-    /// The "About Tachyon" menu item.
+    /// The "Reopen sticky note" menu item.
+    ReopenNote,
     About,
     /// The "Quit Tachyon" menu item.
     Quit,
@@ -579,6 +595,17 @@ mod tests {
     /// Regression for the exact bit pattern, not merely `RESTART_FLAGS`'s own defining
     /// expression: a typo (`&` for `|`, or the wrong constant) would silently change which
     /// restart reasons Tachyon opts out of, and only a literal expected value catches that.
+    #[test]
+    fn global_hotkey_label_follows_the_platform() {
+        if supports_global_hotkey() {
+            assert_eq!(global_hotkey_label("win+shift+n").as_deref(), Some("Win+Shift+N"));
+            assert_eq!(global_hotkey_label(""), None, "empty means no hotkey");
+            assert_eq!(global_hotkey_label("nope"), None);
+        } else {
+            assert_eq!(global_hotkey_label("win+shift+n"), None);
+        }
+    }
+
     #[test]
     fn opacity_to_alpha_rounds_and_clamps() {
         assert_eq!(opacity_to_alpha(1.0), 255);

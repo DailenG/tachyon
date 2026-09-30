@@ -261,6 +261,7 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
             .detach();
         });
         cx.set_global(tachyon_editor::OpenPaths(std::rc::Rc::new(open_paths)));
+        cx.set_global(tachyon_editor::OpenNote(std::rc::Rc::new(open_or_focus_note)));
         tachyon_editor::init(cx);
         if let Some(dir) = tachyon_platform::state_dir() {
             let recent = dir.join(format!("recent-{}.txt", crate::instance_id()));
@@ -768,8 +769,13 @@ fn fill(
         Source::Restored(restored) => {
             editor.adopt_backup(restored, cx);
             apply_view(editor, view, notice, cx);
+            editor.rest_after_load(cx);
         }
-        Source::Sample | Source::Blank | Source::Clipboard | Source::WhatsNew { .. } => {
+        Source::Clipboard => {
+            apply_view(editor, view, notice, cx);
+            editor.rest_after_load(cx);
+        }
+        Source::Sample | Source::Blank | Source::WhatsNew { .. } => {
             apply_view(editor, view, notice, cx);
         }
     }
@@ -826,6 +832,7 @@ fn load_file(
                 editor.set_loaded(*loaded, cx);
                 editor.set_file(path, cx);
                 apply_view(editor, view, notice, cx);
+                editor.rest_after_load(cx);
             }
             // Neither is associated with the file: saving must not overwrite it with the
             // message, and Save As still prompts as it would for a fresh scratch buffer.
@@ -1054,7 +1061,15 @@ fn clamp_note_to_work_area(bounds: Bounds<Pixels>, cx: &mut App) -> Bounds<Pixel
 /// state.
 enum NoteSource {
     New,
-    Restore { path: PathBuf, bounds: Bounds<Pixels>, pinned: bool },
+    /// A closed note opened from the picker, at the default size and place.
+    Reopen {
+        path: PathBuf,
+    },
+    Restore {
+        path: PathBuf,
+        bounds: Bounds<Pixels>,
+        pinned: bool,
+    },
 }
 
 /// A note's window options: its own compact size, a title bar the application draws itself
@@ -1094,9 +1109,12 @@ fn open_note_window(source: NoteSource, cx: &mut App) -> Option<WindowHandle<Edi
     let settings = cx.try_global::<tachyon_editor::Settings>().cloned().unwrap_or_default();
     // A new note is always the user's request (hotkey, `--note`, tray, palette), so it comes to
     // the front; restored notes open where they were without taking focus from anything.
-    let activate = matches!(source, NoteSource::New);
+    let activate = matches!(source, NoteSource::New | NoteSource::Reopen { .. });
     let (bounds, pinned, path) = match source {
         NoteSource::New => (initial_note_bounds(cx), settings.sticky_on_top, None),
+        NoteSource::Reopen { path } => {
+            (initial_note_bounds(cx), settings.sticky_on_top, Some(path))
+        }
         NoteSource::Restore { path, bounds, pinned } => {
             (clamp_note_to_work_area(bounds, cx), pinned, Some(path))
         }
@@ -1196,6 +1214,7 @@ fn load_note_file(path: PathBuf, cx: &mut Context<Editor>) {
             if let Ok(tachyon_editor::LoadOutcome::Loaded(loaded)) = outcome {
                 editor.set_loaded(*loaded, cx);
                 editor.adopt_note_file(path, cx);
+                editor.rest_after_load(cx);
             }
         });
     })
@@ -1245,6 +1264,34 @@ fn refresh_notes_state(cx: &mut App) {
 struct PendingHotkeyNotice(SharedString);
 
 impl Global for PendingHotkeyNotice {}
+
+/// Opens `path` as a sticky note, or focuses the window that already has it open.
+fn open_or_focus_note(path: PathBuf, cx: &mut App) {
+    for window in cx.windows() {
+        let Some(editor) = window.downcast::<Editor>() else { continue };
+        let same = editor.update(cx, |editor, _, _| editor.is_note_file(&path)).unwrap_or(false);
+        if same {
+            let _ = editor.update(cx, |_, window, _| window.activate_window());
+            cx.activate(true);
+            return;
+        }
+    }
+    open_note_window(NoteSource::Reopen { path }, cx);
+    cx.activate(true);
+}
+
+/// Opens the reopen-note picker in an existing window, or a new window if none is open.
+fn show_note_picker(cx: &mut App) {
+    let handle = cx.windows().into_iter().find_map(|window| window.downcast::<Editor>());
+    if let Some(handle) = handle {
+        let _ = handle.update(cx, |editor, _, cx| editor.open_note_picker(cx));
+        cx.activate(true);
+        return;
+    }
+    if let Some(handle) = show_window(Opening::plain(Source::Blank), cx) {
+        let _ = handle.update(cx, |editor, _, cx| editor.open_note_picker(cx));
+    }
+}
 
 fn take_pending_hotkey_notice(cx: &mut App) -> Option<SharedString> {
     if cx.has_global::<PendingHotkeyNotice>() {
@@ -1711,6 +1758,7 @@ fn show_tray(cx: &mut App) {
                             open_note_window(NoteSource::New, cx);
                             cx.activate(true);
                         }
+                        TrayEvent::ReopenNote => show_note_picker(cx),
                         TrayEvent::Quit => cx.dispatch_action(&Quit),
                         // Intercepted above, before it ever reaches this channel.
                         TrayEvent::EndSession => {}

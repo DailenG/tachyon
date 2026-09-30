@@ -1789,6 +1789,21 @@ fn right_click_opens_the_command_palette(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn rest_after_load_clears_the_active_block_only_when_asked(cx: &mut TestAppContext) {
+    let (editor, cx) = open("# Title\n\npara\n", cx);
+    editor.update(cx, |editor, cx| editor.rest_after_load(cx));
+    assert_eq!(editor.read_with(cx, |editor, _| editor.active_block()), Some(0));
+    cx.update(|_, cx| {
+        cx.set_global(crate::Settings {
+            start_without_active_block: true,
+            ..crate::Settings::default()
+        });
+    });
+    editor.update(cx, |editor, cx| editor.rest_after_load(cx));
+    assert_eq!(editor.read_with(cx, |editor, _| editor.active_block()), None);
+}
+
+#[gpui::test]
 fn click_outside_the_picker_closes_it_without_moving_the_caret(cx: &mut TestAppContext) {
     let (editor, cx) = open("one two\n", cx);
     editor.update(cx, |editor, cx| editor.move_to(4, false, cx));

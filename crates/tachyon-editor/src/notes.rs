@@ -205,6 +205,50 @@ pub fn unique_name(exists: impl Fn(&str) -> bool, base: &str) -> String {
     format!("{base} ({})", std::process::id())
 }
 
+/// One `.md` file in the notes folder, for the reopen picker. Newest `modified` first.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StoredNote {
+    pub path: PathBuf,
+    pub modified: std::time::SystemTime,
+}
+
+/// `.md` files in `dir`, newest first. A missing folder is an empty list, not an error: the
+/// picker says "no notes". Reads names and modification times only, never file contents.
+pub fn stored_notes(dir: &Path) -> Vec<StoredNote> {
+    let mut notes = Vec::new();
+    let Ok(entries) = std::fs::read_dir(dir) else { return notes };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(ext) = path.extension() else { continue };
+        if !ext.eq_ignore_ascii_case("md") {
+            continue;
+        }
+        let Ok(kind) = entry.file_type() else { continue };
+        if !kind.is_file() {
+            continue;
+        }
+        let modified = entry
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        notes.push(StoredNote { path, modified });
+    }
+    notes.sort_by(|a, b| b.modified.cmp(&a.modified).then_with(|| a.path.cmp(&b.path)));
+    notes
+}
+
+/// `age` as a short label for a picker row. Pure, so the boundaries are tested without the clock.
+pub fn relative_age(age: std::time::Duration) -> String {
+    let secs = age.as_secs();
+    match secs {
+        0..60 => "just now".to_owned(),
+        60..3_600 => format!("{} min ago", secs / 60),
+        3_600..86_400 => format!("{} hr ago", secs / 3_600),
+        86_400..172_800 => "yesterday".to_owned(),
+        _ => format!("{} days ago", secs / 86_400),
+    }
+}
+
 // ---------------------------------------------------------------------------------------------
 // Writing a note's file: naming it once, rewriting it after, deleting it when it goes empty.
 // ---------------------------------------------------------------------------------------------
@@ -424,6 +468,11 @@ impl Editor {
 
     pub fn is_note(&self) -> bool {
         self.note.is_some()
+    }
+
+    /// Whether this window is the sticky note stored at `path`.
+    pub fn is_note_file(&self, path: &Path) -> bool {
+        self.is_note() && self.file.as_deref() == Some(path)
     }
 
     pub fn note_pinned(&self) -> bool {
@@ -789,5 +838,34 @@ mod tests {
         assert!(matches!(write_note_to_disk(&dir, Some(&path), "   \n"), NoteWrite::Empty));
         assert!(!path.exists());
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn stored_notes_lists_markdown_files_and_skips_a_missing_folder() {
+        let dir = std::env::temp_dir().join(format!("tachyon-notes-list-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("older.md"), "old\n").unwrap();
+        std::fs::write(dir.join("newer.md"), "new\n").unwrap();
+        std::fs::write(dir.join("skip.txt"), "no\n").unwrap();
+        let mut names: Vec<_> = stored_notes(&dir)
+            .into_iter()
+            .map(|note| note.path.file_stem().unwrap().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        assert_eq!(names, ["newer", "older"]);
+        assert!(stored_notes(&dir.join("missing")).is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn relative_age_uses_the_documented_boundaries() {
+        use std::time::Duration;
+        assert_eq!(relative_age(Duration::from_secs(0)), "just now");
+        assert_eq!(relative_age(Duration::from_secs(59)), "just now");
+        assert_eq!(relative_age(Duration::from_secs(60)), "1 min ago");
+        assert_eq!(relative_age(Duration::from_secs(3_600)), "1 hr ago");
+        assert_eq!(relative_age(Duration::from_secs(86_400)), "yesterday");
+        assert_eq!(relative_age(Duration::from_secs(86_400 * 3)), "3 days ago");
     }
 }

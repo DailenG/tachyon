@@ -74,6 +74,15 @@ impl ContentWidth {
 /// `Settings::sticky_hotkey`'s own default: see the setting's doc comment.
 const DEFAULT_STICKY_HOTKEY: &str = "win+shift+n";
 
+/// When the overlay scrollbar is drawn. `Auto` shows a thumb only while scrolling or hovering
+/// the right edge. `Never` draws nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ScrollbarMode {
+    #[default]
+    Auto,
+    Never,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
     pub theme: ThemeChoice,
@@ -106,6 +115,12 @@ pub struct Settings {
     /// default) turns translucency off. Focused, a note is always fully opaque. Normal
     /// (non-note) windows are never affected.
     pub sticky_unfocused_opacity: f32,
+    /// Whether opening a file, restoring a session, or a whole-document paste starts with no
+    /// block raw for editing. Off: today's behaviour, the caret's block is raw immediately.
+    pub start_without_active_block: bool,
+    /// Overlay scrollbar. `Never` draws nothing. `Auto` shows a thumb only while scrolling or
+    /// while the pointer is on the right edge.
+    pub scrollbar: ScrollbarMode,
 }
 
 impl Default for Settings {
@@ -121,6 +136,8 @@ impl Default for Settings {
             sticky_hotkey: DEFAULT_STICKY_HOTKEY.to_owned(),
             sticky_on_top: true,
             sticky_unfocused_opacity: 1.0,
+            start_without_active_block: false,
+            scrollbar: ScrollbarMode::Auto,
         }
     }
 }
@@ -169,6 +186,15 @@ sticky_on_top = true
 # A sticky note\'s opacity while unfocused, from 0.3 to 1.0; 1.0 turns this off. Focused,
 # a note is always opaque.
 sticky_unfocused_opacity = 1.0
+
+# Open a file, restore a session, or paste a whole document with every block rendered. false
+# (the default) starts with the caret's block raw, ready to edit. A click or keystroke edits
+# either way.
+start_without_active_block = false
+
+# Overlay scrollbar: \"auto\" shows a thumb while scrolling or hovering the right edge;
+# \"never\" draws none. It never reserves layout width.
+scrollbar = \"auto\"
 ";
 
 impl Settings {
@@ -248,6 +274,18 @@ impl Settings {
                     _ => problems.push(format!(
                         "{number}: sticky_unfocused_opacity is a number from 0.3 to 1.0"
                     )),
+                },
+                "start_without_active_block" => match value {
+                    "true" => settings.start_without_active_block = true,
+                    "false" => settings.start_without_active_block = false,
+                    _ => problems.push(format!(
+                        "{number}: start_without_active_block is true or false"
+                    )),
+                },
+                "scrollbar" => match unquoted {
+                    "auto" => settings.scrollbar = ScrollbarMode::Auto,
+                    "never" => settings.scrollbar = ScrollbarMode::Never,
+                    _ => problems.push(format!("{number}: scrollbar is \"auto\" or \"never\"")),
                 },
                 other => problems.push(format!("{number}: unknown setting `{other}`")),
             }

@@ -17,6 +17,7 @@ mod notes;
 mod picker;
 mod prompt;
 mod render;
+mod scrollbar;
 mod session;
 mod settings;
 mod theme;
@@ -26,8 +27,8 @@ pub use crate::about::{About, AboutView, AppInfo, open_about};
 pub use crate::backup::{Backups, HotExit, Restored};
 pub use crate::disk::{LoadOutcome, Loaded, load_document, oversized_markdown_notice};
 pub use crate::editor::{
-    ClipboardReader, CloseWindow, Editor, HtmlClipboard, KEY_CONTEXT, OpenPaths, Save, SaveAs,
-    key_bindings,
+    ClipboardReader, CloseWindow, Editor, HtmlClipboard, KEY_CONTEXT, OpenNote, OpenPaths, Save,
+    SaveAs, key_bindings,
 };
 pub use crate::notes::{
     NoteWindowState, NotesChanged, NotesDir, existing_notes, read_notes_state, write_notes_state,

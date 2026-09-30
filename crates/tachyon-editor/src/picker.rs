@@ -23,7 +23,8 @@ pub(crate) enum Pick {
     Offset(usize),
     /// Opens this file (in a new window, through [`OpenPaths`]).
     File(PathBuf),
-    /// Runs a command palette entry.
+    /// Reopens this sticky note (or focuses it), through [`crate::editor::OpenNote`].
+    Note(PathBuf),
     Command(CommandEffect),
 }
 
@@ -278,6 +279,45 @@ impl Editor {
         cx.notify();
     }
 
+    /// Lists the notes folder and opens the picker. The directory read happens off the UI thread;
+    /// a missing folder opens an empty picker ("no notes") rather than an error.
+    pub fn open_note_picker(&mut self, cx: &mut Context<Self>) {
+        let Some(dir) = cx.try_global::<crate::NotesDir>().map(|dir| dir.0.clone()) else {
+            self.open_picker(Picker::new("Reopen sticky note", "no notes", Vec::new(), 0), cx);
+            return;
+        };
+        cx.spawn(async move |editor, cx| {
+            let notes = cx
+                .background_executor()
+                .spawn(async move { crate::notes::stored_notes(&dir) })
+                .await;
+            let now = std::time::SystemTime::now();
+            let _ = editor.update(cx, |editor, cx| {
+                let items = notes
+                    .into_iter()
+                    .map(|note| {
+                        let age = now.duration_since(note.modified).unwrap_or_default();
+                        let label = note
+                            .path
+                            .file_stem()
+                            .map(|stem| stem.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| note.path.display().to_string());
+                        Item {
+                            label,
+                            detail: Some(crate::notes::relative_age(age)),
+                            indent: 0,
+                            shortcut: None,
+                            marked: false,
+                            pick: Pick::Note(note.path),
+                        }
+                    })
+                    .collect();
+                editor.open_picker(Picker::new("Reopen sticky note", "no notes", items, 0), cx);
+            });
+        })
+        .detach();
+    }
+
     /// Closes the picker without picking a row. A click outside it (`render::picker_bar`'s
     /// backdrop) uses this so the same click does not also move the caret.
     pub(crate) fn dismiss_picker(&mut self, cx: &mut Context<Self>) {
@@ -346,6 +386,16 @@ impl Editor {
                 });
             }
             Pick::Command(effect) => self.run_command(effect, window, cx),
+            Pick::Note(path) => {
+                let path = path.clone();
+                cx.defer(move |cx: &mut App| {
+                    if let Some(open) =
+                        cx.try_global::<crate::editor::OpenNote>().map(|open| open.0.clone())
+                    {
+                        open(path, cx);
+                    }
+                });
+            }
         }
         cx.notify();
     }

@@ -12,6 +12,15 @@ All notable user-visible changes are recorded here. The format follows
   `Ctrl+Shift+P` is taken by another app.
 - Clicking outside the command palette, Go to heading, or Open recent closes it. That click does
   not also move the caret.
+- Reopen a closed sticky note from the command palette ("Reopen sticky note...") or, on Windows,
+  the tray. The list is the notes folder, newest first. A note that is already open is focused
+  instead of opened again.
+- The command palette shows the global sticky-note hotkey next to "New sticky note" (Windows).
+- A setting `start_without_active_block`: opening a file, restoring a session, or pasting a
+  whole document leaves every block rendered. A click or keystroke starts editing.
+- An overlay scrollbar appears while scrolling or while the pointer is on the right edge, then
+  hides. It does not reserve layout width. `scrollbar = "never"` turns it off.
+
 
 
 ## [1.1.1] - 2026-09-29
