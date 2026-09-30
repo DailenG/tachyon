@@ -6,6 +6,8 @@ All notable user-visible changes are recorded here. The format follows
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-09-30
+
 ### Added
 
 - The command palette also opens with `F1`, and with a right-click in the document, when
@@ -20,8 +22,6 @@ All notable user-visible changes are recorded here. The format follows
   whole document leaves every block rendered. A click or keystroke starts editing.
 - An overlay scrollbar appears while scrolling or while the pointer is on the right edge, then
   hides. It does not reserve layout width. `scrollbar = "never"` turns it off.
-
-
 
 ## [1.1.1] - 2026-09-29
 
