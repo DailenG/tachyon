@@ -278,6 +278,14 @@ impl Editor {
         cx.notify();
     }
 
+    /// Closes the picker without picking a row. A click outside it (`render::picker_bar`'s
+    /// backdrop) uses this so the same click does not also move the caret.
+    pub(crate) fn dismiss_picker(&mut self, cx: &mut Context<Self>) {
+        if self.picker.take().is_some() {
+            cx.notify();
+        }
+    }
+
     pub(crate) fn picker_input(&mut self, text: &str, composing: bool, cx: &mut Context<Self>) {
         let Some(picker) = &mut self.picker else { return };
         picker.query.truncate(picker.query.len() - picker.composing);

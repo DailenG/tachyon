@@ -438,38 +438,66 @@ impl Editor {
         };
         Some(
             div()
+                .id("picker-dismiss")
                 .absolute()
-                .top(top)
+                .top_0()
                 .left_0()
-                .right_0()
-                .flex()
-                .justify_center()
+                .size_full()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|editor, _: &MouseDownEvent, _, cx| {
+                        cx.stop_propagation();
+                        editor.dismiss_picker(cx);
+                    }),
+                )
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(|editor, _: &MouseDownEvent, _, cx| {
+                        cx.stop_propagation();
+                        editor.dismiss_picker(cx);
+                    }),
+                )
                 .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .px_3()
-                        .py_2()
-                        .w(self.theme.scaled(px(520.)).min(viewport.width - OVERLAY_MARGIN * 2.))
-                        .rounded(theme.radius_medium)
-                        .bg(theme.surface.raised)
-                        .border_1()
-                        .border_color(theme.border.control)
-                        .text_color(theme.text.primary)
-                        .child(
-                            div()
-                                .flex()
-                                .gap_3()
-                                .child(div().text_color(theme.text.muted).child(picker.title))
-                                .child(div().flex_1().min_w_0().child(field(
-                                    theme,
-                                    &picker.query,
-                                    true,
-                                ))),
-                        )
-                        .children(rows)
-                        .children(note.map(|note| div().text_color(theme.text.muted).child(note))),
+                    div().absolute().top(top).left_0().right_0().flex().justify_center().child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .px_3()
+                            .py_2()
+                            .w(self
+                                .theme
+                                .scaled(px(520.))
+                                .min(viewport.width - OVERLAY_MARGIN * 2.))
+                            .rounded(theme.radius_medium)
+                            .bg(theme.surface.raised)
+                            .border_1()
+                            .border_color(theme.border.control)
+                            .text_color(theme.text.primary)
+                            // The panel is on top of the dismiss layer. A press here must not
+                            // bubble to it, or choosing a row would close the picker first.
+                            .on_mouse_down(MouseButton::Left, |_event: &MouseDownEvent, _, cx| {
+                                cx.stop_propagation()
+                            })
+                            .on_mouse_down(MouseButton::Right, |_event: &MouseDownEvent, _, cx| {
+                                cx.stop_propagation()
+                            })
+                            .child(
+                                div()
+                                    .flex()
+                                    .gap_3()
+                                    .child(div().text_color(theme.text.muted).child(picker.title))
+                                    .child(div().flex_1().min_w_0().child(field(
+                                        theme,
+                                        &picker.query,
+                                        true,
+                                    ))),
+                            )
+                            .children(rows)
+                            .children(
+                                note.map(|note| div().text_color(theme.text.muted).child(note)),
+                            ),
+                    ),
                 )
                 .into_any_element(),
         )
