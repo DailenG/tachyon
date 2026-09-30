@@ -6,6 +6,11 @@ All notable user-visible changes are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- The command palette also opens with `F1`, and with a right-click in the document, when
+  `Ctrl+Shift+P` is taken by another app.
+
 ## [1.1.1] - 2026-09-29
 
 ### Fixed
