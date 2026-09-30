@@ -6,6 +6,7 @@
 //! the find bar's entry points while a picker is open.
 
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use gpui::{App, Context, Global, Window};
@@ -50,6 +51,8 @@ pub(crate) struct Picker {
     pub(crate) title: &'static str,
     /// Shown when there is nothing to pick at all.
     pub(crate) empty: &'static str,
+    /// Identity of an in-flight note-folder read. Replacing or closing the picker drops it.
+    note_request: Option<Rc<()>>,
     pub(crate) query: String,
     /// Bytes at the end of `query` that are an uncommitted IME composition.
     composing: usize,
@@ -70,6 +73,7 @@ impl Picker {
         let mut picker = Picker {
             title,
             empty,
+            note_request: None,
             query: String::new(),
             composing: 0,
             items,
@@ -286,6 +290,10 @@ impl Editor {
             self.open_picker(Picker::new("Reopen sticky note", "no notes", Vec::new(), 0), cx);
             return;
         };
+        let request = Rc::new(());
+        let mut picker = Picker::new("Reopen sticky note", "loading notes...", Vec::new(), 0);
+        picker.note_request = Some(request.clone());
+        self.open_picker(picker, cx);
         cx.spawn(async move |editor, cx| {
             let notes = cx
                 .background_executor()
@@ -293,26 +301,50 @@ impl Editor {
                 .await;
             let now = std::time::SystemTime::now();
             let _ = editor.update(cx, |editor, cx| {
-                let items = notes
-                    .into_iter()
-                    .map(|note| {
-                        let age = now.duration_since(note.modified).unwrap_or_default();
-                        let label = note
-                            .path
-                            .file_stem()
-                            .map(|stem| stem.to_string_lossy().into_owned())
-                            .unwrap_or_else(|| note.path.display().to_string());
-                        Item {
-                            label,
-                            detail: Some(crate::notes::relative_age(age)),
-                            indent: 0,
-                            shortcut: None,
-                            marked: false,
-                            pick: Pick::Note(note.path),
-                        }
-                    })
-                    .collect();
-                editor.open_picker(Picker::new("Reopen sticky note", "no notes", items, 0), cx);
+                let Some(picker) = editor.picker.as_mut() else { return };
+                if !picker
+                    .note_request
+                    .as_ref()
+                    .is_some_and(|current| Rc::ptr_eq(current, &request))
+                {
+                    return;
+                }
+                let (items, notice): (Vec<Item>, Option<String>) = match notes {
+                    Ok(notes) => (
+                        notes
+                            .into_iter()
+                            .map(|note| {
+                                let age = now.duration_since(note.modified).unwrap_or_default();
+                                let label = note
+                                    .path
+                                    .file_stem()
+                                    .map(|stem| stem.to_string_lossy().into_owned())
+                                    .unwrap_or_else(|| note.path.display().to_string());
+                                Item {
+                                    label,
+                                    detail: Some(crate::notes::relative_age(age)),
+                                    indent: 0,
+                                    shortcut: None,
+                                    marked: false,
+                                    pick: Pick::Note(note.path),
+                                }
+                            })
+                            .collect(),
+                        None,
+                    ),
+                    Err(error) => {
+                        (Vec::new(), Some(format!("Could not list sticky notes: {error}")))
+                    }
+                };
+                picker.empty = if notice.is_some() { "notes unavailable" } else { "no notes" };
+                picker.items = items;
+                picker.note_request = None;
+                picker.filter();
+                if let Some(notice) = notice {
+                    editor.set_notice(notice.into(), cx);
+                } else {
+                    cx.notify();
+                }
             });
         })
         .detach();

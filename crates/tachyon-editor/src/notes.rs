@@ -50,6 +50,9 @@ fn notify_notes_changed(cx: &mut Context<Editor>) {
 /// window's is `None` and every method below is then a no-op.
 pub(crate) struct NoteState {
     pub(crate) pinned: bool,
+    /// A file being reopened, before the background read associates it with `Editor::file`.
+    /// Never used for autosave or deletion if the read fails or the window closes early.
+    pending_file: Option<PathBuf>,
     autosave_task: Option<Task<()>>,
     /// The buffer version last written to disk (or deliberately not, because it was empty at
     /// the time) - guards against scheduling another write for text already saved, mirroring
@@ -213,11 +216,17 @@ pub struct StoredNote {
 }
 
 /// `.md` files in `dir`, newest first. A missing folder is an empty list, not an error: the
-/// picker says "no notes". Reads names and modification times only, never file contents.
-pub fn stored_notes(dir: &Path) -> Vec<StoredNote> {
+/// picker says "no notes". Other directory errors reach the picker. Reads names and modification
+/// times only, never file contents.
+pub fn stored_notes(dir: &Path) -> std::io::Result<Vec<StoredNote>> {
     let mut notes = Vec::new();
-    let Ok(entries) = std::fs::read_dir(dir) else { return notes };
-    for entry in entries.flatten() {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(notes),
+        Err(error) => return Err(error),
+    };
+    for entry in entries {
+        let entry = entry?;
         let path = entry.path();
         let Some(ext) = path.extension() else { continue };
         if !ext.eq_ignore_ascii_case("md") {
@@ -234,9 +243,8 @@ pub fn stored_notes(dir: &Path) -> Vec<StoredNote> {
         notes.push(StoredNote { path, modified });
     }
     notes.sort_by(|a, b| b.modified.cmp(&a.modified).then_with(|| a.path.cmp(&b.path)));
-    notes
+    Ok(notes)
 }
-
 /// `age` as a short label for a picker row. Pure, so the boundaries are tested without the clock.
 pub fn relative_age(age: std::time::Duration) -> String {
     let secs = age.as_secs();
@@ -436,7 +444,26 @@ impl Editor {
     /// editor is created (`crates/tachyon/src/app.rs`'s `open_note_window`), before its first
     /// frame - the same convention `Editor::set_title_override` follows.
     pub fn make_note(&mut self, pinned: bool) {
-        self.note = Some(NoteState { pinned, autosave_task: None, saved_version: None });
+        self.note = Some(NoteState {
+            pinned,
+            pending_file: None,
+            autosave_task: None,
+            saved_version: None,
+        });
+    }
+
+    /// Reserves this file identity while the background read runs, without assigning a save path.
+    pub fn reserve_note_file(&mut self, path: PathBuf) {
+        if let Some(note) = self.note.as_mut() {
+            note.pending_file = Some(path);
+        }
+    }
+
+    /// Releases the reservation if a read failed; the blank note stays unnamed.
+    pub fn clear_pending_note_file(&mut self) {
+        if let Some(note) = self.note.as_mut() {
+            note.pending_file = None;
+        }
     }
 
     /// Applies the note's pin to its OS window (`tachyon_platform::set_always_on_top`) and
@@ -470,9 +497,11 @@ impl Editor {
         self.note.is_some()
     }
 
-    /// Whether this window is the sticky note stored at `path`.
+    /// Whether this window owns `path`, including while its background read is in flight.
     pub fn is_note_file(&self, path: &Path) -> bool {
-        self.is_note() && self.file.as_deref() == Some(path)
+        self.note.as_ref().is_some_and(|note| {
+            self.file.as_deref() == Some(path) || note.pending_file.as_deref() == Some(path)
+        })
     }
 
     pub fn note_pinned(&self) -> bool {
@@ -603,6 +632,7 @@ impl Editor {
     /// restore, `load_note_file`), once its content is already in place (`Editor::set_loaded`):
     /// like `set_note_file`, without Open Recent or jump-list clutter.
     pub fn adopt_note_file(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        self.clear_pending_note_file();
         self.set_note_file(path, cx);
     }
 
@@ -849,12 +879,14 @@ mod tests {
         std::fs::write(dir.join("newer.md"), "new\n").unwrap();
         std::fs::write(dir.join("skip.txt"), "no\n").unwrap();
         let mut names: Vec<_> = stored_notes(&dir)
+            .unwrap()
             .into_iter()
             .map(|note| note.path.file_stem().unwrap().to_string_lossy().into_owned())
             .collect();
         names.sort();
         assert_eq!(names, ["newer", "older"]);
-        assert!(stored_notes(&dir.join("missing")).is_empty());
+        assert!(stored_notes(&dir.join("missing")).unwrap().is_empty());
+        assert!(stored_notes(&dir.join("skip.txt")).is_err(), "not a directory is not 'no notes'");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

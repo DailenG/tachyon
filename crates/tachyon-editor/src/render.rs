@@ -245,7 +245,10 @@ impl Render for Editor {
             )
             .on_mouse_up_out(
                 MouseButton::Left,
-                cx.listener(|editor, _, _, _| editor.selecting = false),
+                cx.listener(|editor, _, window, cx| {
+                    editor.selecting = false;
+                    editor.scrollbar_drag_ended(window, cx);
+                }),
             )
             .children(self.note_header(cx))
             .children(self.mode_notice())

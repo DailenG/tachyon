@@ -329,6 +329,10 @@ pub struct Editor {
     pub(crate) scrollbar_edge: bool,
     pub(crate) scrollbar_generation: u64,
     pub(crate) scrollbar_hide: Option<Task<()>>,
+    /// Pointer offset from the thumb's top, captured on mouse-down (`scrollbar_drag_started`)
+    /// and held for the rest of the drag so the thumb does not jump to re-center under the
+    /// pointer when it was grabbed off-center.
+    pub(crate) scrollbar_drag_offset: Pixels,
 }
 
 /// Zoom levels `Ctrl+=` and `Ctrl+-` step through, as in browsers.
@@ -438,6 +442,7 @@ impl Editor {
             scrollbar_edge: false,
             scrollbar_generation: 0,
             scrollbar_hide: None,
+            scrollbar_drag_offset: px(0.),
         };
         editor.doc.take_splices();
         editor.update_active();

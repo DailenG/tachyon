@@ -6,8 +6,8 @@
 use std::time::Duration;
 
 use gpui::{
-    App, Context, ListState, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, Window, div,
-    point, prelude::*, px,
+    App, Context, ListState, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, Window, canvas,
+    div, point, prelude::*, px,
 };
 
 use crate::editor::Editor;
@@ -18,16 +18,26 @@ const THUMB_MIN: f32 = 24.;
 const EDGE: f32 = 12.;
 
 /// Thumb top and height, in pixels from the top of a viewport `viewport` tall, for content
-/// `content` tall scrolled by `scroll` (both >= 0). `None` when the content fits.
+/// `content` tall scrolled by `scroll` (both >= 0). `None` when the content fits or there is
+/// not enough room to show a draggable thumb.
 pub fn thumb_geom(viewport: f32, content: f32, scroll: f32) -> Option<(f32, f32)> {
-    if content <= viewport + 0.5 {
+    if viewport <= THUMB_MIN || content <= viewport + 0.5 {
         return None;
     }
     let height = (viewport * viewport / content).clamp(THUMB_MIN, viewport);
-    let track = (viewport - height).max(1.);
+    let track = viewport - height;
     let max_scroll = content - viewport;
     let y = track * (scroll / max_scroll).clamp(0., 1.);
     Some((y, height))
+}
+
+/// Pointer offset from the thumb's top for a mouse-down at `y`, both absolute in the same
+/// coordinate space as `thumb_top`: the press point's offset inside the thumb when it lands on
+/// the thumb (`thumb_top ..= thumb_top + thumb_h`), so the rest of the drag keeps that same grab
+/// point under the pointer instead of re-centering the thumb on it. A press on the bare track
+/// instead centers the thumb on the pointer, since a track click already means "go here".
+fn grab_offset(y: f32, thumb_top: f32, thumb_h: f32) -> f32 {
+    if y >= thumb_top && y <= thumb_top + thumb_h { y - thumb_top } else { thumb_h / 2. }
 }
 
 impl Editor {
@@ -81,16 +91,29 @@ impl Editor {
         }));
     }
 
+    /// A mouse-down inside the edge strip. Presses on the thumb keep the pointer at the same
+    /// offset from its top for the rest of the drag; presses on the bare track center the thumb
+    /// on the pointer instead, as a track click already implies "go here".
+    pub(crate) fn scrollbar_drag_started(&mut self, y: Pixels, cx: &mut Context<Self>) {
+        let viewport = self.list.viewport_bounds();
+        let Some((thumb_y, thumb_h)) = scrollbar_metrics(&self.list) else { return };
+        let thumb_top = (viewport.origin.y + px(thumb_y)).as_f32();
+        self.scrollbar_drag_offset = px(grab_offset(y.as_f32(), thumb_top, thumb_h));
+        if !self.list.is_scrollbar_dragging() {
+            self.list.scrollbar_drag_started();
+        }
+        self.scrollbar_drag_to(y, cx);
+    }
+
+    /// Moves the thumb so the pointer stays at `scrollbar_drag_offset` from its top, the offset
+    /// `scrollbar_drag_started` captured when the drag began.
     pub(crate) fn scrollbar_drag_to(&mut self, y: Pixels, cx: &mut Context<Self>) {
         let viewport = self.list.viewport_bounds();
         let max = self.list.max_offset_for_scrollbar().y;
         let Some((_, thumb_h)) = scrollbar_metrics(&self.list) else { return };
         let track = (viewport.size.height - px(thumb_h)).max(px(1.));
-        let rel = (y - viewport.origin.y - px(thumb_h) / 2.).clamp(px(0.), track);
+        let rel = (y - viewport.origin.y - self.scrollbar_drag_offset).clamp(px(0.), track);
         let offset = -max * (rel / track);
-        if !self.list.is_scrollbar_dragging() {
-            self.list.scrollbar_drag_started();
-        }
         self.list.set_offset_from_scrollbar(point(px(0.), offset));
         self.scrollbar_visible = true;
         cx.notify();
@@ -129,17 +152,38 @@ impl Editor {
                     MouseButton::Left,
                     cx.listener(|editor, event: &MouseDownEvent, _, cx| {
                         cx.stop_propagation();
-                        editor.scrollbar_drag_to(event.position.y, cx);
+                        editor.scrollbar_drag_started(event.position.y, cx);
                     }),
                 )
-                .on_mouse_move(cx.listener(|editor, event: &MouseMoveEvent, _, cx| {
-                    if editor.list.is_scrollbar_dragging()
-                        && event.pressed_button == Some(MouseButton::Left)
-                    {
-                        cx.stop_propagation();
-                        editor.scrollbar_drag_to(event.position.y, cx);
-                    }
-                }))
+                // A window-level handler, not `.on_mouse_move`: GPUI calls that only while this
+                // 12px-wide strip is hovered, so a drag would stop following the pointer the
+                // moment it drifts sideways off the strip. This keeps tracking it anywhere in the
+                // window; the `is_scrollbar_dragging` check below is what stops it once the drag
+                // ends.
+                .child({
+                    let editor = cx.entity();
+                    canvas(
+                        |_, _, _| (),
+                        move |_, _, window, _cx| {
+                            let editor = editor.clone();
+                            window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
+                                if !phase.bubble() {
+                                    return;
+                                }
+                                editor.update(cx, |editor, cx| {
+                                    if editor.list.is_scrollbar_dragging()
+                                        && event.pressed_button == Some(MouseButton::Left)
+                                    {
+                                        cx.stop_propagation();
+                                        editor.scrollbar_drag_to(event.position.y, cx);
+                                    }
+                                });
+                            });
+                        },
+                    )
+                    .absolute()
+                    .size_full()
+                })
                 .on_mouse_up(
                     MouseButton::Left,
                     cx.listener(|editor, _, window, cx| editor.scrollbar_drag_ended(window, cx)),
@@ -177,7 +221,7 @@ fn scrollbar_metrics(list: &ListState) -> Option<(f32, f32)> {
 
 #[cfg(test)]
 mod tests {
-    use super::thumb_geom;
+    use super::{grab_offset, thumb_geom};
 
     #[test]
     fn a_document_that_fits_has_no_thumb() {
@@ -194,5 +238,21 @@ mod tests {
         assert!((y - 150.).abs() < 0.1, "scrolled to the end, thumb at the bottom");
         let (_, short) = thumb_geom(100., 10_000., 0.).unwrap();
         assert_eq!(short, 24.);
+    }
+
+    #[test]
+    fn a_viewport_shorter_than_the_minimum_thumb_has_no_scrollbar() {
+        assert_eq!(thumb_geom(10., 100., 0.), None);
+        assert_eq!(thumb_geom(24., 100., 90.), None);
+    }
+
+    #[test]
+    fn a_press_on_the_thumb_keeps_its_grab_point_a_press_off_it_centers() {
+        // Thumb spans 40..90 (top 40, height 50).
+        assert_eq!(grab_offset(45., 40., 50.), 5., "grabbed 5px below the thumb's top");
+        assert_eq!(grab_offset(40., 40., 50.), 0., "grabbed exactly at the top");
+        assert_eq!(grab_offset(90., 40., 50.), 50., "grabbed exactly at the bottom");
+        assert_eq!(grab_offset(120., 40., 50.), 25., "track click centers the thumb");
+        assert_eq!(grab_offset(10., 40., 50.), 25., "track click above the thumb also centers");
     }
 }

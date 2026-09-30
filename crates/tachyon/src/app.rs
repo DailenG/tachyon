@@ -1134,6 +1134,7 @@ fn open_note_window(source: NoteSource, cx: &mut App) -> Option<WindowHandle<Edi
                 editor.set_app_notice(notice, cx);
             }
             if let Some(path) = path.clone() {
+                editor.reserve_note_file(path.clone());
                 load_note_file(path, cx);
             }
             editor
@@ -1215,6 +1216,8 @@ fn load_note_file(path: PathBuf, cx: &mut Context<Editor>) {
                 editor.set_loaded(*loaded, cx);
                 editor.adopt_note_file(path, cx);
                 editor.rest_after_load(cx);
+            } else {
+                editor.clear_pending_note_file();
             }
         });
     })
@@ -1280,11 +1283,19 @@ fn open_or_focus_note(path: PathBuf, cx: &mut App) {
     cx.activate(true);
 }
 
-/// Opens the reopen-note picker in an existing window, or a new window if none is open.
+/// Opens the reopen-note picker in a visible window, or a new window if none is open.
 fn show_note_picker(cx: &mut App) {
-    let handle = cx.windows().into_iter().find_map(|window| window.downcast::<Editor>());
+    let ready = cx.try_global::<ReadyWindow>().and_then(|ready| ready.0);
+    let handle =
+        cx.windows().into_iter().filter_map(|window| window.downcast::<Editor>()).find(|handle| {
+            Some(*handle) != ready
+                && handle.update(cx, |_, window, _| window.is_visible()).unwrap_or(false)
+        });
     if let Some(handle) = handle {
-        let _ = handle.update(cx, |editor, _, cx| editor.open_note_picker(cx));
+        let _ = handle.update(cx, |editor, window, cx| {
+            window.activate_window();
+            editor.open_note_picker(cx);
+        });
         cx.activate(true);
         return;
     }
