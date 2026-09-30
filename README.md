@@ -97,7 +97,10 @@ start as fast as a scratchpad and edit like Typora: one pane, inline WYSIWYG, no
 A sticky note is a small, always-editable scratch window meant to stay open and out of the way.
 Open one with `tachyon --note` on the command line, the global hotkey in the `sticky_hotkey`
 setting (default `win+shift+n`, Windows only - see below), the command palette's "New sticky
-note" row, or, on Windows, the tray icon's "New sticky note" item.
+note" row (which shows that hotkey), or, on Windows, the tray icon's "New sticky note" item.
+Reopen a closed one from the palette's "Reopen sticky note..." row, or the tray's matching item:
+the list is the notes folder, newest first, and a note already open is focused instead of opened
+again.
 
 Each note is a Markdown file, autosaved as you type (after a short pause, like hot exit's own
 backup) with no Save prompt, in `<Documents>/tachyon/notes/` (`~/Documents/tachyon/notes/` on
@@ -118,6 +121,10 @@ Three settings in `settings.toml` (`Ctrl+,`) control sticky notes:
   window is not focused; `1.0` turns this off. A focused note is always fully opaque, and
   ordinary (non-note) windows are never affected.
 
+`start_without_active_block` (default `false`): when `true`, opening a file, restoring a session,
+or pasting a whole document leaves every block rendered. A click or keystroke starts editing.
+`scrollbar` (`"auto"` or `"never"`, default `"auto"`): an overlay thumb while scrolling or while
+the pointer is on the right edge. It hides a second later and does not change the text width.
 Each note has its own compact header instead of the native title bar, with a drag area, a pin
 button and a close button. The pin button and `Ctrl+Shift+T` toggle that note's always-on-top
 state on or off individually (Windows: `SetWindowPos(HWND_TOPMOST)`); always-on-top is not

@@ -13,8 +13,16 @@ when unfocused, and reopens where it was left when the resident process starts a
 
 **Opening a note.** `tachyon --note` on the command line (forwarded to a running instance like any
 other launch); the global hotkey held in the `sticky_hotkey` setting, default `"win+shift+n"`;
-the command palette's "New sticky note" row; and, on Windows, the tray's "New sticky note" item
-above "About Tachyon". All four call the same `open_note_window(NoteSource::New, _)`.
+the command palette's "New sticky note" row (it shows the live `sticky_hotkey`); and, on Windows,
+the tray's "New sticky note" item. All of those call `open_note_window(NoteSource::New, _)`.
+A closed note is reopened from the palette's "Reopen sticky note..." row, or the tray's matching
+item: `stored_notes` lists the folder (names and modification times only, off the UI thread after
+the picker opens). A missing folder shows "no notes"; other directory errors show a notice. A
+later picker or dismissal supersedes that read rather than letting it replace the current query.
+Picking one calls `OpenNote`, which focuses the window if that note is already open (including
+while it is loading) or opens it at the default size and place (`NoteSource::Reopen`). The loading
+identity is separate from the saved path, so a blank window cannot delete the note before its
+read finishes. The notes folder itself is not a setting yet.
 
 The hotkey (`tachyon_platform::Hotkey`, parsed from settings text such as `"win+shift+n"`:
 zero or more of `ctrl`/`alt`/`shift`/`win`, plus exactly one letter or digit, at least one

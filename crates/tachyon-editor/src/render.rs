@@ -236,10 +236,19 @@ impl Render for Editor {
                     editor.open_command_palette(&crate::editor::OpenCommandPalette, window, cx);
                 }),
             )
-            .on_mouse_up(MouseButton::Left, cx.listener(|editor, _, _, _| editor.selecting = false))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|editor, _, window, cx| {
+                    editor.selecting = false;
+                    editor.scrollbar_drag_ended(window, cx);
+                }),
+            )
             .on_mouse_up_out(
                 MouseButton::Left,
-                cx.listener(|editor, _, _, _| editor.selecting = false),
+                cx.listener(|editor, _, window, cx| {
+                    editor.selecting = false;
+                    editor.scrollbar_drag_ended(window, cx);
+                }),
             )
             .children(self.note_header(cx))
             .children(self.mode_notice())
@@ -282,6 +291,7 @@ impl Render for Editor {
                 .size_full(),
             )
             .children(self.frame_stats_overlay())
+            .children(self.scrollbar_layer(cx))
             .children(self.find_bar(viewport, cx))
             .children(self.picker_bar(viewport, cx))
     }

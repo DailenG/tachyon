@@ -322,6 +322,17 @@ pub struct Editor {
     /// Sticky-note state (`notes.rs`): `Some` only for a sticky note window
     /// (`Editor::make_note`), `None` for an ordinary editor window.
     pub(crate) note: Option<crate::notes::NoteState>,
+    /// Overlay scrollbar (`scrollbar.rs`). The thumb is painted only while `scrollbar_visible`
+    /// or `scrollbar_edge` is set. `scrollbar_generation` drops a hide timer that a later scroll
+    /// has already replaced.
+    pub(crate) scrollbar_visible: bool,
+    pub(crate) scrollbar_edge: bool,
+    pub(crate) scrollbar_generation: u64,
+    pub(crate) scrollbar_hide: Option<Task<()>>,
+    /// Pointer offset from the thumb's top, captured on mouse-down (`scrollbar_drag_started`)
+    /// and held for the rest of the drag so the thumb does not jump to re-center under the
+    /// pointer when it was grabbed off-center.
+    pub(crate) scrollbar_drag_offset: Pixels,
 }
 
 /// Zoom levels `Ctrl+=` and `Ctrl+-` step through, as in browsers.
@@ -367,6 +378,12 @@ impl Editor {
         cx.observe_window_visibility(window, |editor, _, window, _| editor.note_placement(window))
             .detach();
         let list = ListState::new(doc.blocks().len(), ListAlignment::Top, px(1000.));
+        let scroll_editor = cx.entity().downgrade();
+        list.set_scroll_handler(move |_, window, cx| {
+            if let Some(editor) = scroll_editor.upgrade() {
+                editor.update(cx, |editor, cx| editor.scrollbar_scrolled(window, cx));
+            }
+        });
         let reported = is_dark(window.appearance());
         let hint = cx.try_global::<AppearanceHint>().map(|hint| hint.dark);
         let settings = cx.try_global::<crate::Settings>().cloned().unwrap_or_default();
@@ -421,6 +438,11 @@ impl Editor {
             last_placement: None,
             title_override: None,
             note: None,
+            scrollbar_visible: false,
+            scrollbar_edge: false,
+            scrollbar_generation: 0,
+            scrollbar_hide: None,
+            scrollbar_drag_offset: px(0.),
         };
         editor.doc.take_splices();
         editor.update_active();
@@ -445,6 +467,19 @@ impl Editor {
         self.list.reset(self.doc.blocks().len());
         self.update_active();
         self.reparse(0, cx);
+        cx.notify();
+    }
+
+    /// After a file open, a session restore, or a whole-document paste: leave no block raw when
+    /// `start_without_active_block` is on. The caret stays where it is; the next click or
+    /// keystroke edits. Not used for a reload from disk or a paste into a document being typed.
+    pub fn rest_after_load(&mut self, cx: &mut Context<Self>) {
+        let rest = cx.try_global::<crate::Settings>().is_some_and(|s| s.start_without_active_block);
+        if !rest {
+            return;
+        }
+        self.editing = false;
+        self.update_active();
         cx.notify();
     }
 
@@ -2027,6 +2062,15 @@ pub struct OpenPaths(pub std::rc::Rc<OpenPathsFn>);
 pub type OpenPathsFn = dyn Fn(Vec<PathBuf>, &mut App);
 
 impl gpui::Global for OpenPaths {}
+
+/// Opens a stored sticky note, or focuses its window if it is already open. Set by the
+/// application, which owns windows.
+pub struct OpenNote(pub std::rc::Rc<OpenNoteFn>);
+
+/// Handler type for [`OpenNote`].
+pub type OpenNoteFn = dyn Fn(PathBuf, &mut App);
+
+impl gpui::Global for OpenNote {}
 
 /// A large paste whose text is being prepared off the UI thread.
 struct PendingPaste {

@@ -33,6 +33,10 @@ pub(crate) enum CommandEffect {
     ToggleRestoreSession,
     /// Sets the text column width, in memory and in the settings file.
     ContentWidth(ContentWidth),
+    /// Opens the picker of stored sticky notes.
+    ReopenNote,
+    /// Flips the overlay scrollbar between auto and never.
+    ToggleScrollbar,
 }
 
 /// One row's name and what it does.
@@ -46,6 +50,7 @@ struct Command {
 const COMMANDS: &[Command] = &[
     Command { name: "New window", effect: CommandEffect::Action("tachyon::NewWindow") },
     Command { name: "New sticky note", effect: CommandEffect::Action("tachyon::NewNote") },
+    Command { name: "Reopen sticky note...", effect: CommandEffect::ReopenNote },
     Command { name: "Open", effect: CommandEffect::Action("tachyon::Open") },
     Command { name: "Save", effect: CommandEffect::Action("editor::Save") },
     Command { name: "Save As", effect: CommandEffect::Action("editor::SaveAs") },
@@ -83,6 +88,7 @@ const COMMANDS: &[Command] = &[
     Command { name: "Hot exit", effect: CommandEffect::ToggleHotExit },
     Command { name: "Show what's new after updates", effect: CommandEffect::ToggleWhatsNew },
     Command { name: "Restore session on start", effect: CommandEffect::ToggleRestoreSession },
+    Command { name: "Scrollbar", effect: CommandEffect::ToggleScrollbar },
     Command { name: "Width: 680px", effect: CommandEffect::ContentWidth(ContentWidth::Px(680.)) },
     Command { name: "Width: 820px", effect: CommandEffect::ContentWidth(ContentWidth::Px(820.)) },
     Command { name: "Width: 1100px", effect: CommandEffect::ContentWidth(ContentWidth::Px(1100.)) },
@@ -184,6 +190,11 @@ fn command_items(cx: &App) -> Vec<Item> {
         .iter()
         .map(|command| {
             let (label, marked, shortcut) = match command.effect {
+                CommandEffect::Action("tachyon::NewNote") => (
+                    command.name.to_owned(),
+                    false,
+                    tachyon_platform::global_hotkey_label(&settings.sticky_hotkey),
+                ),
                 CommandEffect::Action(action_name) => {
                     (command.name.to_owned(), false, shortcut_for(&keymap, action_name))
                 }
@@ -209,6 +220,20 @@ fn command_items(cx: &App) -> Vec<Item> {
                     false,
                     None,
                 ),
+                CommandEffect::ToggleScrollbar => (
+                    format!(
+                        "{}: {}",
+                        command.name,
+                        if settings.scrollbar == crate::settings::ScrollbarMode::Auto {
+                            "Auto"
+                        } else {
+                            "Off"
+                        }
+                    ),
+                    false,
+                    None,
+                ),
+                CommandEffect::ReopenNote => (command.name.to_owned(), false, None),
                 CommandEffect::ContentWidth(width) => {
                     (command.name.to_owned(), settings.content_width == width, None)
                 }
@@ -283,6 +308,22 @@ impl Editor {
                     settings.restore_session = next;
                 });
             }
+            CommandEffect::ReopenNote => self.open_note_picker(cx),
+            CommandEffect::ToggleScrollbar => {
+                let current = cx
+                    .try_global::<Settings>()
+                    .is_none_or(|s| s.scrollbar == crate::settings::ScrollbarMode::Auto);
+                let next = !current;
+                let value = if next { "\"auto\"" } else { "\"never\"" };
+                crate::settings::apply_setting(cx, "scrollbar", value, move |settings| {
+                    settings.scrollbar = if next {
+                        crate::settings::ScrollbarMode::Auto
+                    } else {
+                        crate::settings::ScrollbarMode::Never
+                    };
+                });
+            }
+
             CommandEffect::ContentWidth(width) => {
                 crate::settings::apply_setting(
                     cx,

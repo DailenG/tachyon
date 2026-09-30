@@ -1789,6 +1789,21 @@ fn right_click_opens_the_command_palette(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn rest_after_load_clears_the_active_block_only_when_asked(cx: &mut TestAppContext) {
+    let (editor, cx) = open("# Title\n\npara\n", cx);
+    editor.update(cx, |editor, cx| editor.rest_after_load(cx));
+    assert_eq!(editor.read_with(cx, |editor, _| editor.active_block()), Some(0));
+    cx.update(|_, cx| {
+        cx.set_global(crate::Settings {
+            start_without_active_block: true,
+            ..crate::Settings::default()
+        });
+    });
+    editor.update(cx, |editor, cx| editor.rest_after_load(cx));
+    assert_eq!(editor.read_with(cx, |editor, _| editor.active_block()), None);
+}
+
+#[gpui::test]
 fn click_outside_the_picker_closes_it_without_moving_the_caret(cx: &mut TestAppContext) {
     let (editor, cx) = open("one two\n", cx);
     editor.update(cx, |editor, cx| editor.move_to(4, false, cx));
@@ -2583,6 +2598,42 @@ fn open_note(
     });
     cx.run_until_parked();
     (editor, cx)
+}
+
+#[gpui::test]
+fn reopening_reserves_a_note_without_deleting_its_file_before_load(cx: &mut TestAppContext) {
+    let dir = notes_dir("pending-reopen");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("saved.md");
+    std::fs::write(&path, "important\n").unwrap();
+    let (editor, cx) = open_note(dir.clone(), cx);
+    editor.update(cx, |editor, cx| {
+        editor.reserve_note_file(path.clone());
+        assert!(editor.is_note_file(&path), "another reopen must focus this window");
+        assert!(editor.flush_note(cx), "an empty loading note has nothing to save");
+        assert!(path.exists(), "the pending path must not become a deletion target");
+        editor.clear_pending_note_file();
+        assert!(!editor.is_note_file(&path), "a failed read releases the reservation");
+    });
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[gpui::test]
+fn a_superseded_note_folder_read_keeps_the_new_picker_and_its_query(cx: &mut TestAppContext) {
+    let dir = notes_dir("picker-superseded");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("saved.md"), "saved\n").unwrap();
+    let (editor, cx) = open_note(dir.clone(), cx);
+    editor.update(cx, |editor, cx| editor.open_note_picker(cx));
+    cx.simulate_keystrokes("secondary-shift-p");
+    cx.simulate_input("scrollbar");
+    cx.run_until_parked();
+    let (title, query) = editor.read_with(cx, |editor, _| {
+        let picker = editor.picker.as_ref().expect("palette stays open");
+        (picker.title, picker.query.clone())
+    });
+    assert_eq!((title, query.as_str()), ("Command Palette", "scrollbar"));
+    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 const AUTOSAVE_PAUSE: std::time::Duration = std::time::Duration::from_millis(1600);
