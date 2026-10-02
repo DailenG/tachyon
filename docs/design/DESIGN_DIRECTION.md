@@ -39,13 +39,29 @@ These are not planned for the application. Proposing one needs benchmark evidenc
   be new features, which need a separate product decision. (An About window is approved for
   1.0 - see the Brand intensity table below - not as a precedent for other branding-only screens.)
 
+## Source of truth
+
+The visual design is defined by the owner's Claude Design project, "Tachyon Design System",
+mirrored read-only in [`docs/design/system/`](system/). Read its
+[`README.md`](system/README.md) (voice, colour, type, spacing, iconography) and tokens before any
+UI or brand work, then [`SNAPSHOT.md`](system/SNAPSHOT.md), which lists where this repository
+deliberately departs from it (for example, the editor never animates and the website self-hosts
+its font). This document adds the speed rules that decide every such departure. Where the
+snapshot and this document disagree on speed, this document wins; on anything else, the design
+system wins.
+
 ## Concept references
 
-The reference artwork lives in [`docs/design/concepts/`](concepts/). The image currently available is [`tachyon-logo-concept.png`](concepts/tachyon-logo-concept.png): the selected horizontal particle/orbit mark above an italic Tachyon wordmark on a light background. Its cyan, blue, and violet treatment and dark navy text suggest a brand direction.
+The owner's concept sheets and logo masters live in [`docs/design/concepts/`](concepts/) (see its
+[README](concepts/README.md)). The sheets show the intended look; the masters are the logo itself.
+Do not load anything from that directory at runtime, and do not infer features from the mock-up
+editor drawn in the landing-page sheets.
 
-These are **conceptual references, not canonical UI specifications or production-ready assets**. The image does not prescribe the editor layout, controls, typography implementation, exact colors, feature set, app icon, or website layout. Do not load artwork from `docs/design/concepts/` at runtime. Future concept images can be added to that folder and documented in its README; do not assume that mockups discussed elsewhere are present here.
-
-Any production logo, icon, or other brand asset needs a separate implementation appropriate to its destination, with scalable geometry, small-size legibility, accessible contrast, and suitable licensing or provenance. Avoid automatically vectorizing the raster reference into an unreviewed runtime asset.
+Production logo and icon files are **traced from the masters, never redrawn**: `scripts/brand/`
+traces them, checks each trace against its master pixel for pixel, and composes every colourway,
+lockup and icon size from the traces (see [`assets/brand/README.md`](../../assets/brand/README.md)).
+The previous hand-drawn approximations, with a wordmark set in DejaVu Sans Bold, are how the brand
+drifted from the concept; they were replaced in October 2026.
 
 ## Visual language
 
@@ -61,7 +77,7 @@ Any production logo, icon, or other brand asset needs a separate implementation 
 | --- | --- |
 | Website and release artwork | Expressive use of the logo, gradient, and motif, with optimized assets |
 | GitHub and documentation | Recognizable, restrained identity |
-| App icons (window, taskbar, tray, launcher, executable) | The mark, with a simplified version for 16–32 px; prepared at build time |
+| App icons (window, taskbar, tray, launcher, executable) | The gradient symbol on the navy tile with a gradient border (owner decision, 2026-10-02); a simplified symbol and solid border at 16–32 px; prepared at build time from `assets/brand/` |
 | Working editor | Quiet chrome; solid colors only; the document remains the focal point |
 | About window | Approved for 1.0: the owner's personal signature artwork (`assets/brand/signature.png`, `signature-light.png`), theme-appropriate, decoded only when the window opens |
 | Onboarding | Not planned (see the deprioritized list) |

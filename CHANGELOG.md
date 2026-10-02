@@ -6,6 +6,15 @@ All notable user-visible changes are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- New app icon, matching the concept artwork: the gradient Tachyon symbol on a navy tile with a
+  gradient border. Small sizes (taskbar, tray, title bar) use a simplified symbol drawn for each
+  size, so the icon no longer looks like a "3" at 16-32 px.
+- Windows: the icon is sharp at every size, including Explorer's large and extra-large views,
+  the Start menu, Alt+Tab and high display scaling (it previously stopped at 64 px).
+- The website favicon is the new icon.
+
 ## [1.2.0] - 2026-09-30
 
 ### Added

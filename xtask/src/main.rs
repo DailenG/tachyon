@@ -29,9 +29,10 @@ Tasks:
       .tar.gz elsewhere. --no-build skips the build and packs the binary
       already at target/release (used after signing it in place).
   icons
-      Regenerates the application's icons from assets/brand: tachyon.ico (16-64 px,
-      32-bit DIB images; the small icon art up to 32 px) and the launcher SVG, both in
-      crates/tachyon-platform/assets. Needs rsvg-convert and ImageMagick (magick).
+      Regenerates the application's icons from assets/brand: tachyon.ico (16-128 px
+      as 32-bit DIB images, plus one 256 px PNG) and the launcher SVG, both in
+      crates/tachyon-platform/assets, and the MSIX PNGs in packaging/msix/Assets.
+      Needs rsvg-convert and ImageMagick (magick).
       Run after changing the brand art; the build only embeds the results.
   msix [--version X.Y.Z.W] [--appinstaller-base URL-OR-PATH]
       Windows only (needs makeappx.exe from the Windows 10/11 SDK). Packs
@@ -202,40 +203,59 @@ fn dist(args: Vec<String>) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Icon sizes and the art drawn at each: up to 32 px (the tray, title bar and taskbar at 100 %)
-/// the simplified mark (`app-icon-small.svg`, the same art as the website's favicon); 40 px and
-/// up the full mark.
-const ICON_SIZES: [(u32, &str); 7] = [
-    (16, "app-icon-small.svg"),
-    (20, "app-icon-small.svg"),
-    (24, "app-icon-small.svg"),
-    (32, "app-icon-small.svg"),
-    (40, "app-icon.svg"),
-    (48, "app-icon.svg"),
-    (64, "app-icon.svg"),
+/// The app icon art in `assets/brand`, each drawn on its own pixel grid by
+/// `scripts/brand/compose.py`: (grid size in px, file). A raster of any size is rendered from the
+/// smallest art at least that large ([`icon_art`]), so every size gets art meant for it or for
+/// a size just above it, never art stretched up. 16-32 px is the simplified mark with a solid
+/// border; 40 px and up the full mark with a gradient border.
+const ICON_ART: [(u32, &str); 8] = [
+    (16, "app-icon-16.svg"),
+    (20, "app-icon-20.svg"),
+    (24, "app-icon-24.svg"),
+    (32, "app-icon-32.svg"),
+    (40, "app-icon-40.svg"),
+    (48, "app-icon-48.svg"),
+    (64, "app-icon-64.svg"),
+    (256, "app-icon.svg"),
 ];
 
+/// The art for a `size` px raster: the smallest grid at least that large, else the largest.
+fn icon_art(size: u32) -> &'static str {
+    ICON_ART.iter().find(|(grid, _)| *grid >= size).unwrap_or(&ICON_ART[ICON_ART.len() - 1]).1
+}
+
+/// Sizes in `tachyon.ico`, all 32-bit DIB images: 16-32 px for the tray, title bar and taskbar
+/// at 100-200 % scaling; 40-64 px for Alt+Tab and the taskbar at higher scaling; 96 and 128 px for
+/// the large window icon at 300 and 400 % (`SM_CXICON`). The tray creates its icons with
+/// `CreateIconFromResourceEx` from these DIBs (see `crates/tachyon-platform/src/windows/tray.rs`).
+const ICO_DIB_SIZES: [u32; 9] = [16, 20, 24, 32, 40, 48, 64, 96, 128];
+
+/// The one PNG-compressed image in `tachyon.ico`, last in the file: 256 px for Explorer's large
+/// and extra-large views, the Start menu and Alt+Tab at high scaling. Explorer reads PNG entries;
+/// the tray never uses this one (`ico_image` skips PNG entries). As a DIB it would be 270 KB of
+/// the executable; as a PNG it is about 31 KB.
+const ICO_PNG_SIZE: u32 = 256;
+
 /// Sizes rendered into `packaging/msix/Assets` for the MSIX manifest's `Square44x44Logo` slot,
-/// plus the tile and store logos. Same art selection as `ICON_SIZES` (`app-icon-small.svg` up to
-/// 32 px, `app-icon.svg` above). Windows discovers the `targetsize-<n>` and
-/// `_altform-unplated`-qualified siblings of the file the manifest names by filename convention
-/// alone, so nothing else in the manifest changes when these are added; Tachyon's art is
-/// transparent throughout (`BackgroundColor="transparent"` in the manifest), so the "plated" and
-/// "unplated" forms are the same image.
-const MSIX_ASSETS: [(&str, u32, &str); 13] = [
-    ("Square44x44Logo.png", 44, "app-icon.svg"),
-    ("Square44x44Logo.targetsize-16.png", 16, "app-icon-small.svg"),
-    ("Square44x44Logo.targetsize-16_altform-unplated.png", 16, "app-icon-small.svg"),
-    ("Square44x44Logo.targetsize-24.png", 24, "app-icon-small.svg"),
-    ("Square44x44Logo.targetsize-24_altform-unplated.png", 24, "app-icon-small.svg"),
-    ("Square44x44Logo.targetsize-32.png", 32, "app-icon-small.svg"),
-    ("Square44x44Logo.targetsize-32_altform-unplated.png", 32, "app-icon-small.svg"),
-    ("Square44x44Logo.targetsize-48.png", 48, "app-icon.svg"),
-    ("Square44x44Logo.targetsize-48_altform-unplated.png", 48, "app-icon.svg"),
-    ("Square44x44Logo.targetsize-256.png", 256, "app-icon.svg"),
-    ("Square44x44Logo.targetsize-256_altform-unplated.png", 256, "app-icon.svg"),
-    ("Square150x150Logo.png", 150, "app-icon.svg"),
-    ("StoreLogo.png", 50, "app-icon.svg"),
+/// plus the tile and store logos, each from [`icon_art`]. Windows discovers the `targetsize-<n>`
+/// and `_altform-unplated`-qualified siblings of the file the manifest names by filename
+/// convention alone, so nothing else in the manifest changes when these are added; Tachyon's art
+/// is transparent outside its tile (`BackgroundColor="transparent"` in the manifest), so the
+/// "plated" and "unplated" forms are the same image.
+const MSIX_ASSETS: [(&str, u32); 13] = [
+    ("Square44x44Logo.png", 44),
+    ("Square44x44Logo.targetsize-16.png", 16),
+    ("Square44x44Logo.targetsize-16_altform-unplated.png", 16),
+    ("Square44x44Logo.targetsize-24.png", 24),
+    ("Square44x44Logo.targetsize-24_altform-unplated.png", 24),
+    ("Square44x44Logo.targetsize-32.png", 32),
+    ("Square44x44Logo.targetsize-32_altform-unplated.png", 32),
+    ("Square44x44Logo.targetsize-48.png", 48),
+    ("Square44x44Logo.targetsize-48_altform-unplated.png", 48),
+    ("Square44x44Logo.targetsize-256.png", 256),
+    ("Square44x44Logo.targetsize-256_altform-unplated.png", 256),
+    ("Square150x150Logo.png", 150),
+    ("StoreLogo.png", 50),
 ];
 
 /// Runs an external tool `cargo xtask icons` needs, turning a missing program into a message that
@@ -267,8 +287,7 @@ fn render_svg(brand: &Path, art: &str, size: u32, dest: &Path) -> Result<(), Str
 
 /// `cargo xtask icons`: rasterizes the brand SVGs into the `.ico` the tray, the windows and the
 /// executable embed, the MSIX assets `packaging/msix/AppxManifest.xml` names, and copies the
-/// launcher SVG. The `.ico` sizes stay at 64 px and below, which ImageMagick writes as DIB
-/// images: the tray creates icons without an image codec and rejects PNG entries.
+/// launcher SVG.
 fn icons() -> Result<ExitCode, String> {
     let root = workspace_root();
     let brand = root.join("assets/brand");
@@ -277,34 +296,38 @@ fn icons() -> Result<ExitCode, String> {
     let work = std::env::temp_dir().join(format!("tachyon-icons-{}", std::process::id()));
     std::fs::create_dir_all(&work).map_err(|e| e.to_string())?;
 
-    let mut pngs = Vec::new();
-    for (size, art) in ICON_SIZES {
-        let png = work.join(format!("{size}.png"));
-        render_svg(&brand, art, size, &png)?;
-        pngs.push(png);
-    }
     // Written and checked in the scratch directory first, so a bad ICO never replaces the tracked
     // one that builds embed.
-    let staged_ico = work.join("tachyon.ico");
-    let mut ico_args: Vec<&std::ffi::OsStr> = pngs.iter().map(|p| p.as_os_str()).collect();
-    ico_args.push(staged_ico.as_os_str());
-    let ico_result = run_tool("magick", &ico_args)
-        .and_then(|()| std::fs::read(&staged_ico).map_err(|e| e.to_string()))
-        .and_then(|bytes| check_dib_icon(&bytes))
-        .and_then(|()| {
-            let ico = out.join("tachyon.ico");
-            std::fs::copy(&staged_ico, &ico)
-                .map(drop)
-                .map_err(|e| format!("{}: {e}", ico.display()))
-        });
+    let ico_result = (|| -> Result<(), String> {
+        let mut pngs = Vec::new();
+        for size in ICO_DIB_SIZES {
+            let png = work.join(format!("{size}.png"));
+            render_svg(&brand, icon_art(size), size, &png)?;
+            pngs.push(png);
+        }
+        // ImageMagick writes every image of an `.ico` as a DIB, which is what the tray needs; the
+        // PNG entry is appended afterwards by `append_png_image`.
+        let dib_ico = work.join("dib.ico");
+        let mut ico_args: Vec<&std::ffi::OsStr> = pngs.iter().map(|p| p.as_os_str()).collect();
+        ico_args.push(dib_ico.as_os_str());
+        run_tool("magick", &ico_args)?;
+        let large = work.join(format!("{ICO_PNG_SIZE}.png"));
+        render_svg(&brand, icon_art(ICO_PNG_SIZE), ICO_PNG_SIZE, &large)?;
+        let dib = std::fs::read(&dib_ico).map_err(|e| e.to_string())?;
+        let png = std::fs::read(&large).map_err(|e| e.to_string())?;
+        let ico = append_png_image(&dib, &png)?;
+        check_icon(&ico)?;
+        let target = out.join("tachyon.ico");
+        std::fs::write(&target, ico).map_err(|e| format!("{}: {e}", target.display()))
+    })();
 
     // Rendered and copied only if every asset renders, so a partial failure never leaves a stale
     // asset next to fresh ones.
     let msix_result = (|| -> Result<(), String> {
         let mut staged = Vec::new();
-        for (name, size, art) in MSIX_ASSETS {
+        for (name, size) in MSIX_ASSETS {
             let dest = work.join(name);
-            render_svg(&brand, art, size, &dest)?;
+            render_svg(&brand, icon_art(size), size, &dest)?;
             staged.push((dest, name));
         }
         std::fs::create_dir_all(&msix_assets)
@@ -319,7 +342,7 @@ fn icons() -> Result<ExitCode, String> {
     })();
 
     let svg = out.join("tachyon.svg");
-    let svg_result = std::fs::copy(brand.join("app-icon.svg"), &svg)
+    let svg_result = std::fs::copy(brand.join(icon_art(ICO_PNG_SIZE)), &svg)
         .map(drop)
         .map_err(|e| format!("{}: {e}", svg.display()));
 
@@ -337,19 +360,61 @@ fn icons() -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Every image in the `.ico` is a 32-bit DIB (a `BITMAPINFOHEADER` with 32 bits per pixel, not a
-/// PNG).
-fn check_dib_icon(ico: &[u8]) -> Result<(), String> {
+/// `ico` (images all DIBs) with `png`, a square PNG of [`ICO_PNG_SIZE`] px, added as its last
+/// image. Every existing image's data moves 16 bytes further into the file, to make room for the
+/// new directory entry, so their offsets are rewritten.
+fn append_png_image(ico: &[u8], png: &[u8]) -> Result<Vec<u8>, String> {
+    let count = ico.get(4..6).map(|b| u16::from_le_bytes([b[0], b[1]])).ok_or("truncated icon")?;
+    let directory_end = 6 + 16 * usize::from(count);
+    let entries = ico.get(6..directory_end).ok_or("truncated icon directory")?;
+    let images = ico.get(directory_end..).ok_or("truncated icon")?;
+    let mut out = Vec::with_capacity(ico.len() + 16 + png.len());
+    out.extend([0, 0, 1, 0]); // reserved, type 1 (icon)
+    out.extend((count + 1).to_le_bytes());
+    for entry in entries.as_chunks::<16>().0 {
+        let offset = u32::from_le_bytes([entry[12], entry[13], entry[14], entry[15]]);
+        out.extend(&entry[..12]);
+        out.extend((offset + 16).to_le_bytes());
+    }
+    // Width and height 0 mean 256; no palette; 1 plane; 32 bits per pixel.
+    out.extend([0, 0, 0, 0, 1, 0, 32, 0]);
+    out.extend((png.len() as u32).to_le_bytes());
+    out.extend(((ico.len() + 16) as u32).to_le_bytes());
+    out.extend(images);
+    out.extend(png);
+    Ok(out)
+}
+
+/// The `.ico` holds exactly [`ICO_DIB_SIZES`] as 32-bit DIBs (a `BITMAPINFOHEADER` with 32 bits
+/// per pixel), in that order, then one [`ICO_PNG_SIZE`] px PNG, and every image lies inside the
+/// file.
+fn check_icon(ico: &[u8]) -> Result<(), String> {
+    const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
     let u16_at = |at: usize| ico.get(at..at + 2).map(|b| u16::from_le_bytes([b[0], b[1]]));
-    let count = u16_at(4).ok_or("the icon file is truncated")?;
-    for i in 0..usize::from(count) {
-        let offset = ico
-            .get(18 + 16 * i..22 + 16 * i)
-            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize)
-            .ok_or("the icon directory is truncated")?;
-        let header = ico.get(offset..offset + 4) == Some(&[40, 0, 0, 0][..]);
-        if !header || u16_at(offset + 14) != Some(32) {
-            return Err(format!("icon image {i} is not a 32-bit DIB"));
+    let u32_at = |at: usize| {
+        ico.get(at..at + 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize)
+    };
+    let count = usize::from(u16_at(4).ok_or("the icon file is truncated")?);
+    let expected: Vec<u32> = ICO_DIB_SIZES.iter().copied().chain([ICO_PNG_SIZE]).collect();
+    if count != expected.len() {
+        return Err(format!("the icon has {count} images, expected {}", expected.len()));
+    }
+    for (i, &size) in expected.iter().enumerate() {
+        let entry = 6 + 16 * i;
+        let width = ico.get(entry).map(|&w| if w == 0 { 256 } else { u32::from(w) });
+        let len = u32_at(entry + 8).ok_or("the icon directory is truncated")?;
+        let offset = u32_at(entry + 12).ok_or("the icon directory is truncated")?;
+        let image = ico.get(offset..offset + len).ok_or(format!("icon image {i} is truncated"))?;
+        if width != Some(size) {
+            return Err(format!("icon image {i} is {width:?} px wide, expected {size}"));
+        }
+        let is_png = image.starts_with(PNG_SIGNATURE);
+        let is_dib = image.starts_with(&[40, 0, 0, 0]) && u16_at(offset + 14) == Some(32);
+        if size == ICO_PNG_SIZE && !is_png {
+            return Err(format!("icon image {i} ({size} px) is not a PNG"));
+        }
+        if size != ICO_PNG_SIZE && !is_dib {
+            return Err(format!("icon image {i} ({size} px) is not a 32-bit DIB"));
         }
     }
     Ok(())

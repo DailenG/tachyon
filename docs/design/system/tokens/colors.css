@@ -1,0 +1,169 @@
+/* Tachyon color tokens. Brand values from the uploaded brand sheets; editor values from
+   crates/tachyon-editor/src/theme.rs (docs/design/TOKENS_PROPOSAL.md). */
+:root{
+  /* Brand core */
+  --tachyon-cyan:#00D1FF;
+  --tachyon-blue:#2563FF;
+  --tachyon-violet:#7C3AED;
+  --tachyon-navy:#0B1220;
+  --tachyon-light:#F8FAFC;
+
+  /* Brand tints and shades */
+  --cyan-50:#E6FAFF;--cyan-100:#CCF5FF;--cyan-600:#0099C7;--cyan-700:#0077A3;
+  --blue-50:#EEF3FF;--blue-100:#DCE6FF;--blue-200:#BFD1FF;--blue-600:#1F55E6;--blue-700:#1D45C8;--blue-800:#1E37A0;
+  --violet-50:#F3EEFE;--violet-100:#E7DDFD;--violet-600:#6D28D9;--violet-700:#5B21B6;
+
+  /* Neutrals (navy-tinted slate) */
+  --neutral-0:#FFFFFF;
+  --neutral-50:#F8FAFC;
+  --neutral-100:#F1F5F9;
+  --neutral-150:#EBF0F6;
+  --neutral-200:#E2E8F0;
+  --neutral-300:#CBD5E1;
+  --neutral-400:#94A3B8;
+  --neutral-500:#64748B;
+  --neutral-600:#475569;
+  --neutral-700:#334155;
+  --neutral-800:#1E293B;
+  --neutral-900:#0B1220;
+
+  /* Dark surfaces (from site/styles.css) */
+  --navy-950:#080C14;
+  --navy-900:#0B1220;
+  --navy-850:#101A2D;
+  --navy-800:#111A2E;
+  --navy-750:#141D33;
+  --navy-700:#1A2542;
+  --navy-600:#223055;
+  --navy-text:#E9ECFF;
+  --navy-text-muted:#AEB9E0;
+  --navy-text-dim:#7C89B8;
+
+  /* Status */
+  --green-50:#DCFCE7;--green-600:#16A34A;--green-700:#15803D;
+  --amber-50:#FEF3C7;--amber-600:#D97706;--amber-700:#B45309;
+  --red-50:#FEE2E2;--red-600:#DC2626;--red-700:#B91C1C;
+
+  /* Gradients: logo, primary buttons, key accents only. Never page backgrounds. */
+  --gradient-brand:linear-gradient(90deg,#00D1FF 0%,#2563FF 50%,#7C3AED 100%); /* @kind other */
+  --gradient-button:linear-gradient(90deg,#00D1FF 0%,#2563FF 100%); /* @kind other */
+  --gradient-button-hover:linear-gradient(90deg,#00C8FA 0%,#2563FF 55%,#7C3AED 100%); /* @kind other */
+  --gradient-button-pressed:linear-gradient(90deg,#1D45C8 0%,#1E37A0 100%); /* @kind other */
+  --gradient-badge:linear-gradient(90deg,#2563FF 0%,#4F7DFF 100%); /* @kind other */
+  --gradient-soft:linear-gradient(135deg,#F4F8FF 0%,#EEF0FF 100%); /* @kind other */
+  --gradient-rule:linear-gradient(90deg,rgba(0,209,255,0) 0%,#2563FF 40%,#7C3AED 60%,rgba(124,58,237,0) 100%); /* @kind other */
+
+  /* Semantic: light (default) */
+  --surface-page:var(--tachyon-light);
+  --surface-card:var(--neutral-0);
+  --surface-sunken:var(--neutral-100);
+  --surface-raised:var(--neutral-0);
+  --surface-inverse:var(--tachyon-navy);
+  --text-strong:var(--tachyon-navy);
+  --text-body:var(--neutral-700);
+  --text-muted:var(--neutral-500);
+  --text-on-brand:#FFFFFF;
+  --text-on-inverse:#F8FAFC;
+  --text-link:var(--tachyon-blue);
+  --text-link-hover:var(--blue-700);
+  --border-subtle:var(--neutral-200);
+  --border-default:var(--neutral-300);
+  --border-strong:var(--neutral-400);
+  --accent:var(--tachyon-blue);
+  --accent-soft:var(--blue-50);
+  --accent-soft-hover:var(--blue-100);
+  --accent-soft-text:var(--tachyon-blue);
+  --focus-ring:0 0 0 3px rgba(37,99,255,.28);
+  --selection-bg:rgba(37,99,255,.18);
+  --tile-bg:var(--gradient-soft);
+
+  /* Tints for badges and status */
+  --tint-violet-bg:var(--violet-50);--tint-violet-fg:var(--violet-600);
+  --tint-cyan-bg:var(--cyan-50);--tint-cyan-fg:var(--cyan-700);
+  --tint-green-bg:var(--green-50);--tint-green-fg:var(--green-700);
+  --tint-amber-bg:var(--amber-50);--tint-amber-fg:var(--amber-700);
+  --tint-red-bg:var(--red-50);--tint-red-fg:var(--red-700);
+  --tint-neutral-bg:var(--neutral-100);--tint-neutral-fg:var(--neutral-700);
+
+  /* Editor (theme.rs light) */
+  --editor-canvas:#FAFBFE;
+  --editor-raised:#F1F5F9;
+  --editor-code:#E7EDF5;
+  --editor-scrim:#172335;
+  --editor-text:#172335;
+  --editor-muted:#42566C;
+  --editor-link:#1356A4;
+  --editor-on-accent:#FFFFFF;
+  --editor-border-subtle:#B5C2D0;
+  --editor-border-control:#66798F;
+  --editor-border-focus:#1356A4;
+  --editor-accent:#1356A4;
+  --editor-selection:#1356A42B;
+  --editor-find-match:#E8AB4138;
+  --editor-find-current:#E8AB4154;
+  --editor-find-underline:#87400F;
+  --editor-caret:#172335;
+  --syntax-keyword:#8B2A54;
+  --syntax-string:#286430;
+  --syntax-comment:#45596E;
+  --syntax-number:#87400F;
+  --syntax-function:#235892;
+  --syntax-type:#6A3B8C;
+  --syntax-math:#693C91;
+}
+
+/* Dark: deep navy surfaces with subtle cyan-blue glow accents */
+[data-theme="dark"]{
+  --surface-page:var(--navy-900);
+  --surface-card:var(--navy-800);
+  --surface-sunken:var(--navy-750);
+  --surface-raised:var(--navy-850);
+  --surface-inverse:var(--tachyon-light);
+  --text-strong:var(--navy-text);
+  --text-body:var(--navy-text-muted);
+  --text-muted:var(--navy-text-dim);
+  --text-on-inverse:var(--tachyon-navy);
+  --text-link:#5CDBFF;
+  --text-link-hover:#E9ECFF;
+  --border-subtle:var(--navy-700);
+  --border-default:var(--navy-600);
+  --border-strong:#33457A;
+  --accent:#4D86FF;
+  --accent-soft:rgba(37,99,255,.16);
+  --accent-soft-hover:rgba(37,99,255,.26);
+  --accent-soft-text:#8FB4FF;
+  --focus-ring:0 0 0 3px rgba(0,209,255,.35);
+  --selection-bg:rgba(0,209,255,.22);
+  --tile-bg:rgba(37,99,255,.14);
+  --tint-violet-bg:rgba(124,58,237,.2);--tint-violet-fg:#C4A8FF;
+  --tint-cyan-bg:rgba(0,209,255,.14);--tint-cyan-fg:#5CDBFF;
+  --tint-green-bg:rgba(22,163,74,.18);--tint-green-fg:#6EE7A0;
+  --tint-amber-bg:rgba(217,119,6,.18);--tint-amber-fg:#FCC56B;
+  --tint-red-bg:rgba(220,38,38,.18);--tint-red-fg:#FCA5A5;
+  --tint-neutral-bg:var(--navy-750);--tint-neutral-fg:var(--navy-text-muted);
+
+  --editor-canvas:#0E1623;
+  --editor-raised:#192434;
+  --editor-code:#131E2E;
+  --editor-scrim:#080C14;
+  --editor-text:#EBF2FA;
+  --editor-muted:#ABBDD0;
+  --editor-link:#8BC3FF;
+  --editor-on-accent:#0E1623;
+  --editor-border-subtle:#40526A;
+  --editor-border-control:#6F849B;
+  --editor-border-focus:#8BC3FF;
+  --editor-accent:#8BC3FF;
+  --editor-selection:#8BC3FF33;
+  --editor-find-match:#BE844730;
+  --editor-find-current:#BE84474D;
+  --editor-find-underline:#E4B17D;
+  --editor-caret:#EBF2FA;
+  --syntax-keyword:#F398C4;
+  --syntax-string:#A9D28B;
+  --syntax-comment:#ABBDD0;
+  --syntax-number:#E4B17D;
+  --syntax-function:#8BC3FF;
+  --syntax-type:#D3AAFF;
+  --syntax-math:#C6A2ED;
+}

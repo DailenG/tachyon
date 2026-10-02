@@ -601,8 +601,9 @@ the choice cheaply wherever a window or the settings resolve it, and the tray th
 alternative, Windows 10 1903+) right before the next `TrackPopupMenuEx`, since the preference is
 per-thread and the menu shows on the tray's own thread. The icon
 (`crates/tachyon-platform/assets/tachyon.ico`, generated from the brand
-art in `assets/brand/` by `cargo xtask icons`) is embedded in the binary for the tray and set on every window at its DPI's
-sizes; `crates/tachyon/build.rs` also writes it, with version information, as resources of the
+art in `assets/brand/` by `cargo xtask icons`: 32-bit DIBs from 16 to 128 px plus one 256 px PNG
+for Explorer) is embedded in the binary for the tray and set on every window at its DPI's sizes,
+both created only from the DIBs, so no image codec is loaded (ADR 0011); `crates/tachyon/build.rs` also writes it, with version information, as resources of the
 executable (a `.res` file the MSVC linker takes directly, so no resource compiler is needed),
 which Explorer, Task Manager and GPUI's window class use. `--background` starts a
 resident primary without a window, and a second background start with nothing to open exits,
@@ -676,7 +677,8 @@ to the end of that frame's paint. Windows measurement runs use it to attribute s
 ## Packaging
 
 `cargo xtask dist` packs the release binary with the README, changelog and licenses into a
-`.zip` (Windows) or `.tar.gz` (elsewhere); `cargo xtask icons` renders `assets/brand`'s SVGs into
+`.zip` (Windows) or `.tar.gz` (elsewhere); `cargo xtask icons` renders `assets/brand`'s SVGs
+(themselves generated from the owner's logo masters by `scripts/brand/`; ADR 0011) into
 `crates/tachyon-platform/assets/tachyon.ico` and, for Windows, the MSIX tile and taskbar PNGs
 under `packaging/msix/Assets` (both committed, like the `.ico`: no brand artwork is decoded at
 runtime or build time from anything but these pre-rendered files).

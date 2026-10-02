@@ -1,53 +1,129 @@
 # Tachyon brand assets
 
-These are original SVG constructions informed by the selected conceptual logo in `docs/design/concepts/tachyon-logo-concept.png` (PR #41). The particle, orbit, and tapered wake were drawn as new Bézier shapes; the raster was not auto-traced. These assets are for build-time icon generation and external brand surfaces. **Do not load, parse, rasterize, or draw them inside the editor window or on its startup path** (the two raster signature files below are the sole, owner-approved exception: the About window only, decoded when that window opens, never at start-up). `cargo xtask icons` generates the application's raster icons (`crates/tachyon-platform/assets/tachyon.ico` and the MSIX PNGs in `packaging/msix/Assets/`) from `app-icon-small.svg` (16–32 px, the same art as the website favicon) and `app-icon.svg` (40 px and up), and copies `app-icon.svg` as the Linux launcher SVG (`crates/tachyon-platform/assets/tachyon.svg`); the build only embeds those results.
+Every logo and icon file here is generated from the project owner's master artwork. Nothing in
+this directory is drawn by hand, and nothing may be. The design source of truth is the owner's
+Claude Design project, "Tachyon Design System", mirrored read-only in
+[`docs/design/system/`](../../docs/design/system/) for agents without access to it.
 
-## Files and use
+**Do not load, parse, rasterize or draw these files inside the editor window or on its startup
+path.** They are inputs to build-time icon generation and to external brand surfaces (website,
+README, release artwork). The About window is the one in-app exception, decoded only when that
+window opens (see [`docs/design/DESIGN_DIRECTION.md`](../../docs/design/DESIGN_DIRECTION.md)).
 
-| Asset | Intended use | Minimum rendered size |
+## How the files are made
+
+```
+docs/design/concepts/masters/*.png   owner-supplied masters, never edited
+        │  python3 scripts/brand/trace.py
+        ▼
+symbol-navy.svg, wordmark-navy.svg    traced geometry (checked: < 0.5 % pixel mismatch)
+        │  python3 scripts/brand/compose.py
+        ▼
+every other SVG in this directory     colourways, lockups, app icons
+        │  cargo xtask icons
+        ▼
+crates/tachyon-platform/assets/tachyon.ico, tachyon.svg; packaging/msix/Assets/*.png
+```
+
+1. **`scripts/brand/trace.py`** traces the two flat-navy masters with potrace and writes
+   `symbol-navy.svg` and `wordmark-navy.svg`. It renders each result back at the master's size
+   and refuses to write anything if more than 0.5 % of the inked pixels disagree (the committed
+   traces measure 0.35 % and 0.39 %, under a tenth of a pixel of average edge offset). Needs
+   `magick`, `potrace` and `rsvg-convert`.
+2. **`scripts/brand/fit_gradient.py`** measures the symbol's gradient from
+   `masters/symbol-gradient.png` (the same shape as the navy master, 0.3 % apart). Its output is
+   pasted into `compose.py`; re-run it only if that master changes. Needs `magick` and numpy.
+3. **`scripts/brand/compose.py`** builds every other file from the two traces. Standard library
+   only. Each number in it cites its source: a design-system token or a measurement of a concept
+   sheet.
+4. **`cargo xtask icons`** rasterizes the app icon art into the files the build embeds. The build
+   itself only embeds those results; it never runs these scripts.
+
+To change the logo, the owner supplies a new master and steps 1-4 are re-run. To change an icon's
+layout, change the cited constant in `compose.py` and re-run steps 3-4. Never edit an SVG here
+directly: the next run of `compose.py` overwrites it, and a hand edit is exactly how the brand
+drifted before (the previous files were hand-drawn approximations with a DejaVu Sans Bold
+wordmark, replaced in October 2026).
+
+## Files
+
+| File | What it is | Use it for |
 | --- | --- | --- |
-| `mark.svg` / `mark-flat.svg` | Full particle/orbit mark, gradient or one solid brand blue | 64 px wide |
-| `mark-small.svg` | Simplified, solid mark for compact surfaces | 16 px wide; reviewed at 16, 20, 24, 32 px |
-| `mark-mono.svg` | Single `currentColor` tintable mark | 24 px wide; use the small mark geometry if smaller |
-| `app-icon.svg` / `app-icon-flat.svg` | Square icon on a bounded dark tile | 48 px square |
-| `app-icon-small.svg` | Square icon with simplified mark; the 16–32 px raster icons and the website favicon | 16 px square; reviewed at 16, 20, 24, 32 px |
-| `wordmark.svg` | Outlined wordmark; never relies on a runtime font | 120 px wide |
-| `lockup-horizontal.svg` / `lockup-horizontal-flat.svg` | Mark plus outlined wordmark | 240 px wide |
+| `symbol-navy.svg` | The symbol, flat navy `#0B1220`. Traced master geometry | Monochrome on light surfaces |
+| `symbol-gradient.svg` | The symbol in the master's gradient | The default symbol, light or dark surfaces |
+| `symbol-white.svg` | The symbol, white | Monochrome on dark surfaces |
+| `wordmark-navy.svg` | The italic wordmark, navy. Traced master geometry | Light surfaces |
+| `wordmark-white.svg` | The wordmark, white | Dark surfaces |
+| `lockup-horizontal.svg` / `-white.svg` | Gradient symbol left of the wordmark (navy / white) | Site header, README, wide spaces |
+| `lockup-stacked.svg` / `-white.svg` | Gradient symbol above the wordmark (navy / white) | About window, hero, square spaces |
+| `app-icon.svg` | App icon on a 256 px grid | 96 px and up; the Linux launcher icon |
+| `app-icon-64.svg`, `-48`, `-40` | App icon drawn on each pixel grid, full symbol | 40-64 px |
+| `app-icon-32.svg`, `-24`, `-20`, `-16` | App icon drawn on each pixel grid, simplified symbol | 16-32 px; the website favicon (`-32`) |
+| `signature.png`, `signature-light.png` | The owner's handwritten signature | See below |
 
-The gradient assets have flat SVG fallbacks with the same geometry. Full-size icons have **two** gradient stops, violet `#6645E8` to cyan `#21C8ED`; the flat mark is `#396BF2`. The tile is near-black navy `#101A2D` with a solid `#6E879F` edge for visibility on dark and light taskbars. The wordmark is `#101A2D`. Tiny tile marks use solid `#8CCBFF`. The gradient is confined to artwork, never editor UI.
+`cargo xtask icons` renders each raster size from the smallest art at least that large, so a
+44 px tile comes from `app-icon-48.svg` and a 150 px tile from `app-icon.svg`.
+
+## The app icon
+
+Owner decision (2026-10-02): the concept's dark-mode tile (concept sheet 2), navy, with a
+coloured border so it holds its edge on both light and dark taskbars.
+
+- **Tile:** navy, faintly lighter at its centre (design-system tokens navy-750 `#141D33` to
+  navy-900 `#0B1220`), corner radius 22 % of the tile.
+- **Border:** the brand gradient (cyan `#00D1FF`, blue `#2563FF`, violet `#7C3AED`, top left to
+  bottom right) at 40 px and up; one solid Tachyon Blue `#2563FF` pixel at 16-32 px, where a
+  one-pixel gradient reads as mud.
+- **Mark:** the gradient symbol, 98 % of the tile's inside at 40 px and up, with a soft glow at
+  96 px and up. At 16-32 px, the simplified symbol from concept sheet 2: the short free-standing
+  speed line is dropped, the spike's thin outer tips are cropped, and every part is thickened by
+  about half a pixel so nothing vanishes.
+
+Always review icon changes at native pixels, on a light (`#F3F3F3`) and a dark (`#202020`)
+background, at 16, 20, 24, 32, 40, 48 and 64 px, and compare with concept sheet 2.
+
+## Colours
+
+The brand gradient used in UI (buttons, rules, borders) is the design-system token: cyan
+`#00D1FF` → blue `#2563FF` → violet `#7C3AED`. The **symbol's own gradient** is measured from the
+owner's gradient master instead (16 stops along a line tilted 10° upward, violet peak `#622FFC`),
+because it is the owner's artwork and the token's violet is lighter than the master's. The
+gradient never appears in editor UI; it is confined to artwork.
+
+## Clear space and constraints
+
+- Keep clear space of at least a quarter of the symbol's height around the symbol and lockups.
+- Use the full symbol at 40 px and up only; below that, use the `app-icon-16` … `-32` art.
+- Use the navy wordmark on light surfaces and the white one on dark surfaces. Never recolour
+  either, and never typeset the wordmark in a font: it exists only as these outlines.
+- Do not stretch, rotate, re-letter, add effects, animate, put in the editor chrome, or replace
+  the native window title bar with any of these.
 
 ## The owner's personal signature
 
 `signature.png` and `signature-light.png` are the owner's own handwritten signature, unrelated to
-the vector mark above (different provenance and licensing - see below) and used only by the About
-window (`crates/tachyon-editor/src/about.rs`), embedded with `include_bytes!` and decoded only
-when that window opens, never on the startup path or anywhere else in the app.
+the logo (different provenance and licensing; see below). The About window showed them for 1.0
+and 1.x. They are kept here, unused or not, so the owner can revert to them.
 
-| Asset | Intended use |
+| Asset | What it is |
 | --- | --- |
-| `signature.png` | The original scan: dark-navy ink on transparent, 500×250. Shown by the light theme (shown around 200×100). |
-| `signature-light.png` | The same artwork with its ink recoloured to the dark theme's `text.primary` (`#EBF2FA`); alpha untouched. Shown by the dark theme. |
+| `signature.png` | The original scan: dark-navy ink on transparent, 500×250. For light themes. |
+| `signature-light.png` | The same artwork with its ink recoloured to the dark theme's `text.primary` (`#EBF2FA`); alpha untouched. For dark themes. |
 
 `signature-light.png` was prepared once with ImageMagick (extract `signature.png`'s alpha
 channel, flood a solid `#EBF2FA` fill, recombine as that fill's colour with the extracted alpha),
 not regenerated by any build script.
 
-## Clear space and constraints
-
-- Keep a clear zone at least one quarter of the mark's height around the full mark and lockup. For square icons, keep the authored tile padding and do not crop it.
-- Use the complete full mark only above its minimum size. Use the simplified mark (`app-icon-small.svg`) at 16–32 px. Inspect target rasterizations at native pixels after any geometry change.
-- Do not put the dark wordmark on a dark surface without a separately reviewed high-contrast colour variant; do not recolour the multi-colour logo as if it were a syntax token.
-- Do not stretch, rotate, add effects, add animation, place in the editor chrome, or replace the native window title bar.
-- For monochrome icon panels use `mark-mono.svg` and set `currentColor` explicitly to a contrasting solid tint; the SVG itself is not intended as an independent preview without a CSS/currentColor context.
-
 ## Provenance and licensing
 
-The vector geometry was authored specifically for Tachyon for this asset set. The wordmark glyph outlines are derived from **DejaVu Sans Bold**, with an SVG shear for the italic stance. Source installed as `DejaVuSans-Bold.ttf`, DejaVu fonts, under the Bitstream Vera font licence; the licence notice is included verbatim in [`FONT-LICENSE.txt`](FONT-LICENSE.txt). No font file is bundled or loaded by the application. The wordmark is a new outlined treatment inspired by the concept, not a claim to reproduce the raster lettering exactly. The repository's MIT OR Apache-2.0 terms apply to the new mark geometry; the font-derived outlines retain their font licence notice.
-
-The raster concept is reference material only and retains its own provenance; it is not embedded in these SVGs. No remote resources, filters, scripts, masks, text elements, or font lookups are used.
+The symbol and wordmark are traced from masters the project owner supplied
+(`docs/design/concepts/masters/`), as part of the concept work in `docs/design/concepts/`. No font
+is involved: the wordmark is the owner's lettering, outlined. The generated SVGs fall under the
+repository's MIT OR Apache-2.0 terms. No remote resources, scripts, text elements or font lookups
+are used; the only effects are the app icon's gradient fills and its blur glow, which are
+rendered at build time.
 
 `signature.png` is Dailen Gunter's own handwritten signature, provided by him for this project;
-it is not derived from the concept artwork or the vector mark, and is used with his explicit
-approval as the project owner. `signature-light.png` is a colour-only derivative of it (see
-above). Neither carries the repository's MIT OR Apache-2.0 licence: they are personal artwork,
-for the About window only.
+it is not derived from the concept artwork or the logo, and is used with his explicit approval as
+the project owner. `signature-light.png` is a colour-only derivative of it (see above). Neither
+carries the repository's MIT OR Apache-2.0 licence: they are personal artwork.
