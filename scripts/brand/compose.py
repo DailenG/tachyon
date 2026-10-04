@@ -13,6 +13,7 @@ Writes into assets/brand/ (all committed):
     lockup-stacked.svg, lockup-stacked-white.svg
     app-icon.svg                                the app icon, 96 px and up (256 px grid)
     app-icon-16.svg ... app-icon-64.svg         the app icon drawn on each smaller pixel grid
+    file-markdown-<n>.svg, file-text-<n>.svg    file-type icons for 16, 24, 32, 48 and 256 px
 
 Standard library only; no external tools. Every number below is either a brand token from the
 Claude Design system ("Tachyon Design System", tokens/colors.css; mirrored in
@@ -105,6 +106,33 @@ TILE_EDGE = NAVY
 SIMPLE_CROP = (100, 980)  # x range of the symbol kept by the "simple" cut, in master pixels
 SMALL_MARGIN = 0  # the 16-64 px tiles use the whole grid: every pixel counts at these sizes
 
+# File-type icons: what Windows shows on .md/.markdown and .txt/.text/.log files Tachyon opens
+# (packaging/msix/AppxManifest.xml, <uap:Logo> per FileTypeAssociation). A document page, the
+# Windows convention for files, so a file never looks like the app itself: white with a folded
+# top-right corner, carrying the symbol as the app's badge. Markdown and plain text differ in two
+# ways, so neither relies on colour alone: the Markdown page has a heading line above its text
+# lines and the gradient symbol; the plain-text page has even lines and the navy symbol.
+#
+# Per size: (pixel grid, cut, thicken px, draw text lines)
+FILE_ICONS = {
+    16: ("simple", 0.5, False),
+    24: ("simple", 0.6, False),
+    32: ("simple", 0.7, True),
+    48: ("full", 0.55, True),
+    256: ("full", 0, True),
+}
+PAGE_X = (0.16, 0.84)  # page left and right edges, as shares of the grid
+PAGE_Y = (0.04, 0.96)  # page top and bottom
+PAGE_FOLD = 0.30  # folded corner size, as a share of the page's width
+PAGE_RADIUS = 0.04  # page corner radius, as a share of the grid
+PAGE_FILL = WHITE
+PAGE_EDGE = "#94A3B8"  # neutral-400: the page edge holds 3:1 against white and #F3F3F3
+PAGE_FOLD_FILL = "#E2E8F0"  # neutral-200
+PAGE_LINE = "#CBD5E1"  # neutral-300: text lines, decorative
+PAGE_HEADING = "#64748B"  # neutral-500: the Markdown page's heading line
+FILE_MARK_WIDTH = 0.86  # symbol width as a share of the page's inside
+FILE_MARK_CENTRE = 0.72  # symbol centre height, as a share of the page's height
+
 
 def read_master(name: str) -> tuple[float, float, str]:
     svg = (BRAND / name).read_text()
@@ -180,7 +208,9 @@ def lockups() -> None:
               + placed(WORD_D, ink, (w - WORD_W) / 2, sh + gap, 1) + "\n")
 
 
-def icons() -> None:
+def simple_symbol() -> str:
+    """The symbol without its narrowest part (the short free-standing speed line): the
+    "simple" cut's path data, still to be cropped to SIMPLE_CROP by whoever draws it."""
     parts = re.findall(r"M[^M]*", SYM_D)
 
     def part_width(part: str) -> float:
@@ -188,7 +218,11 @@ def icons() -> None:
         return max(xs) - min(xs)
 
     shortest = min(parts, key=part_width)
-    simple_d = "".join(p for p in parts if p is not shortest)
+    return "".join(p for p in parts if p is not shortest)
+
+
+def icons() -> None:
+    simple_d = simple_symbol()
     for name, (grid, cut, thicken, border, paint, glow) in ICONS.items():
         margin = grid * ICON_MARGIN if grid > 64 else SMALL_MARGIN
         tile = grid - 2 * margin
@@ -235,7 +269,68 @@ def icons() -> None:
         write(name, header(grid, grid, note) + f"<defs>{defs}</defs>\n" + body)
 
 
+def file_icons() -> None:
+    simple_d = simple_symbol()
+    for kind, mark_fill, heading in (("markdown", "url(#g)", True), ("text", NAVY, False)):
+        for grid, (cut, thicken, lines) in FILE_ICONS.items():
+            # Snapped to half pixels so the 1 px edge lands crisply on the pixel grid.
+            snap = (lambda v: round(v * 2) / 2) if grid < 64 else (lambda v: v)
+            x0, x1 = snap(grid * PAGE_X[0]) + 0.5, snap(grid * PAGE_X[1]) - 0.5
+            y0, y1 = snap(grid * PAGE_Y[0]) + 0.5, snap(grid * PAGE_Y[1]) - 0.5
+            edge = max(1.0, grid / 128)
+            w, h = x1 - x0, y1 - y0
+            fold = snap(w * PAGE_FOLD)
+            r = grid * PAGE_RADIUS
+            page = (f"M{fmt(x0 + r)} {fmt(y0)}H{fmt(x1 - fold)}L{fmt(x1)} {fmt(y0 + fold)}"
+                    f"V{fmt(y1 - r)}Q{fmt(x1)} {fmt(y1)} {fmt(x1 - r)} {fmt(y1)}H{fmt(x0 + r)}"
+                    f"Q{fmt(x0)} {fmt(y1)} {fmt(x0)} {fmt(y1 - r)}V{fmt(y0 + r)}"
+                    f"Q{fmt(x0)} {fmt(y0)} {fmt(x0 + r)} {fmt(y0)}Z")
+            flap = (f"M{fmt(x1 - fold)} {fmt(y0)}V{fmt(y0 + fold - r)}"
+                    f"Q{fmt(x1 - fold)} {fmt(y0 + fold)} {fmt(x1 - fold + r)} {fmt(y0 + fold)}"
+                    f"H{fmt(x1)}Z")
+            body = (f'<path d="{page}" fill="{PAGE_FILL}" stroke="{PAGE_EDGE}" '
+                    f'stroke-width="{fmt(edge)}" stroke-linejoin="round"/>\n'
+                    f'<path d="{flap}" fill="{PAGE_FOLD_FILL}" stroke="{PAGE_EDGE}" '
+                    f'stroke-width="{fmt(edge)}" stroke-linejoin="round"/>\n')
+            inside = w - 2 * edge
+            if lines:
+                # Text lines between the top edge and the symbol, left-aligned like text.
+                lx = x0 + inside * 0.14 + edge
+                lw = inside * 0.72
+                lh = max(1.0, round(grid * 0.035))
+                gap = max(2.0, round(grid * 0.075))
+                ly = snap(y0 + fold + gap * 0.6)
+                rows = [(PAGE_HEADING, 0.55, lh * 1.6)] if heading else []
+                rows += [(PAGE_LINE, 1.0, lh), (PAGE_LINE, 0.85, lh), (PAGE_LINE, 0.95, lh)]
+                limit = y0 + h * FILE_MARK_CENTRE - h * 0.17
+                for colour, share, height in rows:
+                    if ly + height > limit:
+                        break
+                    width = lw * share if colour == PAGE_HEADING else (lw - fold * 0.2) * share
+                    body += (f'<rect x="{fmt(lx)}" y="{fmt(ly)}" width="{fmt(width)}" '
+                             f'height="{fmt(height)}" rx="{fmt(height / 2)}" fill="{colour}"/>\n')
+                    ly += height + gap * 0.55
+            if cut == "full":
+                d, c0, c1 = SYM_D, 0.0, SYM_W
+            else:
+                d, (c0, c1) = simple_d, SIMPLE_CROP
+            mark_w = inside * FILE_MARK_WIDTH
+            sc = mark_w / (c1 - c0)
+            mx = (x0 + x1) / 2 - mark_w / 2 - c0 * sc
+            my = y0 + h * FILE_MARK_CENTRE - SYM_H * sc / 2
+            stroke = (f' stroke="{mark_fill}" stroke-width="{fmt(thicken / sc)}" '
+                      f'stroke-linejoin="round"' if thicken else "")
+            clip = (f'<clipPath id="c"><rect x="{fmt(x0 + edge)}" y="{fmt(y0)}" '
+                    f'width="{fmt(inside)}" height="{fmt(h)}"/></clipPath>')
+            body += '<g clip-path="url(#c)">' + placed(d, mark_fill, mx, my, sc, stroke) + "</g>\n"
+            name = f"file-{kind}-{grid}.svg"
+            note = f"{'Markdown' if heading else 'Plain-text'} file icon drawn for {grid} px."
+            write(name, header(grid, grid, note) + f"<defs>{symbol_gradient('g')}{clip}</defs>\n"
+                  + body)
+
+
 if __name__ == "__main__":
     symbols()
     lockups()
     icons()
+    file_icons()

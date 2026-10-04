@@ -67,6 +67,9 @@
         </uap3:Extension>
         <uap:Extension Category="windows.fileTypeAssociation">
           <uap:FileTypeAssociation Name="markdown">
+            <!-- A document-page icon for the file, not the app tile; generated with its
+                 targetsize-<n> siblings by `cargo xtask icons` (scripts/brand/compose.py). -->
+            <uap:Logo>Assets\FileMarkdown.png</uap:Logo>
             <uap:SupportedFileTypes>
               <uap:FileType>.md</uap:FileType>
               <uap:FileType>.markdown</uap:FileType>
@@ -78,6 +81,7 @@
              Tachyon" for both kinds without conflating them into one file-type group. -->
         <uap:Extension Category="windows.fileTypeAssociation">
           <uap:FileTypeAssociation Name="plaintext">
+            <uap:Logo>Assets\FileText.png</uap:Logo>
             <uap:SupportedFileTypes>
               <uap:FileType>.txt</uap:FileType>
               <uap:FileType>.text</uap:FileType>

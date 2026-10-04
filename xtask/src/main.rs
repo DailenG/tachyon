@@ -224,6 +224,23 @@ fn icon_art(size: u32) -> &'static str {
     ICON_ART.iter().find(|(grid, _)| *grid >= size).unwrap_or(&ICON_ART[ICON_ART.len() - 1]).1
 }
 
+/// File-type icon art in `assets/brand` (`scripts/brand/compose.py`, `file_icons`): the grids each
+/// kind is drawn on, and the kinds as (MSIX asset name, art name).
+const FILE_ART_GRIDS: [u32; 5] = [16, 24, 32, 48, 256];
+const FILE_KINDS: [(&str, &str); 2] = [("FileMarkdown", "markdown"), ("FileText", "text")];
+
+/// Sizes rendered per file kind into `packaging/msix/Assets`, as the manifest's `<uap:Logo>` for
+/// each `FileTypeAssociation` and its `targetsize-<n>` siblings, which Explorer picks by size.
+/// `None` is the unqualified file the manifest names.
+const FILE_SIZES: [(Option<u32>, u32); 6] =
+    [(None, 48), (Some(16), 16), (Some(24), 24), (Some(32), 32), (Some(48), 48), (Some(256), 256)];
+
+/// The file-type art of `kind` for a `size` px raster: the smallest grid at least that large.
+fn file_art(kind: &str, size: u32) -> String {
+    let grid = FILE_ART_GRIDS.iter().copied().find(|&g| g >= size).unwrap_or(256);
+    format!("file-{kind}-{grid}.svg")
+}
+
 /// Sizes in `tachyon.ico`, all 32-bit DIB images: 16-32 px for the tray, title bar and taskbar
 /// at 100-200 % scaling; 40-64 px for Alt+Tab and the taskbar at higher scaling; 96 and 128 px for
 /// the large window icon at 300 and 400 % (`SM_CXICON`). The tray creates its icons with
@@ -326,9 +343,22 @@ fn icons() -> Result<ExitCode, String> {
     // asset next to fresh ones.
     let msix_result = (|| -> Result<(), String> {
         let mut staged = Vec::new();
-        for (name, size) in MSIX_ASSETS {
-            let dest = work.join(name);
-            render_svg(&brand, icon_art(size), size, &dest)?;
+        let mut jobs: Vec<(String, u32, String)> = MSIX_ASSETS
+            .iter()
+            .map(|&(name, size)| (name.to_owned(), size, icon_art(size).to_owned()))
+            .collect();
+        for (asset, kind) in FILE_KINDS {
+            for (qualifier, size) in FILE_SIZES {
+                let name = match qualifier {
+                    Some(n) => format!("{asset}.targetsize-{n}.png"),
+                    None => format!("{asset}.png"),
+                };
+                jobs.push((name, size, file_art(kind, size)));
+            }
+        }
+        for (name, size, art) in jobs {
+            let dest = work.join(&name);
+            render_svg(&brand, &art, size, &dest)?;
             staged.push((dest, name));
         }
         std::fs::create_dir_all(&msix_assets)
@@ -354,7 +384,7 @@ fn icons() -> Result<ExitCode, String> {
     println!(
         "{}, {} MSIX assets in {} and {} updated",
         out.join("tachyon.ico").display(),
-        MSIX_ASSETS.len(),
+        MSIX_ASSETS.len() + FILE_KINDS.len() * FILE_SIZES.len(),
         msix_assets.display(),
         svg.display()
     );
