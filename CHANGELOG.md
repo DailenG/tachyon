@@ -13,7 +13,10 @@ All notable user-visible changes are recorded here. The format follows
   size, so the icon no longer looks like a "3" at 16-32 px.
 - Windows: the icon is sharp at every size, including Explorer's large and extra-large views,
   the Start menu, Alt+Tab and high display scaling (it previously stopped at 64 px).
-- The website favicon is the new icon.
+- The website follows the concept artwork and design system: light by default (dark when your
+  system is), the real Tachyon logo, "Write faster. Think further.", the Instant / Pure Markdown /
+  Distraction-free features, and a framed screenshot in the hero. It now self-hosts its font
+  (Inter) and icons, so it needs no font or icon service. New favicon and social preview image.
 - Windows (installed package): Markdown and text files get their own document icons in
   Explorer instead of the app icon, so a file no longer looks like the app.
 - The About window follows the concept artwork: the Tachyon logo, a one-line tagline, a

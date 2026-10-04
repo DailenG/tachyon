@@ -35,6 +35,10 @@ disagree, this table wins. Do not "fix" the repository back to the copied text.
 | About window: signature at the top, wordmark below | About window: stacked lockup, no signature (signature files kept for a revert) | Owner decision 2026-10-02, following concept sheet 5 |
 | App icon tiles: light and dark (`app-icon-light/-dark.png`) | One icon: the dark navy tile with a gradient border | Owner decision 2026-10-02 |
 | Motion: 120-180 ms transitions, animated loaders | Website only. The editor has no animation at all | Speed budget (ADR 0004); the design system agrees for the editor |
+| Primary button: white text on the cyan → blue gradient | Website buttons use the blue → violet part of the brand gradient (`#2563FF` → `#7C3AED`); hover `#1D45C8` → `#6D28D9`; pressed as specified | White text measures 2.2-3.6:1 on cyan → blue where the label sits, under the 4.5:1 text minimum (DESIGN_DIRECTION, Performance and accessibility). Blue → violet is 4.9:1 or better. Fills without text (the launch-race bars) keep cyan → blue |
+| Gradient headline phrase in the brand gradient | Light mode starts it at Cyan 600 `#0099C7` instead of `#00D1FF`; dark mode keeps the brand gradient | Tachyon Cyan is 1.8:1 on the light page, under the 3:1 large text needs |
+| Badge: `#2563FF` → `#4F7DFF` gradient | Solid Tachyon Blue | White 12 px text is 3.6:1 at the gradient's light end |
+| `--text-muted` for table headers and the demo title bar on `--surface-sunken` | `--text-body` there | Muted is 4.3:1 on the sunken surface in light mode |
 
 ## Refreshing the copy
 

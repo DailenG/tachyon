@@ -1,4 +1,11 @@
-# Tachyon
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/brand/lockup-horizontal-white.svg">
+    <img src="assets/brand/lockup-horizontal.svg" alt="Tachyon" width="360">
+  </picture>
+</h1>
+
+<p align="center"><strong>Write faster. Think further.</strong><br>A markdown editor that gets there before you do.</p>
 
 [![CI](https://github.com/DailenG/tachyon/actions/workflows/ci.yml/badge.svg)](https://github.com/DailenG/tachyon/actions/workflows/ci.yml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)

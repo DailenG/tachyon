@@ -3,47 +3,60 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Tachyon — a native Markdown editor faster than you can measure</title>
+<title>Tachyon: write faster, think further</title>
 <meta name="description" content="Tachyon is a native, GPU-rendered Markdown editor: no Electron, no WebView. Instant launch into a resident instance, block-swap editing, and files large enough to hang most editors.">
-<meta name="theme-color" content="#0b1220">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f8fafc" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b1220" media="(prefers-color-scheme: dark)">
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
 <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
 <link rel="canonical" href="https://daileng.github.io/tachyon/">
+<link rel="preload" href="assets/fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin>
 
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://daileng.github.io/tachyon/">
-<meta property="og:title" content="Tachyon — a native Markdown editor faster than you can measure">
-<meta property="og:description" content="No Electron. No WebView. GPU-rendered on Windows, Linux and macOS. Launch into a resident instance in 20-35 ms, edit multi-gigabyte files without a stall.">
-<meta property="og:image" content="assets/og-image.png">
+<meta property="og:title" content="Tachyon: write faster, think further">
+<meta property="og:description" content="A markdown editor that gets there before you do. Native and GPU-rendered on Windows, Linux and macOS. Launch into a resident instance in 20-35 ms, edit multi-gigabyte files without a stall.">
+<meta property="og:image" content="https://daileng.github.io/tachyon/assets/og-image.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Tachyon — a native Markdown editor faster than you can measure">
-<meta name="twitter:description" content="No Electron. No WebView. GPU-rendered on Windows, Linux and macOS. Launch into a resident instance in 20-35 ms.">
-<meta name="twitter:image" content="assets/og-image.png">
+<meta name="twitter:title" content="Tachyon: write faster, think further">
+<meta name="twitter:description" content="A markdown editor that gets there before you do. Native, GPU-rendered, launches into a resident instance in 20-35 ms.">
+<meta name="twitter:image" content="https://daileng.github.io/tachyon/assets/og-image.png">
 
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+<!-- Lucide icons (lucide-static 0.469.0, ISC; assets/icons/Lucide-LICENSE.txt), inlined so the
+     page makes no request for them. -->
+<svg class="sprite" aria-hidden="true" focusable="false">
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></symbol>
+  <symbol id="i-github" viewBox="0 0 24 24"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/></symbol>
+  <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/></symbol>
+  <symbol id="i-file-text" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></symbol>
+  <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49"/><path d="M14.084 14.158a3 3 0 0 1-4.242-4.242"/><path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143"/><path d="m2 2 20 20"/></symbol>
+  <symbol id="i-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></symbol>
+</svg>
+
 <a class="skip-link" href="#main">Skip to content</a>
 
 <header class="site-header">
   <div class="wrap">
-    <a class="brand" href="#top">
-      <svg viewBox="0 0 64 64" aria-hidden="true">
-        <g fill="#8CCBFF"><path d="M7 31 L27 28 C33 27 38 24 42 16 C44 25 48 29 57 32 C48 35 44 39 42 48 C38 40 33 37 27 36 L7 33 Z"/><path d="M21 15 C29 6 44 7 52 19 L49 25 C42 14 31 12 24 21 Z"/><path d="M21 49 C29 58 44 57 52 45 L49 39 C42 50 31 52 24 43 Z"/></g>
-      </svg>
-      Tachyon
+    <a class="brand" href="#top" aria-label="Tachyon, back to top">
+      <picture>
+        <source srcset="assets/logo/lockup-horizontal-white.svg" media="(prefers-color-scheme: dark)">
+        <img src="assets/logo/lockup-horizontal.svg" width="178" height="30" alt="tachyon">
+      </picture>
     </a>
     <nav class="main-nav" aria-label="Primary">
       <a href="#why">Why fast</a>
       <a href="#compare">Compare</a>
       <a href="#screens">Screens</a>
       <a href="#demo">Block swap</a>
-      <a href="#files">Large files</a>
       <a href="#features">Features</a>
       <a href="#install">Install</a>
-      <a class="nav-cta" href="https://github.com/DailenG/tachyon">View on GitHub</a>
+      <a class="btn btn-secondary btn-sm" href="https://github.com/DailenG/tachyon"><svg class="icon"><use href="#i-github"/></svg>View on GitHub</a>
     </nav>
   </div>
 </header>
@@ -51,74 +64,75 @@
 <main id="main">
 
   <section class="hero" id="top">
-    <div class="starfield" aria-hidden="true"></div>
-    <div class="hero-flight" aria-hidden="true">
-      <div class="comet">
-        <span class="wake"></span>
-        <svg class="comet-mark" viewBox="0 0 520 256">
-          <defs><linearGradient id="tachyon" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#6645E8"/><stop offset="1" stop-color="#21C8ED"/></linearGradient></defs>
-          <g fill="url(#tachyon)"><path d="M 20,126 C 102,117 205,114 262,112 C 297,110 313,97 331,78 C 338,109 349,118 380,122 L 500,128 L 380,134 C 350,138 340,149 330,178 C 314,151 298,143 260,142 C 170,140 96,134 20,130 Z"/><path d="M 196,74 L 257,74 C 268,74 276,69 286,60 C 312,37 334,30 356,30 C 407,30 446,70 451,107 C 431,78 399,60 361,60 C 333,60 312,74 292,88 C 283,95 275,97 263,97 L 196,97 C 186,97 186,74 196,74 Z"/><path d="M 155,160 L 233,160 C 247,160 252,164 260,179 C 287,218 317,228 352,228 C 392,228 420,204 442,178 C 433,219 396,250 347,250 C 290,250 259,224 239,191 C 236,186 233,184 225,184 L 155,184 C 141,184 141,160 155,160 Z"/><path d="M 90,83 H 235 C 248,83 247,98 234,101 H 90 C 73,101 73,83 90,83 Z"/><path d="M 216,211 H 250 L 256,223 H 216 C 205,223 205,211 216,211 Z"/></g>
-        </svg>
-      </div>
-    </div>
     <div class="wrap hero-inner">
-      <span class="eyebrow">Native &middot; GPU-rendered &middot; No Electron</span>
-      <h1 class="hero-title"><span class="glow" aria-hidden="true">A Markdown editor that arrives before you notice it left.</span><span class="reveal">A Markdown editor that arrives before you notice it left.</span></h1>
-      <p class="hero-flavor">A tachyon is a hypothetical particle that outruns light. This one just outruns your editor.</p>
-      <p class="tagline">Tachyon opens into a resident instance in 20&ndash;35&nbsp;ms, paints every keystroke inside a single frame, and edits gigabyte-scale files without a stall. Between uses it waits in the tray on 16&nbsp;MB of memory, less than a single browser tab. Built in Rust on GPUI, rendering straight to the GPU: DirectX on Windows, Vulkan on Linux, Metal on macOS.</p>
-      <div class="hero-actions">
-        <a class="btn btn-primary" href="#install">Install Tachyon</a>
-        <a class="btn btn-secondary" href="https://github.com/DailenG/tachyon">View on GitHub</a>
-        <a class="btn btn-ghost" href="#source">Build from source →</a>
+      <div class="hero-copy">
+        <span class="eyebrow">Native &middot; GPU-rendered &middot; No Electron</span>
+        <h1 class="hero-title">Write faster.<br><span class="gradient-text">Think further.</span></h1>
+        <p class="hero-lead">A markdown editor that gets there before you do.</p>
+        <p class="hero-body">Tachyon opens into a resident instance in 20&ndash;35&nbsp;ms, paints every keystroke inside a single frame, and edits gigabyte-scale files without a stall. Between uses it waits in the tray on 16&nbsp;MB of memory, less than a single browser tab. Built in Rust on GPUI, rendering straight to the GPU: DirectX on Windows, Vulkan on Linux, Metal on macOS.</p>
+        <div class="hero-actions">
+          <a class="btn btn-primary btn-lg" href="#install"><svg class="icon"><use href="#i-download"/></svg>Download</a>
+          <a class="btn btn-secondary btn-lg" href="https://github.com/DailenG/tachyon"><svg class="icon"><use href="#i-github"/></svg>View on GitHub</a>
+        </div>
+        <ul class="hero-features">
+          <li><span class="feature-icon"><svg class="icon"><use href="#i-sparkle"/></svg></span><span><strong>Instant</strong>Opens in 20&ndash;35&nbsp;ms</span></li>
+          <li><span class="feature-icon"><svg class="icon"><use href="#i-file-text"/></svg></span><span><strong>Pure Markdown</strong>Plain .md, no lock-in</span></li>
+          <li><span class="feature-icon"><svg class="icon"><use href="#i-eye-off"/></svg></span><span><strong>Distraction-free</strong>One pane, no clutter</span></li>
+        </ul>
+        <p class="live-timing" id="live-timing" hidden></p>
       </div>
-      <p class="live-timing" id="live-timing" hidden></p>
+      <div class="hero-visual theme-compare">
+        <svg class="orbit" viewBox="0 0 400 400" aria-hidden="true"><defs><linearGradient id="orbit-g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#00D1FF"/><stop offset=".5" stop-color="#2563FF"/><stop offset="1" stop-color="#7C3AED"/></linearGradient></defs><path d="M30 330 A 200 170 -25 0 1 370 70" fill="none" stroke="url(#orbit-g)" stroke-width="2.5" stroke-linecap="round"/><path d="M70 360 A 200 170 -25 0 1 385 120" fill="none" stroke="url(#orbit-g)" stroke-width="1.5" stroke-linecap="round" opacity=".55"/></svg>
+        <input type="radio" name="theme-shot" id="shot-light" checked>
+        <input type="radio" name="theme-shot" id="shot-dark">
+        <div class="shot-frame">
+          <img class="shot light" width="560" height="360" fetchpriority="high"
+               src="assets/screenshots/light-theme.webp"
+               srcset="assets/screenshots/light-theme.webp 1x, assets/screenshots/light-theme@2x.webp 2x"
+               alt="Tachyon's light theme. The caret sits inside a paragraph, which shows raw Markdown, while the heading, task list, highlighted Rust code, a table and math around it are fully rendered.">
+          <img class="shot dark" width="560" height="360" loading="lazy"
+               src="assets/screenshots/dark-paragraph.webp"
+               srcset="assets/screenshots/dark-paragraph.webp 1x, assets/screenshots/dark-paragraph@2x.webp 2x"
+               alt="The same document in Tachyon's dark theme, which follows the system appearance.">
+        </div>
+        <div class="shot-tabs" aria-label="Screenshot theme">
+          <label for="shot-light">Light</label>
+          <label for="shot-dark">Dark</label>
+        </div>
+      </div>
     </div>
   </section>
 
   <section id="why">
     <div class="wrap">
       <div class="section-head">
-        <span class="kicker">Why fast</span>
-        <h2>Speed is the feature, not a footnote</h2>
-        <p>Every budget below is a requirement in Tachyon's own repository, checked in CI: a change that regresses one needs a recorded decision before it can land. These aren't targets we hope to hit &mdash; they're gates.</p>
+        <span class="eyebrow">Why fast</span>
+        <h2>Speed is the feature</h2>
+        <p>Every budget below is a requirement in Tachyon's own repository, checked in CI. A change that regresses one needs a recorded decision before it can land: these aren't targets, they're gates.</p>
       </div>
-      <table class="budget-table">
-        <caption>Reference machine: Windows 11, Core Ultra 7 155H, Intel Arc graphics, 4K display. Numbers are measured, not estimated.</caption>
-        <thead>
-          <tr><th scope="col">Budget</th><th scope="col">Target</th><th scope="col">Measured</th></tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>Launch &rarr; first frame (resident instance)</td>
-            <td>p95 &lt; 50&nbsp;ms</td>
-            <td><strong>20&ndash;35&nbsp;ms</strong> across runs</td>
-          </tr>
-          <tr>
-            <td>Keystroke reparse, 1&nbsp;MB document</td>
-            <td>p99 &lt; 0.5&nbsp;ms</td>
-            <td><strong>45&ndash;55&nbsp;&micro;s</strong> p99</td>
-          </tr>
-          <tr>
-            <td>Key to painted pixel, 1&nbsp;MB document</td>
-            <td>within one frame</td>
-            <td><strong>&le; 3&nbsp;ms</strong> on Windows</td>
-          </tr>
-          <tr>
-            <td>Paste of 5&nbsp;MB of text</td>
-            <td>no frame over 16.7&nbsp;ms</td>
-            <td><strong>5&ndash;9&nbsp;ms</strong> worst frame</td>
-          </tr>
-        </tbody>
-      </table>
+      <div class="card table-card">
+        <table class="data-table">
+          <thead>
+            <tr><th scope="col">Budget</th><th scope="col">Target</th><th scope="col">Measured</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Launch &rarr; first frame (resident instance)</td><td>p95 &lt; 50&nbsp;ms</td><td><strong>20&ndash;35&nbsp;ms</strong> <span>across runs</span></td></tr>
+            <tr><td>Keystroke reparse, 1&nbsp;MB document</td><td>p99 &lt; 0.5&nbsp;ms</td><td><strong>45&ndash;55&nbsp;&micro;s</strong> <span>p99</span></td></tr>
+            <tr><td>Key to painted pixel, 1&nbsp;MB document</td><td>within one frame</td><td><strong>&le; 3&nbsp;ms</strong> <span>on Windows</span></td></tr>
+            <tr><td>Paste of 5&nbsp;MB of text</td><td>no frame over 16.7&nbsp;ms</td><td><strong>5&ndash;9&nbsp;ms</strong> <span>worst frame</span></td></tr>
+          </tbody>
+        </table>
+        <p class="table-note">Reference machine: Windows 11, Core Ultra 7 155H, Intel Arc graphics, 4K display. Numbers are measured, not estimated.</p>
+      </div>
     </div>
   </section>
 
-  <section id="speed">
+  <section id="speed" class="tint">
     <div class="wrap">
       <div class="section-head">
-        <span class="kicker">Time to first frame</span>
+        <span class="eyebrow">Time to first frame</span>
         <h2>Resident mode is why launch feels instant</h2>
-        <p>A resident Tachyon keeps a window ready in the background, so opening a file just shows it. Skip that (a cold, direct launch) and GPU and font initialization alone cost hundreds of milliseconds &mdash; still just Tachyon, no other editor involved in this comparison. The bars below run in real time: watch the gap, not just the numbers.</p>
+        <p>A resident Tachyon keeps a window ready in the background, so opening a file just shows it. Skip that (a cold, direct launch) and GPU and font initialization alone cost hundreds of milliseconds. Both bars are Tachyon; no other editor is involved. They run in real time: watch the gap, not just the numbers.</p>
       </div>
       <div class="race">
         <div class="race-row">
@@ -137,8 +151,8 @@
         </div>
       </div>
       <div class="race-controls">
-        <p class="race-caption">Both bars are Tachyon, on the same reference Windows PC &mdash; one launching into a resident instance (the default), one launching cold. Bar length is proportional to milliseconds, capped at 450&nbsp;ms; each bar fills over its own real measured duration.</p>
-        <button type="button" class="btn btn-secondary btn-small" id="race-replay" hidden>Replay</button>
+        <p class="race-caption">Both bars are Tachyon, on the same reference Windows PC: one launching into a resident instance (the default), one launching cold. Bar length is proportional to milliseconds, capped at 450&nbsp;ms; each bar fills over its own real measured duration.</p>
+        <button type="button" class="btn btn-secondary btn-sm" id="race-replay" hidden>Replay</button>
       </div>
     </div>
   </section>
@@ -146,12 +160,12 @@
   <section id="compare">
     <div class="wrap">
       <div class="section-head">
-        <span class="kicker">Side by side</span>
+        <span class="eyebrow">Side by side</span>
         <h2>Against the editors you already have</h2>
         <p>Tachyon 1.0 and six editors on the same Windows 11 laptop, run one at a time with the same scripts. The best result in each column is highlighted, whichever editor it belongs to. Where an editor couldn't do something, the table says so instead of showing a number.</p>
       </div>
-      <div class="table-scroll">
-        <table class="budget-table compare-table">
+      <div class="card table-card table-scroll">
+        <table class="data-table compare-table">
           <thead>
             <tr><th scope="col">Editor</th><th scope="col">Cold launch</th><th scope="col">Warm launch</th><th scope="col">Memory, 5&nbsp;KB note</th><th scope="col">200&nbsp;MB log</th><th scope="col">Typing, 20&nbsp;MB .md</th></tr>
           </thead>
@@ -166,51 +180,33 @@
           </tbody>
         </table>
       </div>
-      <p class="compare-note">Core i7-7820HQ, 32&nbsp;GB, Intel HD 630, 1080p at 125&nbsp;%, Windows 11 26H2; OS file cache warm. Launch: process start to a window titled with the file, median of 5 (cold) or 10 (warm: app already running, file opened again from its command line; Tachyon's warm launch is its resident instance, the default on Windows). Memory: private working set of the whole process tree, 10&nbsp;s after loading. Log: 200&nbsp;MB, 1.6&nbsp;M lines, launch until its last line is on screen. Typing: 20 characters at ~60&nbsp;ms each at the end of a 20&nbsp;MB Markdown file, last key to all of them on screen. Every editor ran under a watchdog that ends it above 6&nbsp;GB of RAM in use (working set) or 8&nbsp;GB committed, to protect the test machine; MarkText passed the 6&nbsp;GB RAM limit twice while still loading the 20&nbsp;MB file. Tray: resident Tachyon with no windows, 16&nbsp;MB private working set, against one Edge tab on github.com at 100&nbsp;MB. <a href="https://github.com/DailenG/tachyon/blob/main/docs/measurements/windows-comparison-2026-09-28.md">Full method, versions and raw data</a>.</p>
+      <p class="fine-print">Core i7-7820HQ, 32&nbsp;GB, Intel HD 630, 1080p at 125&nbsp;%, Windows 11 26H2; OS file cache warm. Launch: process start to a window titled with the file, median of 5 (cold) or 10 (warm: app already running, file opened again from its command line; Tachyon's warm launch is its resident instance, the default on Windows). Memory: private working set of the whole process tree, 10&nbsp;s after loading. Log: 200&nbsp;MB, 1.6&nbsp;M lines, launch until its last line is on screen. Typing: 20 characters at ~60&nbsp;ms each at the end of a 20&nbsp;MB Markdown file, last key to all of them on screen. Every editor ran under a watchdog that ends it above 6&nbsp;GB of RAM in use (working set) or 8&nbsp;GB committed, to protect the test machine; MarkText passed the 6&nbsp;GB RAM limit twice while still loading the 20&nbsp;MB file. Tray: resident Tachyon with no windows, 16&nbsp;MB private working set, against one Edge tab on github.com at 100&nbsp;MB. <a href="https://github.com/DailenG/tachyon/blob/main/docs/measurements/windows-comparison-2026-09-28.md">Full method, versions and raw data</a>.</p>
     </div>
   </section>
 
-  <section id="screens">
+  <section id="screens" class="tint">
     <div class="wrap">
       <div class="section-head">
-        <span class="kicker">On this machine</span>
+        <span class="eyebrow">On this machine</span>
         <h2>What it actually looks like</h2>
-        <p>Real captures of Tachyon 1.0 on Linux, rendered at 2x &mdash; same binary, same editor, no mockups.</p>
-      </div>
-      <div class="theme-compare">
-        <input type="radio" name="theme-shot" id="shot-dark" checked>
-        <input type="radio" name="theme-shot" id="shot-light">
-        <div class="shot-frame">
-          <img class="shot dark" width="560" height="360" loading="lazy"
-               src="assets/screenshots/dark-paragraph.webp"
-               srcset="assets/screenshots/dark-paragraph.webp 1x, assets/screenshots/dark-paragraph@2x.webp 2x"
-               alt="Tachyon's dark theme. The caret sits inside a paragraph, which shows raw Markdown, while the heading, task list, highlighted Rust code, a table and math around it are fully rendered.">
-          <img class="shot light" width="560" height="360" loading="lazy"
-               src="assets/screenshots/light-theme.webp"
-               srcset="assets/screenshots/light-theme.webp 1x, assets/screenshots/light-theme@2x.webp 2x"
-               alt="The same document in Tachyon's light theme, which follows the system appearance.">
-        </div>
-        <div class="shot-tabs">
-          <label for="shot-dark">Dark</label>
-          <label for="shot-light">Light</label>
-        </div>
+        <p>Real captures of Tachyon 1.0 on Linux, rendered at 2x. Same binary, same editor, no mockups.</p>
       </div>
       <div class="shot-grid">
-        <figure>
+        <figure class="card">
           <img width="560" height="360" loading="lazy"
                src="assets/screenshots/find-bar.webp"
                srcset="assets/screenshots/find-bar.webp 1x, assets/screenshots/find-bar@2x.webp 2x"
                alt="Find bar open with the query 'block': six matches highlighted across rendered and raw text, the current match emphasized, a 3 of 6 counter in the bar.">
           <figcaption>Find highlights every match live, in rendered and raw text alike.</figcaption>
         </figure>
-        <figure>
+        <figure class="card">
           <img width="560" height="360" loading="lazy"
                src="assets/screenshots/plain-text-log.webp"
                srcset="assets/screenshots/plain-text-log.webp 1x, assets/screenshots/plain-text-log@2x.webp 2x"
                alt="A 4,000-line synthetic log file open in plain-text mode: literal monospaced text, no Markdown rendering applied anywhere.">
           <figcaption>A 4,000-line log opens in plain-text mode: no syntax hiding, no Markdown parsing overhead.</figcaption>
         </figure>
-        <figure>
+        <figure class="card">
           <img width="560" height="360" loading="lazy"
                src="assets/screenshots/command-palette.webp"
                srcset="assets/screenshots/command-palette.webp 1x, assets/screenshots/command-palette@2x.webp 2x"
@@ -224,23 +220,23 @@
   <section id="demo">
     <div class="wrap">
       <div class="section-head">
-        <span class="kicker">Block swap</span>
+        <span class="eyebrow">Block swap</span>
         <h2>The block under your caret is always raw</h2>
         <p>This is the same editing model Tachyon uses, in a few lines of HTML and CSS. Tab or click into a line: it drops to raw Markdown so you can edit it; every other line stays rendered. Works with the keyboard, works with the mouse, works with no script at all.</p>
       </div>
-      <div class="demo-card">
+      <div class="card demo-card">
         <div class="demo-titlebar">
           <span class="demo-dots" aria-hidden="true"><span></span><span></span><span></span></span>
           notes.md
         </div>
         <div class="swap-demo" role="group" aria-label="Block-swap demo. Tab between lines or use the arrow keys; the focused line shows raw Markdown.">
-          <input class="swap-radio" type="radio" name="swapline" id="l1" checked>
+          <input class="swap-radio" type="radio" name="swapline" id="l1">
           <label class="swap-line" for="l1">
             <span class="raw"># Tachyon</span>
-            <span class="rendered"><h3># Tachyon</h3></span>
+            <span class="rendered"><span class="h">Tachyon</span></span>
           </label>
 
-          <input class="swap-radio" type="radio" name="swapline" id="l2">
+          <input class="swap-radio" type="radio" name="swapline" id="l2" checked>
           <label class="swap-line" for="l2">
             <span class="raw">Fast enough that *waiting* stops being a feature.</span>
             <span class="rendered">Fast enough that <em>waiting</em> stops being a feature.</span>
@@ -261,33 +257,33 @@
           <input class="swap-radio" type="radio" name="swapline" id="l5">
           <label class="swap-line" for="l5">
             <span class="raw">[Read the architecture](https://github.com/DailenG/tachyon)</span>
-            <span class="rendered"><a href="https://github.com/DailenG/tachyon">Read the architecture</a></span>
+            <span class="rendered"><a href="https://github.com/DailenG/tachyon/blob/main/docs/ARCHITECTURE.md">Read the architecture</a></span>
           </label>
         </div>
       </div>
-      <p class="swap-hint">Try it: <kbd>Tab</kbd> into the card, then <kbd>&darr;</kbd> / <kbd>&uarr;</kbd> to move the caret between lines.</p>
+      <p class="hint">Try it: <kbd>Tab</kbd> into the card, then <kbd>&darr;</kbd> / <kbd>&uarr;</kbd> to move the caret between lines.</p>
     </div>
   </section>
 
-  <section id="files">
+  <section id="files" class="tint">
     <div class="wrap">
       <div class="section-head">
-        <span class="kicker">Large files</span>
+        <span class="eyebrow">Large files</span>
         <h2>Logs that hang most editors just open</h2>
         <p>Files stream in from disk in chunks instead of loading into one giant string, and only what's on screen is fully parsed. A file over 2&nbsp;GiB is refused outright, with a message, instead of risking a crash.</p>
       </div>
-      <div class="compare-grid">
-        <div class="compare-card bad">
+      <div class="two-up">
+        <div class="card pad">
           <h3>What most editors do with a huge log</h3>
-          <ul>
+          <ul class="list">
             <li>A 200&nbsp;MB log is loaded whole before anything is shown</li>
             <li>The window stops responding while it reads and lays out the file</li>
             <li>A single very long line can make layout itself pathological</li>
           </ul>
         </div>
-        <div class="compare-card good">
+        <div class="card pad card-accent">
           <h3>What Tachyon measures</h3>
-          <ul>
+          <ul class="list">
             <li>A 200&nbsp;MB log opens in <strong>&asymp;400&nbsp;MB</strong> of memory, window responsive throughout</li>
             <li>A 1&nbsp;GB log opens in <strong>&asymp;1.4&nbsp;GB</strong>, still responsive</li>
             <li>A 20&nbsp;MB single-line file stays under <strong>13&nbsp;ms</strong> per frame</li>
@@ -315,114 +311,58 @@
   <section id="features">
     <div class="wrap">
       <div class="section-head">
-        <span class="kicker">Everything else</span>
+        <span class="eyebrow">Everything else</span>
         <h2>A scratchpad that grew up</h2>
         <p>Everyday editing, without leaving the performance budgets above.</p>
       </div>
       <div class="feature-grid">
-        <div class="feature-card">
-          <h3>Command palette</h3>
-          <p>Every command and setting in one filterable list, each with its shortcut. Quick open jumps straight to a recent file.</p>
-          <kbd>Ctrl+Shift+P</kbd> <kbd>Ctrl+P</kbd>
-        </div>
-        <div class="feature-card">
-          <h3>Find &amp; replace</h3>
-          <p>Replace All rewrites every match as a single undo step, even across hundreds of thousands of hits.</p>
-          <kbd>Ctrl+F</kbd> <kbd>Ctrl+H</kbd>
-        </div>
-        <div class="feature-card">
-          <h3>Go to heading</h3>
-          <p>Filter the document's headings and jump straight there.</p>
-          <kbd>Ctrl+Shift+O</kbd>
-        </div>
-        <div class="feature-card">
-          <h3>Open recent</h3>
-          <p>Pick from your last 30 files, filtered as you type. On Windows, the latest 10 are also in the taskbar jump list.</p>
-          <kbd>Ctrl+R</kbd>
-        </div>
-        <div class="feature-card">
-          <h3>Plain-text mode</h3>
-          <p>Non-Markdown files open literally, syntax hidden nowhere. Toggle any document between the two.</p>
-          <kbd>Ctrl+Shift+M</kbd>
-        </div>
-        <div class="feature-card">
-          <h3>Copy as HTML</h3>
-          <p>Rendered rich text, ready to paste into Word, Outlook or Teams on Windows.</p>
-          <kbd>Ctrl+Shift+C</kbd>
-        </div>
-        <div class="feature-card">
-          <h3>Settings</h3>
-          <p>Theme, zoom, hot exit and tips live in a plain <code>settings.toml</code>; the palette changes them too.</p>
-          <kbd>Ctrl+,</kbd>
-        </div>
-        <div class="feature-card">
-          <h3>Zoom</h3>
-          <p>50% to 300% per window; text, indents and spacing scale together.</p>
-          <kbd>Ctrl+=</kbd> <kbd>Ctrl+-</kbd>
-        </div>
-        <div class="feature-card">
-          <h3>Hot exit</h3>
-          <p>Quit never asks. Unsaved documents come back exactly as you left them.</p>
-        </div>
-        <div class="feature-card">
-          <h3>Lists that keep up</h3>
-          <p>Enter continues bullets, numbers and task boxes; Tab nests, renumbering as it goes.</p>
-          <kbd>Tab</kbd>
-        </div>
-        <div class="feature-card">
-          <h3>Highlighted code</h3>
-          <p>Fenced blocks light up in both themes: Rust, Python, JS/TS, C-family, Go, Java, C#, shells, PowerShell, SQL, JSON, TOML, YAML.</p>
-        </div>
-        <div class="feature-card">
-          <h3>Follows the system</h3>
-          <p>Light and dark themes track the OS, or a setting, live.</p>
-        </div>
-        <div class="feature-card">
-          <h3>Links, images, math</h3>
-          <p><kbd>Ctrl</kbd>+click follows a link; local images render inline; math renders too.</p>
-        </div>
-        <div class="feature-card">
-          <h3>Reloads under you</h3>
-          <p>A file changed by another program reloads automatically when there's nothing unsaved to lose.</p>
-        </div>
-        <div class="feature-card">
-          <h3>Windows tray icon</h3>
-          <p>A resident Tachyon lives in the tray: new window, About, or quit, without hunting for a taskbar entry.</p>
-        </div>
+        <div class="card pad feature-card"><h3>Command palette</h3><p>Every command and setting in one filterable list, each with its shortcut. Quick open jumps straight to a recent file.</p><div class="keys"><kbd>Ctrl+Shift+P</kbd> <kbd>Ctrl+P</kbd></div></div>
+        <div class="card pad feature-card"><h3>Find &amp; replace</h3><p>Replace All rewrites every match as a single undo step, even across hundreds of thousands of hits.</p><div class="keys"><kbd>Ctrl+F</kbd> <kbd>Ctrl+H</kbd></div></div>
+        <div class="card pad feature-card"><h3>Go to heading</h3><p>Filter the document's headings and jump straight there.</p><div class="keys"><kbd>Ctrl+Shift+O</kbd></div></div>
+        <div class="card pad feature-card"><h3>Open recent</h3><p>Pick from your last 30 files, filtered as you type. On Windows, the latest 10 are also in the taskbar jump list.</p><div class="keys"><kbd>Ctrl+R</kbd></div></div>
+        <div class="card pad feature-card"><h3>Plain-text mode</h3><p>Non-Markdown files open literally, syntax hidden nowhere. Toggle any document between the two.</p><div class="keys"><kbd>Ctrl+Shift+M</kbd></div></div>
+        <div class="card pad feature-card"><h3>Copy as HTML</h3><p>Rendered rich text, ready to paste into Word, Outlook or Teams on Windows.</p><div class="keys"><kbd>Ctrl+Shift+C</kbd></div></div>
+        <div class="card pad feature-card"><h3>Sticky notes</h3><p>Quick, autosaved notes in compact always-on-top windows, from a global hotkey or the tray.</p></div>
+        <div class="card pad feature-card"><h3>Settings</h3><p>Theme, zoom, hot exit and tips live in a plain <code>settings.toml</code>; the palette changes them too.</p><div class="keys"><kbd>Ctrl+,</kbd></div></div>
+        <div class="card pad feature-card"><h3>Zoom</h3><p>50% to 300% per window; text, indents and spacing scale together.</p><div class="keys"><kbd>Ctrl+=</kbd> <kbd>Ctrl+-</kbd></div></div>
+        <div class="card pad feature-card"><h3>Hot exit</h3><p>Quit never asks. Unsaved documents come back exactly as you left them.</p></div>
+        <div class="card pad feature-card"><h3>Lists that keep up</h3><p>Enter continues bullets, numbers and task boxes; Tab nests, renumbering as it goes.</p><div class="keys"><kbd>Tab</kbd></div></div>
+        <div class="card pad feature-card"><h3>Highlighted code</h3><p>Fenced blocks light up in both themes: Rust, Python, JS/TS, C-family, Go, Java, C#, shells, PowerShell, SQL, JSON, TOML, YAML.</p></div>
+        <div class="card pad feature-card"><h3>Follows the system</h3><p>Light and dark themes track the OS, or a setting, live.</p></div>
+        <div class="card pad feature-card"><h3>Links, images, math</h3><p><kbd>Ctrl</kbd>+click follows a link; local images render inline; math renders too.</p></div>
+        <div class="card pad feature-card"><h3>Reloads under you</h3><p>A file changed by another program reloads automatically when there's nothing unsaved to lose.</p></div>
+        <div class="card pad feature-card"><h3>Windows tray icon</h3><p>A resident Tachyon lives in the tray: new window, sticky note, About, or quit, without hunting for a taskbar entry.</p></div>
       </div>
     </div>
   </section>
 
-  <section id="install">
+  <section id="install" class="tint">
     <div class="wrap">
       <div class="section-head">
-        <span class="kicker">Get it</span>
+        <span class="eyebrow">Get it</span>
         <h2>Install Tachyon</h2>
       </div>
       <div class="install-grid">
-        <div class="install-card">
-          <h3>Windows</h3>
+        <div class="card pad install-card">
+          <div class="install-title"><h3>Windows</h3><span class="badge">Auto-update</span></div>
           <p><strong>MSIX, with automatic updates:</strong> open <code>Tachyon.appinstaller</code> (the button below) and follow the prompt. Also available as a plain <a data-asset="-x86_64-windows.zip" href="https://github.com/DailenG/tachyon/releases/latest"><code>.zip</code></a>. Both are signed with Azure Trusted Signing.</p>
-          <a class="btn btn-secondary" href="https://github.com/DailenG/tachyon/releases/latest/download/Tachyon.appinstaller">Get Windows build</a>
+          <a class="btn btn-primary" href="https://github.com/DailenG/tachyon/releases/latest/download/Tachyon.appinstaller"><svg class="icon"><use href="#i-download"/></svg>Get Windows build</a>
         </div>
-        <div class="install-card">
-          <h3>Linux</h3>
+        <div class="card pad install-card">
+          <div class="install-title"><h3>Linux</h3></div>
           <p><code>.tar.gz</code> archive; extract and run. <code>tachyon --desktop-entry on</code> adds it to your launcher and "Open with" menus.</p>
-          <a class="btn btn-secondary" data-asset="-x86_64-linux.tar.gz" href="https://github.com/DailenG/tachyon/releases/latest">Get Linux build</a>
+          <a class="btn btn-secondary" data-asset="-x86_64-linux.tar.gz" href="https://github.com/DailenG/tachyon/releases/latest"><svg class="icon"><use href="#i-download"/></svg>Get Linux build</a>
         </div>
-        <div class="install-card">
-          <h3>macOS</h3>
+        <div class="card pad install-card">
+          <div class="install-title"><h3>macOS</h3></div>
           <p><code>.tar.gz</code> archive. Not signed or notarized yet, so Gatekeeper will warn on first launch.</p>
-          <a class="btn btn-secondary" data-asset="-aarch64-macos.tar.gz" href="https://github.com/DailenG/tachyon/releases/latest">Get macOS build</a>
-        </div>
-        <div class="install-card">
-          <h3>Every archive</h3>
-          <p>Each release ships a <code>SHA256SUMS.txt</code> alongside the archives, so you can verify what you downloaded before you run it.</p>
+          <a class="btn btn-secondary" data-asset="-aarch64-macos.tar.gz" href="https://github.com/DailenG/tachyon/releases/latest"><svg class="icon"><use href="#i-download"/></svg>Get macOS build</a>
         </div>
       </div>
+      <p class="fine-print">Each release ships a <code>SHA256SUMS.txt</code> alongside the archives, so you can verify what you downloaded before you run it.</p>
 
       <h3 id="source" class="subsection-title">Build from source</h3>
-      <p>Needs the Rust toolchain pinned in <code>rust-toolchain.toml</code> (installed automatically by <code>rustup</code>) and, on Linux, a handful of system libraries for GPUI.</p>
+      <p class="muted">Needs the Rust toolchain pinned in <code>rust-toolchain.toml</code> (installed automatically by <code>rustup</code>) and, on Linux, a handful of system libraries for GPUI.</p>
       <pre class="code-block"><span class="cmt"># Linux (Debian/Ubuntu) build dependencies</span>
 sudo apt-get install libxkbcommon-x11-dev libwayland-dev libxcb1-dev \
   libx11-xcb-dev libfontconfig-dev libfreetype-dev libvulkan-dev libzstd-dev
@@ -435,16 +375,16 @@ cargo run --release -- notes.md</pre>
   <section id="license">
     <div class="wrap">
       <div class="section-head">
-        <span class="kicker">Open source</span>
+        <span class="eyebrow">Open source</span>
         <h2>MIT OR Apache-2.0</h2>
         <p>Tachyon is early: block-swap editing, saving, find and replace, large-file handling and Windows distribution are working today; macOS signing and a few other items are still open on <a href="https://github.com/DailenG/tachyon/blob/main/docs/ROADMAP.md">the roadmap</a>.</p>
       </div>
-      <div class="license-grid">
-        <div class="license-card">
+      <div class="two-up">
+        <div class="card pad">
           <h3>Dual licensed</h3>
           <p>Use Tachyon under either the <a href="https://github.com/DailenG/tachyon/blob/main/LICENSE-MIT">MIT license</a> or the <a href="https://github.com/DailenG/tachyon/blob/main/LICENSE-APACHE">Apache License, Version 2.0</a>, at your option.</p>
         </div>
-        <div class="license-card">
+        <div class="card pad">
           <h3>Contribute</h3>
           <p>Issues, pull requests and design discussion happen on <a href="https://github.com/DailenG/tachyon">GitHub</a>. Read <a href="https://github.com/DailenG/tachyon/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a> before opening a PR.</p>
         </div>
@@ -458,10 +398,11 @@ cargo run --release -- notes.md</pre>
   <div class="wrap">
     <div class="footer-grid">
       <div class="footer-brand">
-        <svg viewBox="0 0 64 64" aria-hidden="true">
-          <g fill="#8CCBFF"><path d="M7 31 L27 28 C33 27 38 24 42 16 C44 25 48 29 57 32 C48 35 44 39 42 48 C38 40 33 37 27 36 L7 33 Z"/><path d="M21 15 C29 6 44 7 52 19 L49 25 C42 14 31 12 24 21 Z"/><path d="M21 49 C29 58 44 57 52 45 L49 39 C42 50 31 52 24 43 Z"/></g>
-        </svg>
-        Tachyon &mdash; a native Markdown editor, faster than you can measure.
+        <picture>
+          <source srcset="assets/logo/lockup-horizontal-white.svg" media="(prefers-color-scheme: dark)">
+          <img src="assets/logo/lockup-horizontal.svg" width="155" height="26" alt="tachyon" loading="lazy">
+        </picture>
+        <span>Write faster. Think further.</span>
       </div>
       <div class="footer-links">
         <div>
@@ -490,8 +431,8 @@ cargo run --release -- notes.md</pre>
       </div>
     </div>
     <div class="footer-meta">
-      <span>&copy; Tachyon contributors. MIT OR Apache-2.0.</span>
-      <span id="page-weight">This page: &asymp;51&nbsp;KB transferred (HTML + CSS + JS + favicon), 0 requests to third parties. The screenshot gallery below loads lazily, &asymp;70&nbsp;KB more only if you scroll to it.</span>
+      <span>&copy; Tachyon contributors. MIT OR Apache-2.0. Inter is under the SIL Open Font License; icons are Lucide (ISC).</span>
+      <span id="page-weight">This page: about 80&nbsp;KB of HTML, CSS, script, font and logo (compressed), plus one 90&ndash;100&nbsp;KB screenshot. The other screenshots load only when you scroll to them. Its one request beyond this site is to GitHub, to point the download buttons at the latest release.</span>
     </div>
   </div>
 </footer>

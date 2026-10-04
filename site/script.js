@@ -51,6 +51,13 @@
     }
   })();
 
+  // The hero screenshot starts on the dark capture when the visitor's system is dark, to match
+  // the page. Without JS the light capture shows, and both tabs still work.
+  if (window.matchMedia("(prefers-color-scheme: dark)").matches) {
+    var darkShot = document.getElementById("shot-dark");
+    if (darkShot) darkShot.checked = true;
+  }
+
   // The launch race: two bars filling over their own real measured
   // duration (30 ms resident, 350 ms cold), starting together. The static
   // CSS default (no JS, or reduced motion) already shows both bars at full
@@ -125,17 +132,6 @@
         });
       }
     });
-    block.style.position = "relative";
-    button.style.position = "absolute";
-    button.style.top = "0.6rem";
-    button.style.right = "0.6rem";
-    button.style.font = "0.72rem var(--font-mono)";
-    button.style.color = "var(--text-dim)";
-    button.style.background = "var(--bg-raised)";
-    button.style.border = "1px solid var(--border)";
-    button.style.borderRadius = "6px";
-    button.style.padding = "0.2rem 0.5rem";
-    button.style.cursor = "pointer";
     block.appendChild(button);
   });
 })();
