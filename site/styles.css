@@ -63,6 +63,7 @@
   --gradient-rule: linear-gradient(90deg, rgba(0, 209, 255, 0) 0%, #2563ff 40%, #7c3aed 60%, rgba(124, 58, 237, 0) 100%);
   /* Text on --accent-soft: --accent itself measures 4.39:1 there, below the 4.5:1 minimum. */
   --pill-text: var(--blue-700);
+  --scroll-hint: rgba(11, 18, 32, 0.16);
 
   /* Type (tokens/typography.css) */
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -103,6 +104,7 @@
     --shadow-md: 0 0 0 1px rgba(0, 209, 255, 0.06), 0 16px 40px -18px rgba(0, 0, 0, 0.7), 0 10px 30px -16px rgba(37, 99, 255, 0.28);
     --shadow-lg: 0 0 0 1px rgba(0, 209, 255, 0.08), 0 30px 80px -30px rgba(0, 0, 0, 0.8), 0 20px 60px -24px rgba(0, 209, 255, 0.24);
     --pill-text: var(--text-link);
+    --scroll-hint: rgba(0, 0, 0, 0.55);
   }
 }
 
@@ -598,6 +600,7 @@ main > section.tint {
 
 .tint .card {
   background: var(--surface-page);
+  --scroll-bg: var(--surface-page);
 }
 
 .card.pad {
@@ -666,6 +669,20 @@ main > section.tint {
 
 .table-scroll {
   overflow-x: auto;
+  --scroll-bg: var(--surface-card);
+}
+
+/* Scroll hint for content wider than its box (the compare table and the build commands on a
+   narrow screen): a soft edge shadow where more content is hidden, covered by an opaque fade that
+   scrolls with the content, so the shadow disappears once that end is reached. Static, no JS. */
+.card.table-scroll,
+pre.code-block {
+  background:
+    linear-gradient(to right, var(--scroll-bg) 30%, transparent) left / 32px 100% no-repeat local,
+    linear-gradient(to left, var(--scroll-bg) 30%, transparent) right / 32px 100% no-repeat local,
+    radial-gradient(farthest-side at 0 50%, var(--scroll-hint), transparent) left / 12px 100% no-repeat scroll,
+    radial-gradient(farthest-side at 100% 50%, var(--scroll-hint), transparent) right / 12px 100% no-repeat scroll,
+    var(--scroll-bg);
 }
 
 .data-table {
@@ -1002,10 +1019,16 @@ main > section.tint {
 }
 
 /* Install */
+/* Grid dots (concept sheet 6): one sparse, low-contrast field that shows only in the gaps around
+   the opaque install cards, never behind text. */
 .install-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 20px;
+  padding: 24px;
+  margin: 0 -24px;
+  background-image: radial-gradient(var(--border-default) 1px, transparent 1.5px);
+  background-size: 24px 24px;
 }
 
 .install-card {
@@ -1050,7 +1073,7 @@ main > section.tint {
   margin: 16px 0 0;
   padding: 18px 20px;
   overflow-x: auto;
-  background: var(--surface-page);
+  --scroll-bg: var(--surface-page);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   font: 14px/1.6 var(--font-mono);
