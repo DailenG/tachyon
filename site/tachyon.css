@@ -201,8 +201,9 @@ html:has(body.explainer) { scroll-padding-top: 140px; }
 
 .explainer-body p { margin: 0 0 16px; }
 
-.explainer-body a { color: var(--text-link); }
-.explainer-body a:hover { color: var(--text-link-hover); }
+/* Not buttons: this selector outranks .btn-primary and turned its white label blue on blue. */
+.explainer-body a:not(.btn) { color: var(--text-link); }
+.explainer-body a:not(.btn):hover { color: var(--text-link-hover); }
 
 .honest {
   padding: 14px 16px;
@@ -228,7 +229,7 @@ html:has(body.explainer) { scroll-padding-top: 140px; }
   white-space: nowrap;
 }
 
-/* Visualisations */
+/* Visualizations */
 .viz {
   margin: 32px 0 8px;
   padding: 20px;
@@ -290,7 +291,7 @@ html:has(body.explainer) { scroll-padding-top: 140px; }
 .viz-svg .bad { fill: var(--warn-text); }
 
 :root {
-  /* Text-safe tints of the brand colours for labels on cards (4.5:1 on --surface-card). */
+  /* Text-safe tints of the brand colors for labels on cards (4.5:1 on --surface-card). */
   --violet-text: #6d28d9;
   --warn-text: #b42318;
   --viz-light: #d97706;
