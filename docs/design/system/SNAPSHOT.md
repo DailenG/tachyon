@@ -36,6 +36,20 @@ disagree, this table wins. Do not "fix" the repository back to the copied text.
 | App icon tiles: light and dark (`app-icon-light/-dark.png`) | One icon: the dark navy tile with a gradient border | Owner decision 2026-10-02 |
 | Motion: 120-180 ms transitions, animated loaders | Website only. The editor has no animation at all | Speed budget (ADR 0004); the design system agrees for the editor |
 
+## Known contrast exceptions (owner decision, 2026-10-03)
+
+The website uses the design system's colours exactly, including four that miss the text-contrast
+minimums in `docs/design/DESIGN_DIRECTION.md` (4.5:1 for text, 3:1 for large text). The owner
+reviewed the measured values and chose the design over the minimums. Do not "fix" these without
+the owner's go-ahead; an accessible alternative was built and reverted (PR #120 history).
+
+| Element | Measured | Accessible alternative, if ever wanted |
+| --- | --- | --- |
+| Primary button: white text on cyan → blue | 2.2-3.6:1 under the label | Blue → violet (`#2563FF` → `#7C3AED`), 4.9:1 and up |
+| "Think further." gradient, light mode | 1.8:1 at the cyan start | Start at Cyan 600 `#0099C7` (3:1) |
+| Badge: white on `#2563FF` → `#4F7DFF` | 3.6:1 at the light end | Solid `#2563FF` |
+| `--text-muted` on `--surface-sunken`, light mode | 4.3:1 | `--text-body` there |
+
 ## Refreshing the copy
 
 Only a session that can reach Claude Design can refresh it. Subagents spawned by a session

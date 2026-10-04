@@ -1,0 +1,50 @@
+<!doctype html>
+<!-- The website's social preview, site/assets/og-image.png (1200 x 630). Rendered from this file by
+     a headless browser, from the repository root:
+
+       chromium --headless=new --disable-gpu --hide-scrollbars --window-size=1200,630 \
+         --screenshot=site/assets/og-image.png "file://$PWD/scripts/brand/og-image.html"
+
+     It uses the site's own font, logo and screenshot, so it stays in step with them. Values are the
+     design system's (docs/design/system/), light theme. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  @font-face {
+    font-family: "Inter";
+    font-weight: 400 700;
+    src: url("../../site/assets/fonts/inter-latin.woff2") format("woff2");
+  }
+  html, body { margin: 0; width: 1200px; height: 630px; overflow: hidden; }
+  body {
+    background: #f8fafc;
+    font-family: "Inter", sans-serif;
+    color: #0b1220;
+    display: grid;
+    grid-template-columns: 560px 1fr;
+    align-items: center;
+    gap: 40px;
+    padding: 0 0 0 72px;
+    box-sizing: border-box;
+    position: relative;
+  }
+  .logo { height: 54px; display: block; margin-bottom: 44px; }
+  h1 { margin: 0 0 20px; font-size: 64px; line-height: 1.04; letter-spacing: -0.025em; font-weight: 600; }
+  .g { background: linear-gradient(90deg, #00d1ff 0%, #2563ff 50%, #7c3aed 100%); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  p { margin: 0; font-size: 26px; line-height: 1.4; color: #334155; max-width: 22ch; }
+  .shot { padding: 3px; border-radius: 19px; background: linear-gradient(135deg, rgba(0,209,255,.6), rgba(37,99,255,.55), rgba(124,58,237,.6)); box-shadow: 0 30px 70px -28px rgba(37,99,255,.45); width: 640px; }
+  .shot img { display: block; width: 100%; border-radius: 16px; }
+  .rule { position: absolute; left: 0; right: 0; bottom: 0; height: 6px; background: linear-gradient(90deg, #00d1ff 0%, #2563ff 50%, #7c3aed 100%); }
+</style>
+</head>
+<body>
+  <div>
+    <img class="logo" src="../../assets/brand/lockup-horizontal.svg" alt="tachyon">
+    <h1>Write faster.<br><span class="g">Think further.</span></h1>
+    <p>A markdown editor that gets there before you do.</p>
+  </div>
+  <div class="shot"><img src="../../site/assets/screenshots/hero-light@2x.webp" alt=""></div>
+  <div class="rule"></div>
+</body>
+</html>
