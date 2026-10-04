@@ -6,6 +6,8 @@ All notable user-visible changes are recorded here. The format follows
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-04
+
 ### Changed
 
 - New app icon, matching the concept artwork: the gradient Tachyon symbol on a navy tile with a
