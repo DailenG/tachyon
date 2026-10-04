@@ -688,7 +688,9 @@ placeholder; `cargo xtask msix` fills in the workspace version as four parts, e.
 `0.1.0.0`) that registers Tachyon as `Windows.FullTrustApplication`: an App Execution Alias
 (`tachyon` works from any terminal, at a path stable across updates, unlike the versioned
 `C:\Program Files\WindowsApps\...` install folder), file type associations for `.md` and
-`.markdown`, and disabled file-system and registry write virtualization (the
+`.markdown` (and, as plain text, `.txt`, `.text` and `.log`), each with its own document-page icon
+(`<uap:Logo>`, `FileMarkdown*.png` / `FileText*.png` from `cargo xtask icons`) rather than the app
+tile, and disabled file-system and registry write virtualization (the
 `unvirtualizedResources` restricted capability) so settings (`%APPDATA%\Tachyon`), backups
 (`%LOCALAPPDATA%\Tachyon`) and the autostart `Run` key land in the same real, global locations the
 `.zip` build uses instead of a private per-package store. The manifest's `Publisher` must match

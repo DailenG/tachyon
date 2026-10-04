@@ -14,6 +14,8 @@ All notable user-visible changes are recorded here. The format follows
 - Windows: the icon is sharp at every size, including Explorer's large and extra-large views,
   the Start menu, Alt+Tab and high display scaling (it previously stopped at 64 px).
 - The website favicon is the new icon.
+- Windows (installed package): Markdown and text files get their own document icons in
+  Explorer instead of the app icon, so a file no longer looks like the app.
 
 ## [1.2.0] - 2026-09-30
 

@@ -59,6 +59,8 @@ wordmark, replaced in October 2026).
 | `app-icon.svg` | App icon on a 256 px grid | 96 px and up; the Linux launcher icon |
 | `app-icon-64.svg`, `-48`, `-40` | App icon drawn on each pixel grid, full symbol | 40-64 px |
 | `app-icon-32.svg`, `-24`, `-20`, `-16` | App icon drawn on each pixel grid, simplified symbol | 16-32 px; the website favicon (`-32`) |
+| `file-markdown-<n>.svg` | Markdown file icon (16, 24, 32, 48, 256 px grids) | `.md`, `.markdown` files in Explorer (MSIX) |
+| `file-text-<n>.svg` | Plain-text file icon (same grids) | `.txt`, `.text`, `.log` files in Explorer (MSIX) |
 | `signature.png`, `signature-light.png` | The owner's handwritten signature | See below |
 
 `cargo xtask icons` renders each raster size from the smallest art at least that large, so a
@@ -81,6 +83,25 @@ coloured border so it holds its edge on both light and dark taskbars.
 
 Always review icon changes at native pixels, on a light (`#F3F3F3`) and a dark (`#202020`)
 background, at 16, 20, 24, 32, 40, 48 and 64 px, and compare with concept sheet 2.
+
+## File-type icons
+
+What Windows shows on the files Tachyon is registered for (`packaging/msix/AppxManifest.xml`,
+`<uap:Logo>` on each `FileTypeAssociation`; `cargo xtask icons` renders `FileMarkdown*.png` and
+`FileText*.png` with their `targetsize-<n>` siblings). Before these, Windows put the app tile on
+every `.md` file, so a document looked like the app itself.
+
+- **Shape:** a white document page with a folded top-right corner, the Windows convention for
+  files, edged in neutral-400 `#94A3B8` so it holds its edge on white and on dark Explorer.
+- **Markdown** (`file-markdown-*`): a heading line (neutral-500) above text lines (neutral-300),
+  and the gradient symbol as the app's badge.
+- **Plain text** (`file-text-*`): even text lines and the navy symbol.
+- The two differ in shape (the heading line) as well as colour, so neither relies on colour
+  alone. At 16 and 24 px there is room only for the page and the symbol, so there they differ by
+  the symbol's colour; Explorer's file name shows the extension anyway.
+- The symbol uses the same cuts as the app icon: simplified up to 32 px, full from 48 px.
+
+The portable zip build registers no file types, so these appear only with the MSIX package.
 
 ## Colours
 
