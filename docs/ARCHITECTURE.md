@@ -585,10 +585,12 @@ session, or immediately for a windowless `--background` start.
 demand by the `About` action (tray, `tachyon --about` forwarded like other launches, and a
 future command-palette row), never at start-up: a singleton `WindowHandle` global focuses the
 existing window instead of opening a second one. Shows the crate version (and, packaged, the
-MSIX `X.Y.Z.B` identity version), the owner's signature artwork - the sole approved exception to
-"no brand imagery in the app" (`docs/design/DESIGN_DIRECTION.md`), embedded with
-`include_bytes!` and decoded only when this window's view is built, never on the startup path -
-and an Environment table (OS name/version, installed-package vs. portable, resident vs.
+MSIX `X.Y.Z.B` identity version) under the stacked logo, tagline and "Faster than light"
+divider of concept sheet 5 - the logo is the sole approved exception to "no brand imagery in the
+app" (`docs/design/DESIGN_DIRECTION.md`), an SVG embedded with `include_bytes!` and rasterized by
+GPUI only when this window's view is built, never on the startup path; it is declared at twice
+its display width because GPUI rasterizes an SVG image once at its declared size - the product
+links and licence, and an Environment table (OS name/version, installed-package vs. portable, resident vs.
 standalone, the update channel derived from the packaged build number, and the settings and
 backups paths, both clickable via `App::reveal_path`). `tachyon_platform::os_version` and
 `packaged_version` supply the platform facts (Linux: `/etc/os-release`'s `PRETTY_NAME`; Windows:

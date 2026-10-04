@@ -28,8 +28,8 @@ These are not planned for the application. Proposing one needs benchmark evidenc
 - **Shadows, blur, translucency, and backdrop effects** (for example acrylic or mica materials) on editor surfaces. (Sticky notes are an approved, owner-reviewed exception: `sticky_unfocused_opacity`, off by default, applied only while a note's own window is unfocused, and measured against the startup and per-frame budgets like any other Measure-class change - see [ADR 0010](../adr/0010-sticky-notes.md). Nowhere else in the editor.)
 - **Animation and transitions**: splash screens, fades, hover or focus transitions, animated or blinking carets, animated logos. Window open and close animations are deliberately turned off (ADR 0004).
 - **Brand imagery inside the app**: logos or artwork on the editing canvas, empty states, or
-  overlays; raster images loaded at startup. (The About window's signature artwork is an
-  approved exception - see below - decoded only when that window opens, never on the startup
+  overlays; raster images loaded at startup. (The About window's stacked logo is an
+  approved exception - see below - rasterized only when that window opens, never on the startup
   path.)
 - **Anything added before the first frame for branding**: reading theme or asset files, decoding images, or rasterizing vector artwork at startup. Icons are prepared at build time.
 - **Custom-drawn window chrome** replacing the native title bar. Owner-approved exception
@@ -79,7 +79,7 @@ drifted from the concept; they were replaced in October 2026.
 | GitHub and documentation | Recognizable, restrained identity |
 | App icons (window, taskbar, tray, launcher, executable) | The gradient symbol on the navy tile with a gradient border (owner decision, 2026-10-02); a simplified symbol and solid border at 16–32 px; prepared at build time from `assets/brand/` |
 | Working editor | Quiet chrome; solid colors only; the document remains the focal point |
-| About window | Approved for 1.0: the owner's personal signature artwork (`assets/brand/signature.png`, `signature-light.png`), theme-appropriate, decoded only when the window opens |
+| About window | Approved: the stacked logo (`assets/brand/about-lockup.svg`, `about-lockup-white.svg` for the dark theme) after concept sheet 5, with the tagline and a solid-accent "Faster than light" divider; rasterized only when the window opens. (1.0-1.2 showed the owner's signature instead; its files are kept in `assets/brand/` so the owner can revert.) |
 | Onboarding | Not planned (see the deprioritized list) |
 
 Do not infer a sidebar, preview pane, toolbar, navigation model, settings flow, splash screen, or new feature from concept artwork. Preserve Tachyon's existing single-pane block-swap editing model unless a separate product decision changes it.

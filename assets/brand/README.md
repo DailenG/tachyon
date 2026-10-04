@@ -56,6 +56,7 @@ wordmark, replaced in October 2026).
 | `wordmark-white.svg` | The wordmark, white | Dark surfaces |
 | `lockup-horizontal.svg` / `-white.svg` | Gradient symbol left of the wordmark (navy / white) | Site header, README, wide spaces |
 | `lockup-stacked.svg` / `-white.svg` | Gradient symbol above the wordmark (navy / white) | About window, hero, square spaces |
+| `about-lockup.svg` / `-white.svg` | The stacked lockup declared at 440 px wide (twice its display width) | The About window only (`about.rs`); GPUI rasterizes an SVG at its declared size |
 | `app-icon.svg` | App icon on a 256 px grid | 96 px and up; the Linux launcher icon |
 | `app-icon-64.svg`, `-48`, `-40` | App icon drawn on each pixel grid, full symbol | 40-64 px |
 | `app-icon-32.svg`, `-24`, `-20`, `-16` | App icon drawn on each pixel grid, simplified symbol | 16-32 px; the website favicon (`-32`) |
@@ -123,9 +124,11 @@ gradient never appears in editor UI; it is confined to artwork.
 ## The owner's personal signature
 
 `signature.png` and `signature-light.png` are the owner's own handwritten signature, unrelated to
-the logo (different provenance and licensing; see below). The About window shows them, above
-"Tachyon", until the About redesign (#119) replaces them with the stacked logo; they stay here
-after that so the owner can revert.
+the logo (different provenance and licensing; see below). The About window showed them for 1.0
+and 1.x. Since then the About window shows the stacked logo instead (concept sheet 5); the
+signature files are kept here, unused, so the owner can revert to them: put back the two
+`include_bytes!` constants and the `img` element in `crates/tachyon-editor/src/about.rs`
+(see that file's history).
 
 | Asset | What it is |
 | --- | --- |
