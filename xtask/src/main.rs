@@ -232,8 +232,9 @@ const ICO_DIB_SIZES: [u32; 9] = [16, 20, 24, 32, 40, 48, 64, 96, 128];
 
 /// The one PNG-compressed image in `tachyon.ico`, last in the file: 256 px for Explorer's large
 /// and extra-large views, the Start menu and Alt+Tab at high scaling. Explorer reads PNG entries;
-/// the tray never uses this one (`ico_image` skips PNG entries). As a DIB it would be 270 KB of
-/// the executable; as a PNG it is about 31 KB.
+/// the tray never uses this one (`ico_image` skips PNG entries). As a DIB it would be 270 KB, and
+/// the executable holds the `.ico` twice (its icon resource and the tray's `include_bytes!`); as
+/// a PNG it is about 31 KB.
 const ICO_PNG_SIZE: u32 = 256;
 
 /// Sizes rendered into `packaging/msix/Assets` for the MSIX manifest's `Square44x44Logo` slot,

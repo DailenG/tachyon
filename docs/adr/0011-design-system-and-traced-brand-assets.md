@@ -47,10 +47,14 @@ get the DesignSync tool, and a human contributor may have no account.
   "touch up" a path, and the README and AGENTS.md say so.
 - The snapshot can go stale. `SNAPSHOT.md` dates it, and a pull request that relies on something
   it does not cover says so, rather than guessing from concept images.
-- The executable grows by about 136 KB: the `.ico` goes from 43 KB to 179 KB, of which 105 KB is
-  the 96 and 128 px DIBs (sharp window icons at 300 and 400 % scaling) and 31 KB the 256 px PNG.
-  The `.ico` is embedded as a resource and not read on the startup path unless Windows asks for an
-  icon, which it already did.
+- The executable grows by 272 KB (10.00 MB to 10.28 MB, measured on the CI release build). The
+  `.ico` goes from 43 KB to 179 KB, and the binary holds it twice: once as the executable's icon
+  resource (`crates/tachyon/build.rs`, for Explorer) and once in the tray code
+  (`include_bytes!` in `tray.rs`). Of the 136 KB per copy, 105 KB is the 96 and 128 px DIBs
+  (sharp window icons at 300 and 400 % scaling) and 31 KB the 256 px PNG. The icon is not read
+  on the startup path beyond what Windows already did for the old one. If size matters more, the
+  tray could load its icons from the executable's own resource instead of a second copy, which
+  would halve the growth.
 - Regenerating needs potrace, ImageMagick, rsvg-convert, Python 3 and numpy, on a maintainer's
   machine only; CI and the normal build need none of them.
 - Revisit if the owner commissions hand-built vector masters (for example from a designer): they
