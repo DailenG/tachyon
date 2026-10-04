@@ -32,7 +32,7 @@ disagree, this table wins. Do not "fix" the repository back to the copied text.
 | Logo files are raster PNGs; vector masters are needed | `assets/brand/` holds vectors traced from the owner's masters (`scripts/brand/`) | Icons and print need vectors |
 | Inter from Google Fonts (`tokens/fonts.css`) | Website: Inter self-hosted from the site's own domain. App: system fonts only | Owner decision 2026-10-02 (no third-party round trips on the site); bundled fonts cost app startup |
 | Lucide icons loaded from a CDN | Website: Lucide glyphs inlined as SVG, no CDN | Same reason |
-| About window: signature at the top, wordmark below | About window: stacked lockup, no signature (signature files kept for a revert) | Owner decision 2026-10-02, following concept sheet 5 |
+| About window: signature at the top, wordmark below | About window: stacked lockup, no signature, from the About redesign (#119) on; until then it shows the signature above "Tachyon". Signature files kept for a revert | Owner decision 2026-10-02, following concept sheet 5 |
 | App icon tiles: light and dark (`app-icon-light/-dark.png`) | One icon: the dark navy tile with a gradient border | Owner decision 2026-10-02 |
 | Motion: 120-180 ms transitions, animated loaders | Website only. The editor has no animation at all | Speed budget (ADR 0004); the design system agrees for the editor |
 

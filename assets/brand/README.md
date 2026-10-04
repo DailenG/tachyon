@@ -102,8 +102,9 @@ gradient never appears in editor UI; it is confined to artwork.
 ## The owner's personal signature
 
 `signature.png` and `signature-light.png` are the owner's own handwritten signature, unrelated to
-the logo (different provenance and licensing; see below). The About window showed them for 1.0
-and 1.x. They are kept here, unused or not, so the owner can revert to them.
+the logo (different provenance and licensing; see below). The About window shows them, above
+"Tachyon", until the About redesign (#119) replaces them with the stacked logo; they stay here
+after that so the owner can revert.
 
 | Asset | What it is |
 | --- | --- |
