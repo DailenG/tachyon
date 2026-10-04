@@ -492,6 +492,238 @@ kbd {
   pointer-events: none;
 }
 
+/* Colours the orbit animations (orbit.js) draw with: the particle's hot core and the sparks. */
+.orbit {
+  --orbit-hot: #2563ff;
+  --orbit-spark: #00a8d6;
+}
+
+@media (prefers-color-scheme: dark) {
+  .orbit {
+    --orbit-hot: #ffffff;
+    --orbit-spark: #bff4ff;
+  }
+}
+
+/* The orbit animation picker (orbit.js): a card under the screenshot on wide screens, a sheet
+   opened from the screenshot on narrow ones. */
+.orbit-picker {
+  width: min(100%, 440px);
+  margin: 24px 0 0 auto;
+  padding: 16px 18px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-card);
+  box-shadow: var(--shadow-sm);
+  font-size: 14px;
+}
+
+.orbit-picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.orbit-picker h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--text-strong);
+}
+
+.orbit-picker-sub {
+  margin: 2px 0 10px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.orbit-picker-close {
+  display: none;
+  width: 32px;
+  height: 32px;
+  margin: -6px -8px -6px 0;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  font: inherit;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.orbit-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+
+.orbit-options input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.orbit-options label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+  padding: 0 8px 0 5px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  color: var(--text-body);
+  cursor: pointer;
+}
+
+.orbit-options label:hover {
+  background: var(--surface-sunken);
+}
+
+.orbit-num {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--border-default);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.orbit-options input:checked + label {
+  background: var(--accent-soft);
+  color: var(--pill-text);
+  font-weight: 600;
+}
+
+.orbit-options input:checked + label .orbit-num {
+  border-color: transparent;
+  background: var(--gradient-button);
+  color: #ffffff;
+}
+
+.orbit-options input:focus-visible + label {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.orbit-picker-note {
+  margin: 10px 0 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-body);
+}
+
+.orbit-picker-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+
+.orbit-picker-link .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.orbit-toggle {
+  display: none;
+}
+
+.orbit-backdrop {
+  display: none;
+}
+
+@media (max-width: 980px) {
+  .orbit-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 12px auto 0;
+    padding: 0 14px;
+    min-height: 36px;
+    border: 1px solid var(--border-default);
+    border-radius: 999px;
+    background: var(--surface-page);
+    font: inherit;
+    font-size: 13px;
+    color: var(--text-body);
+    cursor: pointer;
+  }
+
+  .orbit-toggle strong {
+    color: var(--text-strong);
+  }
+
+  .orbit-toggle svg {
+    flex: none;
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: var(--accent);
+    stroke-width: 1.6;
+  }
+
+  .orbit-toggle svg circle {
+    fill: var(--cyan);
+    stroke: none;
+  }
+
+  .orbit-toggle:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  .orbit-picker {
+    display: none;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 60;
+    width: auto;
+    max-width: 520px;
+    margin: 0 auto;
+    padding: 18px 20px calc(20px + env(safe-area-inset-bottom));
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    box-shadow: var(--shadow-lg);
+  }
+
+  .orbit-picker.is-open {
+    display: block;
+  }
+
+  .orbit-picker-close {
+    display: inline-grid;
+    place-items: center;
+  }
+
+  .orbit-options {
+    grid-template-columns: 1fr;
+  }
+
+  .orbit-options label {
+    min-height: 40px;
+    font-size: 14px;
+  }
+
+  .orbit-backdrop.is-open {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 59;
+    background: rgba(11, 18, 32, 0.3);
+  }
+}
+
 /* Screenshot in a 3 px gradient frame, with a no-JS light/dark toggle (radio inputs) */
 .theme-compare input[type="radio"] {
   position: absolute;
@@ -1191,6 +1423,45 @@ pre.code-block {
   color: var(--text-body);
 }
 
+/* What is a tachyon? (tachyon.html) */
+.science {
+  max-width: 72ch;
+  padding-top: 72px;
+  padding-bottom: 96px;
+}
+
+.science h1 {
+  margin: 16px 0 16px;
+  font-size: clamp(36px, 5vw, 56px);
+}
+
+.science h2 {
+  margin: 40px 0 10px;
+  font-size: 22px;
+}
+
+.science p {
+  color: var(--text-body);
+}
+
+.science-lead {
+  font-size: 19px;
+  line-height: 1.6;
+}
+
+.science-soon {
+  margin: 24px 0 8px;
+  padding: 12px 16px;
+  border-radius: var(--radius-md);
+  background: var(--accent-soft);
+  color: var(--pill-text) !important;
+  font-size: 14px;
+}
+
+.science .btn {
+  margin-top: 32px;
+}
+
 /* Narrow screens */
 @media (max-width: 980px) {
   .hero-inner {
@@ -1203,8 +1474,11 @@ pre.code-block {
     display: none;
   }
 
+  /* Centred and a little narrower than on wide screens, so it shows above and below the
+     full-width screenshot and runs off the screen edges without reaching the copy above. */
   .orbit {
-    display: none;
+    left: -17.5%;
+    width: 135%;
   }
 
   .shot-frame {
