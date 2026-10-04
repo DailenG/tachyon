@@ -6,6 +6,15 @@ All notable user-visible changes are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Website: the orbit ring around the hero screenshot is animated, with four small nods to the
+  physics of tachyons (escape velocity, arriving before leaving, a reversed jump and a Cherenkov
+  lap). A picker under the screenshot chooses one (on phones: tap the screenshot) and the site
+  remembers the choice; otherwise one plays at random. Under reduced motion the ring stays
+  still. The ring now also shows on phones. A new page, "What is a tachyon?", explains the
+  particle behind the name.
+
 ## [1.3.0] - 2026-10-04
 
 ### Changed
