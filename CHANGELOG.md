@@ -12,8 +12,12 @@ All notable user-visible changes are recorded here. The format follows
   physics of tachyons (escape velocity, arriving before leaving, a reversed jump and a Cherenkov
   lap). A picker under the screenshot chooses one (on phones: tap the screenshot) and the site
   remembers the choice; otherwise one plays at random. Under reduced motion the ring stays
-  still. The ring now also shows on phones. A new page, "What is a tachyon?", explains the
-  particle behind the name.
+  still. The ring now also shows on phones.
+- Website: a new page, "What is a tachyon?", explains the particle behind the name at four reading
+  levels (ELI5, ELI13, Standard, ELI-PhD), with interactive diagrams of energy against speed,
+  spacetime and simultaneity, the tachyonic antitelephone (3D, drag to turn) and Cherenkov
+  radiation, plus cited references. It works without JavaScript and under reduced motion; the 3D
+  library loads only when that diagram scrolls into view.
 
 ## [1.3.0] - 2026-10-04
 
