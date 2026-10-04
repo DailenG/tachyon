@@ -58,7 +58,7 @@ jobs:
       # Signs target/release/tachyon.exe in place; the MSIX below packs the signed binary.
       - name: Sign tachyon.exe (Azure Trusted Signing)
         if: steps.signing.outputs.available == 'true'
-        uses: Azure/trusted-signing-action@208f8af4bf26cf2af8597424e3cb5582801523ba # v2.0.0
+        uses: Azure/trusted-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
         with:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -96,7 +96,7 @@ jobs:
             --appinstaller-base "https://github.com/DailenG/tachyon/releases/download/nightly"
       - name: Sign the MSIX installer (Azure Trusted Signing)
         if: steps.signing.outputs.available == 'true'
-        uses: Azure/trusted-signing-action@208f8af4bf26cf2af8597424e3cb5582801523ba # v2.0.0
+        uses: Azure/trusted-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
         with:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -136,7 +136,7 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           name: nightly-msix
           path: dist
