@@ -27,17 +27,12 @@
   --blue-700: #1d45c8;
   --blue-800: #1e37a0;
   --gradient-brand: linear-gradient(90deg, #00d1ff 0%, #2563ff 50%, #7c3aed 100%);
-  /* Buttons carry white text, which needs 4.5:1 on every part of the gradient. The design
-     system's cyan -> blue button measures 2.2-3.6:1 under the label, so buttons use the blue ->
-     violet part of the brand gradient (4.9:1 and up); docs/design/system/SNAPSHOT.md records
-     this departure. --gradient-fill keeps cyan -> blue for fills that carry no text. */
-  --gradient-button: linear-gradient(90deg, #2563ff 0%, #7c3aed 100%);
-  --gradient-button-hover: linear-gradient(90deg, #1d45c8 0%, #6d28d9 100%);
+  /* The design system's button gradients, kept as specified by owner decision (2026-10-03)
+     even though white text on cyan -> blue measures 2.2-3.6:1: see the contrast note in
+     docs/design/system/SNAPSHOT.md before changing them. */
+  --gradient-button: linear-gradient(90deg, #00d1ff 0%, #2563ff 100%);
+  --gradient-button-hover: linear-gradient(90deg, #00c8fa 0%, #2563ff 55%, #7c3aed 100%);
   --gradient-button-pressed: linear-gradient(90deg, #1d45c8 0%, #1e37a0 100%);
-  --gradient-fill: linear-gradient(90deg, #00d1ff 0%, #2563ff 100%);
-  /* Large gradient text starts at Cyan 600 in light mode: Tachyon Cyan is 1.8:1 on the light
-     page, under the 3:1 large text needs. */
-  --gradient-text: linear-gradient(90deg, #0099c7 0%, #2563ff 50%, #7c3aed 100%);
   --gradient-frame: linear-gradient(135deg, rgba(0, 209, 255, 0.6), rgba(37, 99, 255, 0.55), rgba(124, 58, 237, 0.6));
 
   /* Semantic, light */
@@ -97,7 +92,6 @@
     --accent-soft: rgba(37, 99, 255, 0.16);
     --accent-soft-hover: rgba(37, 99, 255, 0.26);
     --tile-bg: rgba(37, 99, 255, 0.14);
-    --gradient-text: var(--gradient-brand);
     --selection-bg: rgba(0, 209, 255, 0.22);
     --header-bg: rgba(11, 18, 32, 0.9);
     --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
@@ -380,7 +374,7 @@ kbd {
 }
 
 .gradient-text {
-  background: var(--gradient-text);
+  background: var(--gradient-brand);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
@@ -647,8 +641,7 @@ main > section.tint {
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  /* text-body, not text-muted: muted is 4.3:1 on the sunken surface. */
-  color: var(--text-body);
+  color: var(--text-muted);
   background: var(--surface-sunken);
 }
 
@@ -721,7 +714,7 @@ main > section.tint {
   inset: 0;
   width: var(--pct, 10%);
   border-radius: 999px;
-  background: var(--gradient-fill);
+  background: var(--gradient-button);
   transform-origin: left center;
   transform: scaleX(1);
 }
@@ -802,7 +795,7 @@ main > section.tint {
   background: var(--surface-sunken);
   border-bottom: 1px solid var(--border-subtle);
   font-size: 13px;
-  color: var(--text-body);
+  color: var(--text-muted);
 }
 
 .demo-dots {
@@ -995,9 +988,7 @@ main > section.tint {
   height: 22px;
   padding: 0 10px;
   border-radius: 999px;
-  /* Solid Tachyon Blue: the design system's blue -> #4F7DFF badge gradient is 3.6:1 under
-     white 12 px text at its light end. */
-  background: var(--blue);
+  background: linear-gradient(90deg, #2563ff 0%, #4f7dff 100%);
   color: #ffffff;
   font-size: 12px;
   font-weight: 500;
