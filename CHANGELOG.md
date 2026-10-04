@@ -18,7 +18,8 @@ All notable user-visible changes are recorded here. The format follows
   Explorer instead of the app icon, so a file no longer looks like the app.
 - The About window follows the concept artwork: the Tachyon logo, a one-line tagline, a
   "Faster than light" divider, then version, website, source, support and licence above the
-  Environment details.
+  Environment details. On a screen too short for it, such as a 1080p display at 150 %, the
+  window fits the screen and its details scroll, so Copy details and Close stay visible.
 
 ## [1.2.0] - 2026-09-30
 

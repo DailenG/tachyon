@@ -596,7 +596,11 @@ backups paths, both clickable via `App::reveal_path`). `tachyon_platform::os_ver
 `packaged_version` supply the platform facts (Linux: `/etc/os-release`'s `PRETTY_NAME`; Windows:
 `RtlGetVersion`'s build number and `GetCurrentPackageFullName`'s version segment); the binary
 sets `tachyon_editor::AppInfo` (its own crate version, and whether this launch is resident) once
-at start-up, since neither is available to `tachyon-editor` otherwise.
+at start-up, since neither is available to `tachyon-editor` otherwise. The window opens at its
+440 x 760 design size centred in the primary display's work area, shortened to fit there with the
+same frame allowance as editor windows (`fit_about`); everything above the buttons sits in a
+scroll container, so on a short screen (a 1080p display at 150 %) the details scroll and the
+buttons stay visible.
 It also follows Tachyon's resolved theme, like the title bar below: `set_popup_menu_dark` records
 the choice cheaply wherever a window or the settings resolve it, and the tray thread applies it
 (`SetPreferredAppMode` / `FlushMenuThemes`, undocumented `uxtheme.dll` ordinals with no supported
