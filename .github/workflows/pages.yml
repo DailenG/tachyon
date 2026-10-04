@@ -43,7 +43,7 @@ jobs:
           # assets/brand is the one source of truth for the favicon mark;
           # re-copy it into the artifact so the deployed site can never
           # drift from the canonical vector file.
-          cp assets/brand/app-icon-small.svg _site/assets/favicon.svg
+          cp assets/brand/app-icon-32.svg _site/assets/favicon.svg
 
       - name: Configure Pages
         uses: actions/configure-pages@v6

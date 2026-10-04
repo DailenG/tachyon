@@ -1,0 +1,34 @@
+:root{
+  --space-0:0;--space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-5:20px;--space-6:24px;
+  --space-8:32px;--space-10:40px;--space-12:48px;--space-16:64px;--space-20:80px;--space-24:96px;
+
+  --radius-xs:4px;   /* editor small: rows, inline code, raw card, checkbox */
+  --radius-sm:8px;   /* editor medium: find bar, pickers, prompt */
+  --radius-md:12px;  /* buttons, inputs */
+  --radius-lg:16px;  /* cards */
+  --radius-xl:24px;  /* app-icon tiles, hero frames */
+  --radius-pill:999px;
+
+  --border-width:1px;
+  --container-max:1180px;
+
+  --shadow-xs:0 1px 2px rgba(11,18,32,.06);
+  --shadow-sm:0 1px 3px rgba(11,18,32,.06),0 4px 12px -6px rgba(37,99,255,.12);
+  --shadow-md:0 1px 3px rgba(11,18,32,.05),0 12px 32px -14px rgba(37,99,255,.22);
+  --shadow-lg:0 2px 6px rgba(11,18,32,.04),0 30px 70px -28px rgba(37,99,255,.32);
+  --shadow-glow-primary:0 10px 24px -10px rgba(37,99,255,.6);
+  --shadow-glow-cyan:0 0 0 1px rgba(0,209,255,.14),0 14px 40px -14px rgba(0,209,255,.4);
+
+  --ease-out:cubic-bezier(0.16,1,0.3,1); /* @kind other */
+  --ease-standard:cubic-bezier(0.4,0,0.2,1); /* @kind other */
+  --dur-instant:80ms; /* @kind other */
+  --dur-fast:120ms; /* @kind other */
+  --dur-base:180ms; /* @kind other */
+  --dur-slow:320ms; /* @kind other */
+}
+[data-theme="dark"]{
+  --shadow-xs:0 1px 2px rgba(0,0,0,.4);
+  --shadow-sm:0 1px 2px rgba(0,0,0,.4),0 6px 16px -8px rgba(0,209,255,.12);
+  --shadow-md:0 0 0 1px rgba(0,209,255,.06),0 16px 40px -18px rgba(0,0,0,.7),0 10px 30px -16px rgba(37,99,255,.28);
+  --shadow-lg:0 0 0 1px rgba(0,209,255,.08),0 30px 80px -30px rgba(0,0,0,.8),0 20px 60px -24px rgba(0,209,255,.24);
+}

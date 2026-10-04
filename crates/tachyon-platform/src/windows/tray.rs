@@ -1,8 +1,9 @@
 //! The notification-area (tray) icon of a resident instance, and the icon of Tachyon's windows.
 //!
-//! The icon ships inside the binary as an `.ico` with 32-bit DIB images (no PNG, so creating an
-//! icon never loads an image codec). `cargo xtask icons` regenerates it from the brand art in
-//! `assets/brand/` and checks that every image is a DIB.
+//! The icon ships inside the binary as an `.ico` with 32-bit DIB images from 16 to 128 px, which
+//! is all this module ever uses (so creating an icon never loads an image codec), plus one 256 px
+//! PNG image for Explorer that it skips. `cargo xtask icons` regenerates the file from the brand
+//! art in `assets/brand/` and checks exactly that layout.
 //!
 //! The icon's context menu follows Tachyon's resolved theme (`set_popup_menu_dark`,
 //! `apply_dark_menu_theme`): there is no documented way to ask `TrackPopupMenuEx` for a dark
@@ -47,16 +48,20 @@ const CMD_NEW_NOTE: usize = 2;
 const CMD_REOPEN_NOTE: usize = 5;
 const CMD_ABOUT: usize = 3;
 const CMD_QUIT: usize = 4;
-/// The image in [`ICO`] best suited to `size` pixels: the smallest at least that large, else the
-/// largest. Returns its bytes (a DIB, as `CreateIconFromResourceEx` takes it).
+/// The DIB image in [`ICO`] best suited to `size` pixels: the smallest at least that large, else
+/// the largest. Returns its bytes, as `CreateIconFromResourceEx` takes them. The file's one PNG
+/// image (256 px, for Explorer; see `cargo xtask icons`) is skipped, so creating an icon never
+/// needs an image codec.
 fn ico_image(size: i32) -> Option<&'static [u8]> {
+    const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
     let count = usize::from(u16::from_le_bytes([*ICO.get(4)?, *ICO.get(5)?]));
     let entries = (0..count).filter_map(|i| {
         let entry = ICO.get(6 + 16 * i..22 + 16 * i)?;
         let width = if entry[0] == 0 { 256 } else { i32::from(entry[0]) };
         let len = u32::from_le_bytes(entry[8..12].try_into().ok()?) as usize;
         let offset = u32::from_le_bytes(entry[12..16].try_into().ok()?) as usize;
-        Some((width, ICO.get(offset..offset + len)?))
+        let image = ICO.get(offset..offset + len)?;
+        (!image.starts_with(PNG_SIGNATURE)).then_some((width, image))
     });
     type Image = Option<(i32, &'static [u8])>;
     let (mut best, mut largest): (Image, Image) = (None, None);
@@ -507,6 +512,11 @@ mod tests {
         assert_eq!(ico_image(16).map(width), Some(16));
         assert_eq!(ico_image(18).map(width), Some(20), "the next size up, scaled down");
         assert_eq!(ico_image(30).map(width), Some(32));
-        assert_eq!(ico_image(128).map(width), Some(64), "the largest when none is large enough");
+        assert_eq!(ico_image(100).map(width), Some(128));
+        assert_eq!(
+            ico_image(200).map(width),
+            Some(128),
+            "the largest DIB when none is large enough, never the 256 px PNG"
+        );
     }
 }

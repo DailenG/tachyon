@@ -72,6 +72,17 @@ These are enforced in review; [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) expla
 - New dependencies need a reason in the PR. Prefer std; core crates stay small. `cargo deny` must
   pass (licenses must be compatible with MIT OR Apache-2.0; no copyleft).
 
+## Visual design and brand
+
+- The design source of truth is the owner's Claude Design project, mirrored read-only in
+  [`docs/design/system/`](docs/design/system/); [`SNAPSHOT.md`](docs/design/system/SNAPSHOT.md)
+  there lists where the repository deliberately departs from it, and
+  [`docs/design/DESIGN_DIRECTION.md`](docs/design/DESIGN_DIRECTION.md) holds the speed rules that
+  decide those departures. Read them before UI or brand work.
+- Logo and icon files in `assets/brand/` are generated from the owner's masters by
+  `scripts/brand/` and must never be edited or redrawn by hand. See
+  [`assets/brand/README.md`](assets/brand/README.md) for how to regenerate them.
+
 ## Tests
 
 - Test behaviour a user or caller would notice: boundaries, invariants, error paths, state
