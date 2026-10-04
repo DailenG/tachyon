@@ -15,8 +15,10 @@ All notable user-visible changes are recorded here. The format follows
   the Start menu, Alt+Tab and high display scaling (it previously stopped at 64 px).
 - The website follows the concept artwork and design system: light by default (dark when your
   system is), the real Tachyon logo, "Write faster. Think further.", the Instant / Pure Markdown /
-  Distraction-free features, and a framed screenshot in the hero. It now self-hosts its font
-  (Inter) and icons, so it needs no font or icon service. New favicon and social preview image.
+  Distraction-free features, and a new screenshot in the hero (heading, table, highlighted code
+  and tasks around a raw paragraph) inside the concept's orbit ring. The hero fits the first
+  screen, the header leads with Download, and the page self-hosts its font (Inter) and icons, so
+  it needs no font or icon service. New favicon and social preview image.
 - Windows (installed package): Markdown and text files get their own document icons in
   Explorer instead of the app icon, so a file no longer looks like the app.
 - The About window follows the concept artwork: the Tachyon logo, a one-line tagline, a

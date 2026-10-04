@@ -1,8 +1,8 @@
 /* Tachyon website. Values come from the design system (docs/design/system/tokens/*.css, the
    owner's Claude Design project): light by default, deep navy when the system prefers dark. The
    brand gradient is used sparingly: the logo, primary buttons, one headline phrase, the
-   screenshot frame, the launch-race fill and the hero's orbit lines. Never a page or section
-   background. */
+   screenshot frame, the launch-race fill, the hero's orbit ring and the two section-divider
+   hairlines. Never a page or section background. */
 
 @font-face {
   font-family: "Inter";
@@ -59,6 +59,10 @@
   --shadow-md: 0 1px 3px rgba(11, 18, 32, 0.05), 0 12px 32px -14px rgba(37, 99, 255, 0.22);
   --shadow-lg: 0 2px 6px rgba(11, 18, 32, 0.04), 0 30px 70px -28px rgba(37, 99, 255, 0.32);
   --shadow-glow-primary: 0 10px 24px -10px rgba(37, 99, 255, 0.6);
+  --shadow-glow-cyan: 0 0 0 1px rgba(0, 209, 255, 0.14), 0 14px 40px -14px rgba(0, 209, 255, 0.4);
+  --gradient-rule: linear-gradient(90deg, rgba(0, 209, 255, 0) 0%, #2563ff 40%, #7c3aed 60%, rgba(124, 58, 237, 0) 100%);
+  /* Text on --accent-soft: --accent itself measures 4.39:1 there, below the 4.5:1 minimum. */
+  --pill-text: var(--blue-700);
 
   /* Type (tokens/typography.css) */
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -98,6 +102,7 @@
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4), 0 6px 16px -8px rgba(0, 209, 255, 0.12);
     --shadow-md: 0 0 0 1px rgba(0, 209, 255, 0.06), 0 16px 40px -18px rgba(0, 0, 0, 0.7), 0 10px 30px -16px rgba(37, 99, 255, 0.28);
     --shadow-lg: 0 0 0 1px rgba(0, 209, 255, 0.08), 0 30px 80px -30px rgba(0, 0, 0, 0.8), 0 20px 60px -24px rgba(0, 209, 255, 0.24);
+    --pill-text: var(--text-link);
   }
 }
 
@@ -344,6 +349,7 @@ kbd {
 .hero {
   position: relative;
   overflow: hidden;
+  padding: 0;
   border-bottom: 1px solid var(--border-subtle);
 }
 
@@ -351,9 +357,9 @@ kbd {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
   gap: 56px;
-  align-items: center;
-  padding-top: 88px;
-  padding-bottom: 80px;
+  align-items: start;
+  padding-top: 72px;
+  padding-bottom: 72px;
 }
 
 .eyebrow {
@@ -364,6 +370,15 @@ kbd {
   text-transform: uppercase;
   color: var(--accent);
   margin-bottom: 16px;
+}
+
+/* The hero's eyebrow as a badge (concept sheet 6) */
+.eyebrow-pill {
+  display: inline-flex;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--pill-text);
 }
 
 .hero-title {
@@ -458,15 +473,20 @@ kbd {
 
 .hero-visual {
   position: relative;
+  isolation: isolate;
 }
 
+/* The orbit ring (concept sheets 3 and 4): wider than the frame, centred on it and behind it,
+   reaching only a few px into the column gap on the left so it never sits behind the copy. */
 .orbit {
   position: absolute;
-  right: -48px;
-  top: -64px;
-  width: 260px;
-  height: 260px;
-  opacity: 0.7;
+  left: -8%;
+  top: 50%;
+  width: 150%;
+  height: auto;
+  aspect-ratio: 900 / 520;
+  transform: translateY(-50%);
+  z-index: -1;
   pointer-events: none;
 }
 
@@ -487,7 +507,7 @@ kbd {
   padding: 3px;
   border-radius: 19px;
   background: var(--gradient-frame);
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-lg), var(--shadow-glow-cyan);
 }
 
 .shot-frame img {
@@ -514,6 +534,7 @@ kbd {
   justify-content: center;
 }
 
+/* Opaque, so the orbit ring passes behind the tabs rather than through their labels. */
 .shot-tabs label {
   height: 32px;
   display: inline-flex;
@@ -521,6 +542,7 @@ kbd {
   padding: 0 16px;
   border-radius: 999px;
   border: 1px solid var(--border-default);
+  background: var(--surface-page);
   font-size: 14px;
   font-weight: 600;
   color: var(--text-body);
@@ -529,9 +551,9 @@ kbd {
 
 #shot-light:checked ~ .shot-tabs label[for="shot-light"],
 #shot-dark:checked ~ .shot-tabs label[for="shot-dark"] {
-  background: var(--accent-soft);
+  background: linear-gradient(var(--accent-soft), var(--accent-soft)), var(--surface-page);
   border-color: transparent;
-  color: var(--accent);
+  color: var(--pill-text);
 }
 
 #shot-light:focus-visible ~ .shot-tabs label[for="shot-light"],
@@ -580,6 +602,29 @@ main > section.tint {
 
 .card.pad {
   padding: 24px;
+}
+
+/* Section divider: a gradient hairline either side of the Spark (concept sheet 6) */
+.section-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 220px;
+  margin: 0 auto 48px;
+  color: var(--accent);
+}
+
+.section-divider::before,
+.section-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--gradient-rule);
+}
+
+.section-divider .icon {
+  width: 16px;
+  height: 16px;
 }
 
 .card h3 {
@@ -926,14 +971,20 @@ main > section.tint {
 /* Features */
 .feature-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 20px;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 24px;
 }
 
 .feature-card {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  transition: transform var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
+}
+
+.feature-card:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
 }
 
 .feature-card h3 {
@@ -1132,6 +1183,10 @@ main > section.tint {
   .orbit {
     display: none;
   }
+
+  .shot-frame {
+    box-shadow: var(--shadow-lg);
+  }
 }
 
 @media (max-width: 620px) {
@@ -1172,7 +1227,8 @@ main > section.tint {
     transform: scaleX(1) !important;
   }
 
-  .btn-primary:hover {
+  .btn-primary:hover,
+  .feature-card:hover {
     transform: none;
   }
 }

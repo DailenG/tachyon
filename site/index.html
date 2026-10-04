@@ -56,7 +56,8 @@
       <a href="#demo">Block swap</a>
       <a href="#features">Features</a>
       <a href="#install">Install</a>
-      <a class="btn btn-secondary btn-sm" href="https://github.com/DailenG/tachyon"><svg class="icon"><use href="#i-github"/></svg>View on GitHub</a>
+      <a href="https://github.com/DailenG/tachyon">GitHub</a>
+      <a class="btn btn-primary btn-sm" href="#install"><svg class="icon"><use href="#i-download"/></svg>Download</a>
     </nav>
   </div>
 </header>
@@ -66,10 +67,10 @@
   <section class="hero" id="top">
     <div class="wrap hero-inner">
       <div class="hero-copy">
-        <span class="eyebrow">Native &middot; GPU-rendered &middot; No Electron</span>
+        <span class="eyebrow eyebrow-pill">Native &middot; GPU-rendered &middot; No Electron</span>
         <h1 class="hero-title">Write faster.<br><span class="gradient-text">Think further.</span></h1>
         <p class="hero-lead">A markdown editor that gets there before you do.</p>
-        <p class="hero-body">Tachyon opens into a resident instance in 20&ndash;35&nbsp;ms, paints every keystroke inside a single frame, and edits gigabyte-scale files without a stall. Between uses it waits in the tray on 16&nbsp;MB of memory, less than a single browser tab. Built in Rust on GPUI, rendering straight to the GPU: DirectX on Windows, Vulkan on Linux, Metal on macOS.</p>
+        <p class="hero-body">Tachyon opens into a resident instance in 20&ndash;35&nbsp;ms, paints every keystroke inside a single frame, and edits gigabyte-scale files without a stall.</p>
         <div class="hero-actions">
           <a class="btn btn-primary btn-lg" href="#install"><svg class="icon"><use href="#i-download"/></svg>Download</a>
           <a class="btn btn-secondary btn-lg" href="https://github.com/DailenG/tachyon"><svg class="icon"><use href="#i-github"/></svg>View on GitHub</a>
@@ -82,17 +83,18 @@
         <p class="live-timing" id="live-timing" hidden></p>
       </div>
       <div class="hero-visual theme-compare">
-        <svg class="orbit" viewBox="0 0 400 400" aria-hidden="true"><defs><linearGradient id="orbit-g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#00D1FF"/><stop offset=".5" stop-color="#2563FF"/><stop offset="1" stop-color="#7C3AED"/></linearGradient></defs><path d="M30 330 A 200 170 -25 0 1 370 70" fill="none" stroke="url(#orbit-g)" stroke-width="2.5" stroke-linecap="round"/><path d="M70 360 A 200 170 -25 0 1 385 120" fill="none" stroke="url(#orbit-g)" stroke-width="1.5" stroke-linecap="round" opacity=".55"/></svg>
         <input type="radio" name="theme-shot" id="shot-light" checked>
         <input type="radio" name="theme-shot" id="shot-dark">
         <div class="shot-frame">
+          <!-- The orbit ring of concept sheets 3 and 4, behind the frame; flat shapes only. -->
+          <svg class="orbit" viewBox="0 0 900 520" aria-hidden="true" focusable="false"><defs><linearGradient id="orbit-g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#00D1FF"/><stop offset=".5" stop-color="#2563FF"/><stop offset="1" stop-color="#7C3AED"/></linearGradient></defs><g transform="rotate(-12 420 260)" fill="none" stroke="url(#orbit-g)"><ellipse cx="420" cy="260" rx="400" ry="232" stroke-width="3"/><ellipse cx="420" cy="260" rx="436" ry="256" stroke-width="1.5" opacity=".45"/></g><circle cx="574" cy="22" r="16" fill="#00D1FF" opacity=".22"/><circle cx="574" cy="22" r="7" fill="#2563FF"/><circle cx="177" cy="479" r="16" fill="#7C3AED" opacity=".22"/><circle cx="177" cy="479" r="7" fill="#2563FF"/></svg>
           <img class="shot light" width="560" height="360" fetchpriority="high"
-               src="assets/screenshots/light-theme.webp"
-               srcset="assets/screenshots/light-theme.webp 1x, assets/screenshots/light-theme@2x.webp 2x"
-               alt="Tachyon's light theme. The caret sits inside a paragraph, which shows raw Markdown, while the heading, task list, highlighted Rust code, a table and math around it are fully rendered.">
+               src="assets/screenshots/hero-light.webp"
+               srcset="assets/screenshots/hero-light.webp 1x, assets/screenshots/hero-light@2x.webp 2x"
+               alt="Tachyon's light theme. The caret sits in a paragraph, which shows its raw Markdown, while the heading, a table, highlighted Rust code and a task list around it are rendered.">
           <img class="shot dark" width="560" height="360" loading="lazy"
-               src="assets/screenshots/dark-paragraph.webp"
-               srcset="assets/screenshots/dark-paragraph.webp 1x, assets/screenshots/dark-paragraph@2x.webp 2x"
+               src="assets/screenshots/hero-dark.webp"
+               srcset="assets/screenshots/hero-dark.webp 1x, assets/screenshots/hero-dark@2x.webp 2x"
                alt="The same document in Tachyon's dark theme, which follows the system appearance.">
         </div>
         <div class="shot-tabs" aria-label="Screenshot theme">
@@ -108,7 +110,7 @@
       <div class="section-head">
         <span class="eyebrow">Why fast</span>
         <h2>Speed is the feature</h2>
-        <p>Every budget below is a requirement in Tachyon's own repository, checked in CI. A change that regresses one needs a recorded decision before it can land: these aren't targets, they're gates.</p>
+        <p>Tachyon is native Rust on GPUI, rendering straight to the GPU: DirectX on Windows, Vulkan on Linux, Metal on macOS. Every budget below is a requirement in Tachyon's own repository, checked in CI. A change that regresses one needs a recorded decision before it can land: these aren't targets, they're gates.</p>
       </div>
       <div class="card table-card">
         <table class="data-table">
@@ -132,7 +134,7 @@
       <div class="section-head">
         <span class="eyebrow">Time to first frame</span>
         <h2>Resident mode is why launch feels instant</h2>
-        <p>A resident Tachyon keeps a window ready in the background, so opening a file just shows it. Skip that (a cold, direct launch) and GPU and font initialization alone cost hundreds of milliseconds. Both bars are Tachyon; no other editor is involved. They run in real time: watch the gap, not just the numbers.</p>
+        <p>A resident Tachyon keeps a window ready in the background, so opening a file just shows it; between uses it waits in the tray on 16&nbsp;MB of memory, less than a single browser tab. Skip that (a cold, direct launch) and GPU and font initialization alone cost hundreds of milliseconds. Both bars are Tachyon; no other editor is involved. They run in real time: watch the gap, not just the numbers.</p>
       </div>
       <div class="race">
         <div class="race-row">
@@ -186,6 +188,7 @@
 
   <section id="screens" class="tint">
     <div class="wrap">
+      <div class="section-divider" aria-hidden="true"><svg class="icon"><use href="#i-sparkle"/></svg></div>
       <div class="section-head">
         <span class="eyebrow">On this machine</span>
         <h2>What it actually looks like</h2>
@@ -338,6 +341,7 @@
 
   <section id="install" class="tint">
     <div class="wrap">
+      <div class="section-divider" aria-hidden="true"><svg class="icon"><use href="#i-sparkle"/></svg></div>
       <div class="section-head">
         <span class="eyebrow">Get it</span>
         <h2>Install Tachyon</h2>
@@ -432,7 +436,7 @@ cargo run --release -- notes.md</pre>
     </div>
     <div class="footer-meta">
       <span>&copy; Tachyon contributors. MIT OR Apache-2.0. Inter is under the SIL Open Font License; icons are Lucide (ISC).</span>
-      <span id="page-weight">This page: about 80&nbsp;KB of HTML, CSS, script, font and logo (compressed), plus one 90&ndash;100&nbsp;KB screenshot. The other screenshots load only when you scroll to them. Its one request beyond this site is to GitHub, to point the download buttons at the latest release.</span>
+      <span id="page-weight">This page: about 80&nbsp;KB of HTML, CSS, script, font and logo (compressed), plus one 50&nbsp;KB screenshot. The other screenshots load only when you scroll to them. Its one request beyond this site is to GitHub, to point the download buttons at the latest release.</span>
     </div>
   </div>
 </footer>
