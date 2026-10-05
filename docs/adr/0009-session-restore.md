@@ -25,7 +25,7 @@ session on top of that, not just the unsaved half of it, and Tachyon should too 
   visibility observers whenever it changes while the window is on screen
   (`Editor::last_placement`), and the file uses that record rather than reading the window at save
   time, so a window minimized when the session is saved comes back as it was before. (An earlier
-  finding that Windows un-maximized windows during a real shutdown was a test-harness artefact:
+  finding that Windows un-maximized windows during a real shutdown was a test-harness artifact:
   the tester's screenshot helper restored each window before capturing it. A later reboot with a
   50 ms state log showed the window maximized until the process ended, and saved as maximized.)
   For each window worth remembering, in the order it was opened
@@ -62,7 +62,7 @@ session on top of that, not just the unsaved half of it, and Tachyon should too 
   `toggle_text_mode`), silently refused above the Markdown size limit for the same reason.
 - **Setting:** `restore_session = true` (default on), a settings.toml key and a command palette
   toggle row ("Restore session on start"), following `hot_exit`'s own pattern exactly. Off: the
-  session file is neither written nor used, and behaviour is exactly hot exit alone, as before
+  session file is neither written nor used, and behavior is exactly hot exit alone, as before
   this feature existed.
 - A windowless `--background` primary (login autostart) restores the session the same way hot
   exit alone already did: carried in `PendingRestore`, opened by whichever forwarded launch or

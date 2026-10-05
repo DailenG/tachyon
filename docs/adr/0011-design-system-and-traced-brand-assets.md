@@ -30,7 +30,7 @@ get the DesignSync tool, and a human contributor may have no account.
    flat-navy masters (`docs/design/concepts/masters/`) with potrace, renders each trace back, and
    refuses to write it if more than 0.5 % of the inked pixels differ from the master.
    `scripts/brand/fit_gradient.py` measures the symbol's gradient from the gradient master.
-   `scripts/brand/compose.py` builds every colourway, lockup and icon size from the two traces,
+   `scripts/brand/compose.py` builds every colorway, lockup and icon size from the two traces,
    each constant citing a design-system token or a measurement of a concept sheet.
    `cargo xtask icons` rasterizes the icons. The application build only embeds those results.
 3. **Each icon size has art drawn on its own pixel grid** (16, 20, 24, 32, 40, 48, 64 and a

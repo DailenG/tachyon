@@ -761,7 +761,7 @@ impl Editor {
         self.goal_x = None;
         let head = self.head();
         let target = if !select && !self.selection.is_empty() {
-            // Collapse a selection towards the direction of motion.
+            // Collapse a selection toward the direction of motion.
             let moved = f(self.doc.buffer().rope(), head);
             if moved < head { self.selection.start } else { self.selection.end }
         } else {
@@ -1125,7 +1125,7 @@ impl Editor {
         }
     }
 
-    fn delete_towards(&mut self, cx: &mut Context<Self>, f: fn(&ropey::Rope, usize) -> usize) {
+    fn delete_toward(&mut self, cx: &mut Context<Self>, f: fn(&ropey::Rope, usize) -> usize) {
         self.flush_pending_paste(cx);
         let range = if self.selection.is_empty() {
             let head = self.head();
@@ -1346,10 +1346,10 @@ impl Editor {
         if self.bar_open() {
             return self.find_backspace(cx);
         }
-        self.delete_towards(cx, movement::prev_grapheme);
+        self.delete_toward(cx, movement::prev_grapheme);
     }
     pub(crate) fn delete(&mut self, _: &Delete, _: &mut Window, cx: &mut Context<Self>) {
-        self.delete_towards(cx, movement::next_grapheme);
+        self.delete_toward(cx, movement::next_grapheme);
     }
     pub(crate) fn delete_word_left(
         &mut self,
@@ -1357,7 +1357,7 @@ impl Editor {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.delete_towards(cx, movement::prev_word);
+        self.delete_toward(cx, movement::prev_word);
     }
     pub(crate) fn delete_word_right(
         &mut self,
@@ -1365,7 +1365,7 @@ impl Editor {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.delete_towards(cx, movement::next_word);
+        self.delete_toward(cx, movement::next_word);
     }
     pub(crate) fn left(&mut self, _: &Left, _: &mut Window, cx: &mut Context<Self>) {
         self.move_by(false, cx, movement::prev_grapheme);
@@ -2079,7 +2079,7 @@ struct PendingPaste {
     /// right after it lands, as its own undo step; painted only once it does (see
     /// `Editor::apply_queued`).
     queued: String,
-    /// Applies the prepared text when ready; dropped (cancelled) when the
+    /// Applies the prepared text when ready; dropped (canceled) when the
     /// paste is applied from `text` instead.
     _task: Task<()>,
 }

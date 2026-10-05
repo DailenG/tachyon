@@ -291,7 +291,7 @@ fn undo_of_a_scattered_group_touches_only_the_edited_regions_in_a_large_plain_do
 /// The core regression test for the structural bug this invariant fixes: an edit that shifts
 /// the line count by an amount that is not a multiple of [`PLAIN_CHUNK_LINES`] (pressing Enter,
 /// the reported case) touches only the edited block and, at most, a small constant number of its
-/// immediate neighbours - never every later block - regardless of how large the document is.
+/// immediate neighbors - never every later block - regardless of how large the document is.
 /// The old chunking anchored every boundary to an exact line/byte count from the document start,
 /// so shifting the line count anywhere rippled every boundary after it to the end of the
 /// document; this asserts that no longer happens, at a size (1,000,000 lines) where it used to.
@@ -652,7 +652,7 @@ fn evict_leaves_stale_and_oversized_blocks_alone() {
 /// block, or one huge paragraph) used to copy and presegment the *whole* stale block on every
 /// keystroke (`Document::boundaries`'s own doc comment): a 15 MiB file like that cost 20-58 ms
 /// per key. This bounds the *work*, not a timing measurement: however large the block, one edit
-/// presegments only a small, fixed neighbourhood of it, for several edits in a row and for both
+/// presegments only a small, fixed neighborhood of it, for several edits in a row and for both
 /// shapes ADR 0005 calls out (a fence, and a no-blank-line paragraph).
 #[test]
 fn edits_into_a_huge_single_block_presegment_a_bounded_window() {

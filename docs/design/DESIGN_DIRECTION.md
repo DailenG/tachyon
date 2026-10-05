@@ -43,7 +43,7 @@ These are not planned for the application. Proposing one needs benchmark evidenc
 
 The visual design is defined by the owner's Claude Design project, "Tachyon Design System",
 mirrored read-only in [`docs/design/system/`](system/). Read its
-[`README.md`](system/README.md) (voice, colour, type, spacing, iconography) and tokens before any
+[`README.md`](system/README.md) (voice, color, type, spacing, iconography) and tokens before any
 UI or brand work, then [`SNAPSHOT.md`](system/SNAPSHOT.md), which lists where this repository
 deliberately departs from it (for example, the editor never animates and the website self-hosts
 its font). This document adds the speed rules that decide every such departure. Where the
@@ -58,7 +58,7 @@ Do not load anything from that directory at runtime, and do not infer features f
 editor drawn in the landing-page sheets.
 
 Production logo and icon files are **traced from the masters, never redrawn**: `scripts/brand/`
-traces them, checks each trace against its master pixel for pixel, and composes every colourway,
+traces them, checks each trace against its master pixel for pixel, and composes every colorway,
 lockup and icon size from the traces (see [`assets/brand/README.md`](../../assets/brand/README.md)).
 The previous hand-drawn approximations, with a wordmark set in DejaVu Sans Bold, are how the brand
 drifted from the concept; they were replaced in October 2026.

@@ -26,7 +26,7 @@ unsaved documents across restarts.
   start (`--background`) opens them with the first launch.
 - Closing one window (`Ctrl+W`, the close button) still asks: that is a decision about one
   document.
-- Separate processes (`-n`) and instances without a state directory keep the old behaviour, so two
+- Separate processes (`-n`) and instances without a state directory keep the old behavior, so two
   processes never restore the same backups.
 
 ## Consequences

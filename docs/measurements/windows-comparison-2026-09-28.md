@@ -174,7 +174,7 @@ are not published here.
 - Cross-check in a clean throwaway profile (`--user-data-dir` under work\, since deleted): the
   tab read 128,780K and then 116,136K. That profile still picked up extensions and extra tabs
   from sync.
-- Edge was closed afterwards. 10 msedge processes stayed 30 s after WM_CLOSE (background
+- Edge was closed afterward. 10 msedge processes stayed 30 s after WM_CLOSE (background
   mode) and were killed.
 
 ## Unfair or unusual things noticed
@@ -230,7 +230,7 @@ are not published here.
     backups folder is now empty.
 - **SendKeys pacing:** the target was 60 ms; the measured mean gap was 65-80 ms, because each
   SendWait blocks until the app processes the key. Slow apps therefore got their keys slightly
-  more slowly, which does not favour Tachyon.
+  more slowly, which does not favor Tachyon.
 - **First window vs titled window:** Notepad, Notepad++, Typora, MarkText and VS Code all show
   an untitled window 300-900 ms before the title contains the file name. The tables use the
   titled time. `first_window_ms` is in the raw data.

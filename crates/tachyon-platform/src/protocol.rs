@@ -5,7 +5,7 @@
 //! primary has accepted the launch.
 //!
 //! The request is length-framed rather than terminated by end-of-stream
-//! because Windows pipes have no half-close; the acknowledgement lets the
+//! because Windows pipes have no half-close; the acknowledgment lets the
 //! sender know the launch was delivered, so it can start standalone instead of
 //! losing it when the primary is gone or unresponsive.
 
@@ -59,7 +59,7 @@ pub fn read_request(mut stream: impl Read) -> io::Result<Option<Vec<String>>> {
     Ok(decode_body(&body))
 }
 
-/// Sends a request and waits for the acknowledgement.
+/// Sends a request and waits for the acknowledgment.
 pub fn send_request(mut stream: impl Read + Write, request: &[u8]) -> io::Result<()> {
     stream.write_all(request)?;
     stream.flush()?;

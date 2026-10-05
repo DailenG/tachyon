@@ -17,9 +17,9 @@ Method, and why each step exists:
 1. Upscale the anti-aliased master 4x and blur it slightly, then threshold at 50 %. The edge
    lands with sub-pixel accuracy and the AI-render pixel noise is smoothed out before tracing,
    so potrace emits long smooth curves instead of a faceted outline.
-2. potrace the bitmap. Corner threshold (`-a`) and curve optimisation (`-O`) were chosen by
+2. potrace the bitmap. Corner threshold (`-a`) and curve optimization (`-O`) were chosen by
    measuring the mismatch below for several settings; see BRAND_SETTINGS.
-3. Rewrite potrace's relative, transformed, 10x-quantised path into absolute coordinates in
+3. Rewrite potrace's relative, transformed, 10x-quantized path into absolute coordinates in
    the master's own pixel space, shifted so the artwork's bounding box starts at (0, 0).
 4. Render the result back at the master's size and count the pixels where the two disagree.
    The script fails, writing nothing, if that mismatch exceeds MAX_MISMATCH of the inked area:
@@ -73,7 +73,7 @@ def potrace_to_absolute(svg: str, ox: float, oy: float) -> str:
     height = float(re.search(r"translate\(0\.0+,([\d.]+)\)", svg).group(1))
 
     def to_master(x: float, y: float) -> tuple[float, float]:
-        # potrace writes 10x-quantised units under translate(0,H) scale(0.1,-0.1).
+        # potrace writes 10x-quantized units under translate(0,H) scale(0.1,-0.1).
         return (x * 0.1 / UPSCALE - ox, (height - y * 0.1) / UPSCALE - oy)
 
     def num(v: float) -> str:

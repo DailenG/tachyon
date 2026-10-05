@@ -128,7 +128,7 @@ fn tables_have_rows_cells_and_alignment() {
 }
 
 #[test]
-fn quotes_nest_and_alerts_are_recognised() {
+fn quotes_nest_and_alerts_are_recognized() {
     let b = &blocks("> [!WARNING]\n> careful\n> > deeper\n")[0];
     assert_eq!(b.kind, BlockKind::BlockQuote(Some(QuoteKind::Warning)));
     let depths: Vec<u8> = b.ir.lines.iter().map(|l| l.quote).collect();

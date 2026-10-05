@@ -260,14 +260,14 @@ fn add_icon(hwnd: HWND, state: &State) -> bool {
 
 /// `uxtheme.dll`'s ordinal 135 (undocumented: no header declares it, and it has no exported name,
 /// only this ordinal): `int SetPreferredAppMode(int mode)`. Setting it makes windows and common
-/// controls created afterwards *on the calling thread* - including a popup menu about to be shown
+/// controls created afterward *on the calling thread* - including a popup menu about to be shown
 /// with `TrackPopupMenuEx` - paint dark or light instead of following the system's setting. This
 /// is the same undocumented call Windows Terminal and Notepad++ make for their own dark menus;
 /// there is no supported, documented alternative.
 const ORD_SET_PREFERRED_APP_MODE: usize = 135;
 /// `uxtheme.dll`'s ordinal 136: `void FlushMenuThemes()`. Repaints menu theme data the system may
 /// already have cached from before `SetPreferredAppMode` changed; every public description of this
-/// pair calls it immediately afterwards, so this does the same.
+/// pair calls it immediately afterward, so this does the same.
 const ORD_FLUSH_MENU_THEMES: usize = 136;
 
 /// `SetPreferredAppMode`'s `PreferredAppMode` enum: 2 forces dark, 3 forces light. 1 ("allow
@@ -470,7 +470,7 @@ unsafe extern "system" fn window_proc(
         // long enough to show Windows' own "Tachyon is preventing shutdown" screen (with the
         // reason above) rather than raced against it, for every window's backup to finish. Only
         // run when the session is actually ending (`wparam != 0`; it is 0 if another application
-        // refused `WM_QUERYENDSESSION` and the session was cancelled), but the reason is
+        // refused `WM_QUERYENDSESSION` and the session was canceled), but the reason is
         // destroyed either way - left registered, it would still show if a later
         // `WM_QUERYENDSESSION` recreated one before anything cleared the first.
         (WM_ENDSESSION, Some(state)) => {

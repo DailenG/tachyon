@@ -7,7 +7,7 @@ Reads (written by trace.py, never edited by hand):
     assets/brand/symbol-navy.svg, assets/brand/wordmark-navy.svg
 
 Writes into assets/brand/ (all committed):
-    symbol-gradient.svg, symbol-white.svg       the symbol in its other two colourways
+    symbol-gradient.svg, symbol-white.svg       the symbol in its other two colorways
     wordmark-white.svg                          the wordmark for dark surfaces
     lockup-horizontal.svg, lockup-horizontal-white.svg
     lockup-stacked.svg, lockup-stacked-white.svg
@@ -36,10 +36,10 @@ NAVY = "#0B1220"
 WHITE = "#FFFFFF"
 
 # The symbol's gradient, measured from docs/design/concepts/masters/symbol-gradient.png by
-# scripts/brand/fit_gradient.py (paste its output here if the master ever changes). The colours
+# scripts/brand/fit_gradient.py (paste its output here if the master ever changes). The colors
 # are the master's own, not snapped to the brand tokens: this is the owner's artwork, and the
 # measured violet (#622FFC) is bluer than the Tachyon Violet token (#7C3AED) that UI uses.
-# Fitted by scripts/brand/fit_gradient.py: RMS colour error 15.5 of 255.
+# Fitted by scripts/brand/fit_gradient.py: RMS color error 15.5 of 255.
 SYMBOL_GRADIENT_LINE = (-26.2, 4.6, 1059.3, -186.8)  # x1, y1, x2, y2; -10 degrees
 SYMBOL_STOPS = [
     (0.0312, "#0FC9FB"),
@@ -73,7 +73,7 @@ STACKED_GAP = 0.22  # symbol bottom to wordmark top
 ABOUT_LOCKUP_WIDTH = 220
 
 # App icons (owner decision, 2026-10-02): the concept's dark-mode tile (concept sheet 2), navy,
-# with a coloured border. Each size an icon is shipped at gets art drawn on its own pixel grid,
+# with a colored border. Each size an icon is shipped at gets art drawn on its own pixel grid,
 # because one drawing scaled across 16-256 px is either too thin small or too crude large.
 # `cargo xtask icons` renders each requested size from the smallest art at least that large.
 #
@@ -103,9 +103,9 @@ ICON_RADIUS = 0.22  # tile corner radius as a share of the tile (concept sheet 2
 ICON_MARK_WIDTH = {"full": 0.98, "simple": 0.90}
 ICON_GLOW = 14 / 256  # glow blur radius as a share of the grid
 ICON_GLOW_OPACITY = 0.45
-# The concept's dark tile is faintly lighter at its centre: a radial gradient between two of the
-# design system's dark surface tokens (navy-750 at the centre, navy-900 at the edge).
-TILE_CENTRE = "#141D33"
+# The concept's dark tile is faintly lighter at its center: a radial gradient between two of the
+# design system's dark surface tokens (navy-750 at the center, navy-900 at the edge).
+TILE_CENTER = "#141D33"
 TILE_EDGE = NAVY
 SIMPLE_CROP = (100, 980)  # x range of the symbol kept by the "simple" cut, in master pixels
 SMALL_MARGIN = 0  # the 16-64 px tiles use the whole grid: every pixel counts at these sizes
@@ -114,7 +114,7 @@ SMALL_MARGIN = 0  # the 16-64 px tiles use the whole grid: every pixel counts at
 # (packaging/msix/AppxManifest.xml, <uap:Logo> per FileTypeAssociation). A document page, the
 # Windows convention for files, so a file never looks like the app itself: white with a folded
 # top-right corner, carrying the symbol as the app's badge. Markdown and plain text differ in two
-# ways, so neither relies on colour alone: the Markdown page has a heading line above its text
+# ways, so neither relies on color alone: the Markdown page has a heading line above its text
 # lines and the gradient symbol; the plain-text page has even lines and the navy symbol.
 #
 # Per size: (pixel grid, cut, thicken px, draw text lines)
@@ -135,7 +135,7 @@ PAGE_FOLD_FILL = "#E2E8F0"  # neutral-200
 PAGE_LINE = "#CBD5E1"  # neutral-300: text lines, decorative
 PAGE_HEADING = "#64748B"  # neutral-500: the Markdown page's heading line
 FILE_MARK_WIDTH = 0.86  # symbol width as a share of the page's inside
-FILE_MARK_CENTRE = 0.72  # symbol centre height, as a share of the page's height
+FILE_MARK_CENTER = 0.72  # symbol center height, as a share of the page's height
 
 
 def read_master(name: str) -> tuple[float, float, str]:
@@ -191,7 +191,7 @@ def symbols() -> None:
 
 def lockups() -> None:
     for suffix, ink in (("", NAVY), ("-white", WHITE)):
-        # Horizontal: symbol left, wordmark right, centred on each other vertically.
+        # Horizontal: symbol left, wordmark right, centered on each other vertically.
         sh = WORD_H * HORIZONTAL_SYMBOL_HEIGHT
         s = sh / SYM_H
         sw = SYM_W * s
@@ -202,7 +202,7 @@ def lockups() -> None:
               + f"<defs>{symbol_gradient('g')}</defs>\n"
               + placed(SYM_D, "url(#g)", 0, (h - sh) / 2, s) + "\n"
               + placed(WORD_D, ink, sw + gap, (h - WORD_H) / 2, 1) + "\n")
-        # Stacked: symbol above wordmark, centred on each other horizontally.
+        # Stacked: symbol above wordmark, centered on each other horizontally.
         sw = WORD_W * STACKED_SYMBOL_WIDTH
         s = sw / SYM_W
         sh = SYM_H * s
@@ -241,7 +241,7 @@ def icons() -> None:
         margin = grid * ICON_MARGIN if grid > 64 else SMALL_MARGIN
         tile = grid - 2 * margin
         radius = tile * ICON_RADIUS
-        # The border is centred on its own rectangle, so that rectangle is inset by half of it.
+        # The border is centered on its own rectangle, so that rectangle is inset by half of it.
         edge = margin + border / 2
         inside = tile - 2 * border
         if cut == "full":
@@ -260,7 +260,7 @@ def icons() -> None:
               f'stop-color="{CYAN}"/><stop offset=".5" stop-color="{BLUE}"/><stop offset="1" '
               f'stop-color="{VIOLET}"/></linearGradient>'
             + f'<radialGradient id="t" cx=".5" cy=".42" r=".7"><stop offset="0" '
-              f'stop-color="{TILE_CENTRE}"/><stop offset="1" stop-color="{TILE_EDGE}"/>'
+              f'stop-color="{TILE_CENTER}"/><stop offset="1" stop-color="{TILE_EDGE}"/>'
               f"</radialGradient>"
             # The mark is clipped to the tile's inside so a cropped spike never crosses the border.
             + f'<clipPath id="c"><rect x="{fmt(margin + border)}" y="{fmt(margin + border)}" '
@@ -316,13 +316,13 @@ def file_icons() -> None:
                 ly = snap(y0 + fold + gap * 0.6)
                 rows = [(PAGE_HEADING, 0.55, lh * 1.6)] if heading else []
                 rows += [(PAGE_LINE, 1.0, lh), (PAGE_LINE, 0.85, lh), (PAGE_LINE, 0.95, lh)]
-                limit = y0 + h * FILE_MARK_CENTRE - h * 0.17
-                for colour, share, height in rows:
+                limit = y0 + h * FILE_MARK_CENTER - h * 0.17
+                for color, share, height in rows:
                     if ly + height > limit:
                         break
-                    width = lw * share if colour == PAGE_HEADING else (lw - fold * 0.2) * share
+                    width = lw * share if color == PAGE_HEADING else (lw - fold * 0.2) * share
                     body += (f'<rect x="{fmt(lx)}" y="{fmt(ly)}" width="{fmt(width)}" '
-                             f'height="{fmt(height)}" rx="{fmt(height / 2)}" fill="{colour}"/>\n')
+                             f'height="{fmt(height)}" rx="{fmt(height / 2)}" fill="{color}"/>\n')
                     ly += height + gap * 0.55
             if cut == "full":
                 d, c0, c1 = SYM_D, 0.0, SYM_W
@@ -331,7 +331,7 @@ def file_icons() -> None:
             mark_w = inside * FILE_MARK_WIDTH
             sc = mark_w / (c1 - c0)
             mx = (x0 + x1) / 2 - mark_w / 2 - c0 * sc
-            my = y0 + h * FILE_MARK_CENTRE - SYM_H * sc / 2
+            my = y0 + h * FILE_MARK_CENTER - SYM_H * sc / 2
             stroke = (f' stroke="{mark_fill}" stroke-width="{fmt(thicken / sc)}" '
                       f'stroke-linejoin="round"' if thicken else "")
             clip = (f'<clipPath id="c"><rect x="{fmt(x0 + edge)}" y="{fmt(y0)}" '

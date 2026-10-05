@@ -52,7 +52,7 @@ const EVICT_MARGIN_BLOCKS: usize = 200;
 
 /// Minimum gap kept between the resolved text column and the window frame, in rems (so it
 /// scales with zoom): real padding the owner wants felt at every width, wider than the one-rem
-/// text inset (`px_4`) `render_block`'s own centred column always applies inside whatever this
+/// text inset (`px_4`) `render_block`'s own centered column always applies inside whatever this
 /// leaves. Only ever narrows the column below its requested width - `680px`/`820px` in an
 /// ordinary window are far under this and unaffected (`ContentWidth::resolve`).
 const CONTENT_WIDTH_GAP_REMS: f32 = 3.;
@@ -334,7 +334,7 @@ impl Editor {
                             &find.query,
                             !find.editing_replacement,
                         )))
-                        // Reserves the width of "no matches" so the bar (centred) does not shift
+                        // Reserves the width of "no matches" so the bar (centered) does not shift
                         // when the status appears on the first query character.
                         .child(
                             div()
@@ -391,9 +391,9 @@ impl Editor {
     fn picker_bar(&self, viewport: Size<Pixels>, cx: &mut Context<Self>) -> Option<AnyElement> {
         let picker = self.picker.as_ref()?;
         let theme = &self.theme;
-        // The top edge sits a fifth of the way down (the optical centre Spotlight-style launchers
-        // use), not at the window's top: the eye finds it without travelling to the edge, and
-        // anchoring the top rather than centring the whole box keeps it from jumping as typing
+        // The top edge sits a fifth of the way down (the optical center Spotlight-style launchers
+        // use), not at the window's top: the eye finds it without traveling to the edge, and
+        // anchoring the top rather than centering the whole box keeps it from jumping as typing
         // shrinks the list. Rows that fit under it: line height plus the 4 px row gap, with the
         // bottom margin, padding and header taken off. A short window falls back to the margin.
         let row_height = theme.text_size * 1.6 + theme.scaled(px(4.));
@@ -621,7 +621,7 @@ impl Editor {
     }
 
     /// The rotating tip (`Settings::tips`; picked once per window, see `Editor::refresh_tip`),
-    /// in `theme.text.tip`, centred in the content column near the bottom of the window. Added
+    /// in `theme.text.tip`, centered in the content column near the bottom of the window. Added
     /// to `render`'s tree before the list below, so the list's own blocks paint over it wherever
     /// the document has content there, and it only shows through the empty space around and
     /// below them - it stays visible whether the document is empty or not, since it is never the
@@ -1275,7 +1275,7 @@ impl Editor {
             }
             LineKind::TableRow { header } => {
                 // Each cell draws only its right and bottom edges, and the row its left edge (the
-                // header row, always first, also its top): neighbouring cells used to draw two
+                // header row, always first, also its top): neighboring cells used to draw two
                 // lines side by side, a double-width grid next to 1 px card and field borders.
                 let mut row = div().flex().w_full().border_l_1().border_color(theme.border.subtle);
                 if header {

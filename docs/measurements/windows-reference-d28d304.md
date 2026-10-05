@@ -8,7 +8,7 @@
 - GPU: Intel Arc Graphics, driver 32.0.101.9026
 - Other display adapters present: StarDesk Virtual Display Adapter (driver 18.43.12.322)
 - Display: 3840x2160 @ 30 Hz, 100% scaling (96 DPI), single screen `\\.\DISPLAY1`. The display offers no 4K mode above 30 Hz.
-- Second pass: display temporarily switched to 2560x1440 @ 59 Hz (not saved to the registry), restored to 3840x2160 @ 30 Hz afterwards.
+- Second pass: display temporarily switched to 2560x1440 @ 59 Hz (not saved to the registry), restored to 3840x2160 @ 30 Hz afterward.
 - Power: AC (battery status 2), power plan Balanced (381b4222-f694-41f0-9685-ff5bb260df2e)
 - Session: physical console (session 2 `console` Active, no RDP connected). Note: the agent session first ran over RDP; the user switched to the console before any benchmark ran.
 - Toolchain: 1.98.1-x86_64-pc-windows-msvc (from rust-toolchain.toml), Visual Studio Build Tools 2026, fxc from Windows Kits 10.0.26100.0

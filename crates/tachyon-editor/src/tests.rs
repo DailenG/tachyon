@@ -803,7 +803,7 @@ fn find_types_into_the_bar_and_steps_through_matches(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("f3 f3 f3");
     assert_eq!(selected(cx).1, 4, "wraps to the first match");
     cx.simulate_keystrokes("shift-enter");
-    assert_eq!(selected(cx).1, doc.rfind("fish").expect("fixture"), "wraps backwards");
+    assert_eq!(selected(cx).1, doc.rfind("fish").expect("fixture"), "wraps backward");
     assert_eq!(status(cx).as_deref(), Some("4/4"));
 
     // Backspace edits the query; an uppercase letter makes it case-sensitive.

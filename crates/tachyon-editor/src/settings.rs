@@ -97,7 +97,7 @@ pub struct Settings {
     pub whats_new: bool,
     /// Write the whole session (open files, window bounds, caret and scroll) on Quit, and
     /// restore it at the next start with no files on the command line (issue #79, on top of hot
-    /// exit's own unsaved-document restore, ADR 0006). Off: today's behaviour, unsaved documents
+    /// exit's own unsaved-document restore, ADR 0006). Off: today's behavior, unsaved documents
     /// only, and the session file is neither written nor read.
     pub restore_session: bool,
     /// The text column's width (`render::Editor::render_block`, `tip_overlay`).
@@ -116,7 +116,7 @@ pub struct Settings {
     /// (non-note) windows are never affected.
     pub sticky_unfocused_opacity: f32,
     /// Whether opening a file, restoring a session, or a whole-document paste starts with no
-    /// block raw for editing. Off: today's behaviour, the caret's block is raw immediately.
+    /// block raw for editing. Off: today's behavior, the caret's block is raw immediately.
     pub start_without_active_block: bool,
     /// Overlay scrollbar. `Never` draws nothing. `Auto` shows a thumb only while scrolling or
     /// while the pointer is on the right edge.
@@ -507,7 +507,7 @@ mod tests {
     fn values_comments_and_problems() {
         let (settings, problems) = Settings::parse(
             "theme = \"light\"  # always\nzoom = 1.25\nhot_exit = false\ntips = false\n\
-             whats_new = false\nrestore_session = false\nzoom = 9\ncolour = red\nnonsense\n",
+             whats_new = false\nrestore_session = false\nzoom = 9\ncolor = red\nnonsense\n",
         );
         assert_eq!(
             settings,
@@ -526,7 +526,7 @@ mod tests {
             problems,
             [
                 "7: zoom is a number from 0.5 to 3.0",
-                "8: unknown setting `colour`",
+                "8: unknown setting `color`",
                 "9: expected `key = value`",
             ]
         );

@@ -24,7 +24,7 @@ None (per the user), and none since round 1.
   `C:\Users\dailen\.cargo\git\checkouts\zed-a70e2ad075855582\933d8d9`, robocopy exit 1,
   `gpui-trace.patch` applied (exit 0), build into `C:\temp\cargo-target-trace`: exit 0,
   `Finished release profile [optimized] target(s) in 1m 55s` (recompiled gpui_windows,
-  gpui_platform, tachyon). `Cargo.lock` restored; `git status` clean afterwards.
+  gpui_platform, tachyon). `Cargo.lock` restored; `git status` clean afterward.
 
 ## Benchmark rows (traced build)
 

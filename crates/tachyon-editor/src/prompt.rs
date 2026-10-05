@@ -34,7 +34,7 @@ pub fn keyboard_prompt(
     handle.with_view(prompt, window, cx)
 }
 
-/// The button Escape chooses: an explicit cancel button, else one labelled
+/// The button Escape chooses: an explicit cancel button, else one labeled
 /// "Cancel", else the last.
 fn cancel_index(actions: &[PromptButton]) -> usize {
     actions

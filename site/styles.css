@@ -478,7 +478,7 @@ kbd {
   isolation: isolate;
 }
 
-/* The orbit ring (concept sheets 3 and 4): wider than the frame, centred on it and behind it,
+/* The orbit ring (concept sheets 3 and 4): wider than the frame, centered on it and behind it,
    reaching only a few px into the column gap on the left so it never sits behind the copy. */
 .orbit {
   position: absolute;
@@ -492,7 +492,7 @@ kbd {
   pointer-events: none;
 }
 
-/* Colours the orbit animations (orbit.js) draw with: the particle's hot core and the sparks. */
+/* Colors the orbit animations (orbit.js) draw with: the particle's hot core and the sparks. */
 .orbit {
   --orbit-hot: #2563ff;
   --orbit-spark: #00a8d6;
@@ -1474,7 +1474,7 @@ pre.code-block {
     display: none;
   }
 
-  /* Centred and a little narrower than on wide screens, so it shows above and below the
+  /* Centered and a little narrower than on wide screens, so it shows above and below the
      full-width screenshot and runs off the screen edges without reaching the copy above. */
   .orbit {
     left: -17.5%;

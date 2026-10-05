@@ -1,6 +1,6 @@
 # Tachyon editor tokens and component styling — proposal
 
-**Status: proposal only.** No editor code or runtime assets change in this PR. Tachyon remains a single-pane GPUI block-swap Markdown editor. Values below are compiled-in solid colours except the existing alpha selection and find highlights. No font file, runtime SVG parser, animation, or new screen is proposed.
+**Status: proposal only.** No editor code or runtime assets change in this PR. Tachyon remains a single-pane GPUI block-swap Markdown editor. Values below are compiled-in solid colors except the existing alpha selection and find highlights. No font file, runtime SVG parser, animation, or new screen is proposed.
 
 ## Token values
 
@@ -93,15 +93,15 @@ The `#RRGGBBAA` tokens are blended **in 8-bit sRGB** over each opaque surface fi
 | dark | `selection` | `#27394F` / **5.49:1** | `#30445D` / **4.64:1** | `#2B3F58` / **5.01:1** | `math` |
 | dark | `find_current` | `#43372E` / **5.37:1** | `#4B413A` / **4.63:1** | `#473D36` / **4.92:1** | `math` |
 
-`find_match` is an existing alpha highlight and remains visually distinct with a continuous 1 px underline, while `find_current` gains a closed 1 px focus-colour outline. Thus current vs other matches differ in **shape** as well as colour; neither requires motion. If text appears on ordinary `find_match`, renderer review should confirm its contrast, too. The only intentionally translucent editor fills are the three pre-existing highlights.
+`find_match` is an existing alpha highlight and remains visually distinct with a continuous 1 px underline, while `find_current` gains a closed 1 px focus-color outline. Thus current vs other matches differ in **shape** as well as color; neither requires motion. If text appears on ordinary `find_match`, renderer review should confirm its contrast, too. The only intentionally translucent editor fills are the three pre-existing highlights.
 
 These values correct the reported current muted text failures on raised/code (light 4.3/4.0, dark 4.0/3.7) and code comments (light 4.0, dark 3.7). Proposed raised/code muted values are light **6.90/6.42**, dark **8.13/8.72**; proposed code comment values are light **6.13**, dark **8.72**.
 
 ## Existing component styling
 
-Spacing below is in px and restricted to the **4 px grid**; radii are **none 0**, **small 4**, **medium 8**. All boundaries and underlines are **1 px**. Colours use tokens above; no new screen or component is implied. “Focus” means a static, visible state. An overlay receives a max-width of the client width minus 16 px and a max-height of the client height minus 16 px, with internal scrolling, so a 480 × 360 client remains usable.
+Spacing below is in px and restricted to the **4 px grid**; radii are **none 0**, **small 4**, **medium 8**. All boundaries and underlines are **1 px**. Colors use tokens above; no new screen or component is implied. “Focus” means a static, visible state. An overlay receives a max-width of the client width minus 16 px and a max-height of the client height minus 16 px, with internal scrolling, so a 480 × 360 client remains usable.
 
-| Existing component | Radius | Padding / gap | Border | Focus or selected state | 480 × 360 behaviour |
+| Existing component | Radius | Padding / gap | Border | Focus or selected state | 480 × 360 behavior |
 | --- | --- | --- | --- | --- | --- |
 | Canvas and content column | none | 16 outer / 0 column; 16 between blocks | 0; optional 1 subtle rule | Document focus uses steady caret | Column width ≤ min(820, client−32)=448; vertical scroll |
 | Raw editing card | small | 12 / 8 | 1 subtle | Focused block gets 1 focus edge; selection uses editing.selection | Width ≤448; wrap or horizontally scroll code, never extend viewport |

@@ -1,7 +1,7 @@
 //! Files changed on disk behind the editor's back, and reading them in the first place.
 //! `load_document` is the single place a path becomes a [`Document`]: it decides Markdown vs.
 //! plain text, enforces the size limits that keep a huge file from ever repeating the 18 GB,
-//! frozen-window behaviour this feature replaces, and reads incrementally
+//! frozen-window behavior this feature replaces, and reads incrementally
 //! (`tachyon_text::Buffer::load`) so opening one never holds the whole file as a second copy in
 //! memory. The editor remembers each file's modification time and size as it read or wrote them.
 //! When its window is activated it looks again: an unchanged document reloads, one with unsaved

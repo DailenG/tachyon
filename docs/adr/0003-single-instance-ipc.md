@@ -23,7 +23,7 @@ cold start cannot meet the budget ([ADR 0004](0004-startup-budget-and-gate.md)).
 - **Wire format:** `TACHYON2\n`, body length as `u32` little-endian, then NUL-terminated UTF-8
   arguments; body capped at 1 MiB. The request is length-framed because Windows pipes have no
   half-close. Paths are made absolute by the sender.
-- **Delivery acknowledgement:** the primary replies `OK` only after the application accepted
+- **Delivery acknowledgment:** the primary replies `OK` only after the application accepted
   (queued) the launch. The secondary treats the launch as forwarded only after the reply; without
   it (primary gone, hung, quitting, or stalled by another client) it starts standalone. On Unix the
   whole request is bounded by one 2 s deadline and the secondary's write and read by 2 s timeouts;

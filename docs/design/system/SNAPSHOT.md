@@ -38,7 +38,7 @@ disagree, this table wins. Do not "fix" the repository back to the copied text.
 
 ## Known contrast exceptions (owner decision, 2026-10-03)
 
-The website uses the design system's colours exactly, including four that miss the text-contrast
+The website uses the design system's colors exactly, including four that miss the text-contrast
 minimums in `docs/design/DESIGN_DIRECTION.md` (4.5:1 for text, 3:1 for large text). The owner
 reviewed the measured values and chose the design over the minimums. Do not "fix" these without
 the owner's go-ahead; an accessible alternative was built and reverted (PR #120 history).

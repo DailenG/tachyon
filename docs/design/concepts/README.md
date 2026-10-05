@@ -17,7 +17,7 @@ for pixel.
 | File | What it is |
 | --- | --- |
 | `masters/symbol-navy.png` | The symbol, flat navy on white, 1254 × 1254. Trace source for the symbol's shape |
-| `masters/symbol-gradient.png` | The same symbol in its gradient, 1254 × 1254. Source of the gradient's colours (`scripts/brand/fit_gradient.py`) |
+| `masters/symbol-gradient.png` | The same symbol in its gradient, 1254 × 1254. Source of the gradient's colors (`scripts/brand/fit_gradient.py`) |
 | `masters/wordmark-navy.png` | The italic wordmark, flat navy on white, 1254 × 1254. Trace source for the wordmark |
 
 ## Concept sheets

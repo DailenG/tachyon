@@ -171,9 +171,9 @@ const PLAIN_MIN_CHUNK_LINES: usize = PLAIN_CHUNK_LINES / 4;
 /// A quarter of [`PLAIN_CHUNK_BYTES`]; see [`PLAIN_MIN_CHUNK_LINES`].
 const PLAIN_MIN_CHUNK_BYTES: usize = PLAIN_CHUNK_BYTES / 4;
 
-/// [`Document::on_edit_plain`] gives up extending its merge into further neighbours after this
-/// many attempts. Never expected to matter - merging one whole neighbour always clears the
-/// minimum unless that neighbour is itself an exempt short remainder right after a forced cut,
+/// [`Document::on_edit_plain`] gives up extending its merge into further neighbors after this
+/// many attempts. Never expected to matter - merging one whole neighbor always clears the
+/// minimum unless that neighbor is itself an exempt short remainder right after a forced cut,
 /// and a single source line has only one such remainder - but bounds the work to a small
 /// constant regardless, rather than relying on that argument alone.
 const PLAIN_MERGE_ATTEMPTS: usize = 4;
@@ -313,7 +313,7 @@ pub enum Applied {
     /// An edit touched the window while the job ran; the window is dirty
     /// again and will be reparsed by a later job.
     Discarded,
-    /// Not the outstanding job (already applied, cancelled or foreign).
+    /// Not the outstanding job (already applied, canceled or foreign).
     Ignored,
 }
 
@@ -1851,7 +1851,7 @@ fn plain_block_is_small(rope: &Rope, start: usize, len: usize) -> bool {
 /// [`PLAIN_CHUNK_LINES`], cut at *even* line indices (`Rope::line_to_byte`) rather than packed
 /// greedily to the maximum like [`plain_chunk_lens`]. Used to re-chunk a span already bounded on
 /// both ends by whatever [`Document::on_edit_plain`] decided surrounds it - a block that grew
-/// past the maximum, alone or after merging with a too-small neighbour - where the two ends may
+/// past the maximum, alone or after merging with a too-small neighbor - where the two ends may
 /// themselves need to clear [`PLAIN_MIN_CHUNK_BYTES`]/[`PLAIN_MIN_CHUNK_LINES`]: a greedy pack's
 /// last, partial chunk cannot promise that (it is sized only by where it happens to run out of
 /// room, not by what is left over), while halving a range that is at most twice the maximum

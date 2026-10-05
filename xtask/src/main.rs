@@ -324,7 +324,7 @@ fn icons() -> Result<ExitCode, String> {
             pngs.push(png);
         }
         // ImageMagick writes every image of an `.ico` as a DIB, which is what the tray needs; the
-        // PNG entry is appended afterwards by `append_png_image`.
+        // PNG entry is appended afterward by `append_png_image`.
         let dib_ico = work.join("dib.ico");
         let mut ico_args: Vec<&std::ffi::OsStr> = pngs.iter().map(|p| p.as_os_str()).collect();
         ico_args.push(dib_ico.as_os_str());
@@ -621,7 +621,7 @@ fn msix(args: Vec<String>) -> Result<ExitCode, String> {
 
     // The resource index. Without `resources.pri`, Windows cannot see the `targetsize-*` and
     // `altform-unplated` icon files and uses the manifest's unqualified, plated 44 px logo
-    // everywhere: the taskbar showed the large-icon art on an accent-coloured square. The config
+    // everywhere: the taskbar showed the large-icon art on an accent-colored square. The config
     // is written outside the staged folder so it is neither indexed nor packed.
     let makepri = find_sdk_tool("makepri.exe")?;
     let pri_config = dist.join("priconfig.xml");
