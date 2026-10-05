@@ -456,7 +456,7 @@ mod tests {
     }
 
     #[test]
-    fn the_tip_color_is_a_partial_blend_towards_muted() {
+    fn the_tip_color_is_a_partial_blend_toward_muted() {
         for theme in [Theme::light(), Theme::dark()] {
             let (canvas, muted, tip) =
                 (opaque(theme.surface.canvas), opaque(theme.text.muted), opaque(theme.text.tip));
