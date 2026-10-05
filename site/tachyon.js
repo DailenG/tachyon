@@ -287,7 +287,7 @@
     svg.addEventListener("pointermove", function (e) {
       if (startX == null) return;
       var w = svg.getBoundingClientRect().width;
-      sl.value = Math.max(-80, Math.min(80, Math.round(startV + (e.clientX - startX) / w * 160)));
+      sl.value = Math.max(+sl.min, Math.min(+sl.max, Math.round(startV + (e.clientX - startX) / w * 160)));
       update();
     });
     function end() { startX = null; }
