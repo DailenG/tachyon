@@ -5,7 +5,7 @@
 //! and pinned - so both are unit-testable with no GPUI involved, the same split `backup.rs` and
 //! `session.rs` use for their own formats. The window itself (the compact header in `render.rs`,
 //! window creation and restore in `crates/tachyon/src/app.rs`) and the per-editor autosave,
-//! close-without-asking and pin-toggle behaviour below build on top of it.
+//! close-without-asking and pin-toggle behavior below build on top of it.
 //!
 //! Notes are deliberately outside both existing persistence mechanisms: `session::Editor::
 //! session_state` returns `None` for one (never in the regular session file), and
@@ -430,7 +430,7 @@ pub fn existing_notes(notes: Vec<NoteWindowState>) -> Vec<NoteWindowState> {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Per-editor behaviour: making a window a note, autosaving it, closing it without a prompt,
+// Per-editor behavior: making a window a note, autosaving it, closing it without a prompt,
 // toggling its pin. The window itself (bounds, chrome, restore) is
 // `crates/tachyon/src/app.rs`'s job; this is everything that only needs the document and its
 // own file.

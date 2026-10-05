@@ -6,7 +6,7 @@ Same machine as run 1 (`docs/measurements/windows-trace-2f51c45.md`). User repor
 
 - Commit: `373f6cb exp: trace window messages; ready-window experiment; run 2 handoff`
 - GPUI source: `C:\Users\dailen\.cargo\git\checkouts\zed-a70e2ad075855582\933d8d9`. The old `C:\temp\zed-trace` was deleted, a fresh copy made with robocopy (exit 1), and `gpui-trace.patch` applied cleanly without `--ignore-whitespace`.
-- Traced build: `cargo --config C:/temp/zed-trace/patch.toml build --release -p tachyon`, finished in 2m 24s. `Cargo.lock` restored with `git checkout -- Cargo.lock`; `git status` clean afterwards.
+- Traced build: `cargo --config C:/temp/zed-trace/patch.toml build --release -p tachyon`, finished in 2m 24s. `Cargo.lock` restored with `git checkout -- Cargo.lock`; `git status` clean afterward.
 - Sanity check (`--startup-report`, exit 0): `sanity.txt` has 7 `gpui-trace msg` lines and 1 `gpui-trace frame#0` line. Stdout: `tachyon-startup platform_ready_us=213931 window_open_us=320349 first_frame_us=340748`.
 
 ## Script output lines

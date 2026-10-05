@@ -23,7 +23,7 @@ None (per the user).
   `C:\Users\dailen\.cargo\git\checkouts\zed-a70e2ad075855582\933d8d9`, robocopy exit 1,
   `gpui-trace.patch` applied (exit 0), build into `C:\temp\cargo-target-trace`: exit 0,
   `Finished release profile [optimized] target(s) in 2m 45s`. `Cargo.lock` restored; `git status`
-  clean afterwards.
+  clean afterward.
 
 ## Warm benchmark rows (traced build)
 

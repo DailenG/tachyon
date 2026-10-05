@@ -44,7 +44,7 @@ segmenter in `tachyon-md` enforces that:
    when the table now answers differently, or, if it mentions footnotes, when the set of footnotes
    changed. A job whose window changes the definitions parses the window once more against the
    table as it will be after applying, so a paste that defines its own references is not reparsed
-   block by block afterwards (for 5 MB of such text that was ≈ 7800 jobs, 2 s on the UI thread).
+   block by block afterward (for 5 MB of such text that was ≈ 7800 jobs, 2 s on the UI thread).
 
 Jobs own an immutable snapshot (rope clone, block list `Arc`, table `Arc`) and are `Send`. The
 caller runs small jobs inline and large ones on a background executor. A result is applied only if

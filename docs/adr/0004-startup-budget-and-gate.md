@@ -43,7 +43,7 @@ window.
 
 The first launch into a windowless resident instance is cold (GPUI creates the GPU context with
 the first window); after that the context outlives its windows, so every later launch is warm even
-when no window is open. The second process itself (start, hand-off, acknowledgement) costs about
+when no window is open. The second process itself (start, hand-off, acknowledgment) costs about
 1 ms of that.
 
 ## Decision
@@ -107,7 +107,7 @@ Windows results (step 3, traced GPUI, 4K @ 30 Hz, launches 500 ms apart;
   `WM_WINDOWPOSCHANGED`, ≈ 20 ms) and activation (`WM_ACTIVATE`, ≈ 15 ms, of which input-method
   setup is 0.6-3.4 ms). A ready window is drawn and appears as soon as it is shown, before
   activation finishes: its content is visible ≈ 27 ms after the launch arrives.
-- The second process (start, hand-off, acknowledgement) costs ≈ 16 ms of the 41 ms.
+- The second process (start, hand-off, acknowledgment) costs ≈ 16 ms of the 41 ms.
 
 **Decision:** the startup path is resident mode, and on Windows the resident instance keeps one
 hidden window ready (created 100 ms after each launch's first frame, already sized, so the resize

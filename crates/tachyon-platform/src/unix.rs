@@ -136,13 +136,13 @@ pub fn disable_window_transitions(_window: &impl raw_window_handle::HasWindowHan
     false
 }
 
-/// No native title bar to recolour here: Linux and macOS windows do not have one that follows
+/// No native title bar to recolor here: Linux and macOS windows do not have one that follows
 /// the OS dark-mode setting independently of the application.
 pub fn set_title_bar_dark(_window: &impl raw_window_handle::HasWindowHandle, _dark: bool) -> bool {
     false
 }
 
-/// No popup menu to recolour here yet: Tachyon has none on Linux or macOS (the tray icon, the
+/// No popup menu to recolor here yet: Tachyon has none on Linux or macOS (the tray icon, the
 /// only one so far, is Windows-only).
 pub fn set_popup_menu_dark(_dark: bool) {}
 

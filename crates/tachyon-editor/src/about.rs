@@ -120,7 +120,7 @@ fn create_window(cx: &mut App) -> Option<WindowHandle<AboutView>> {
     }
 }
 
-/// [`ABOUT_SIZE`] centred in `work_area`, shortened to fit there with its frame: a 1080p screen at
+/// [`ABOUT_SIZE`] centered in `work_area`, shortened to fit there with its frame: a 1080p screen at
 /// 150 % has under 700 px of work area. The body scrolls when shortened, and the buttons stay
 /// below it, so they are always reachable.
 fn fit_about(work_area: Bounds<Pixels>) -> Bounds<Pixels> {
@@ -288,7 +288,7 @@ impl Render for AboutView {
             .child(
                 div().w(px(320.)).mt_2().text_center().text_color(theme.text.muted).child(TAGLINE),
             )
-            // The divider: a solid accent label between two hairlines. Solid colours only in the
+            // The divider: a solid accent label between two hairlines. Solid colors only in the
             // app (DESIGN_DIRECTION.md); the gradient rule is for the website.
             .child(
                 div()

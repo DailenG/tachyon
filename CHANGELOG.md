@@ -38,7 +38,7 @@ All notable user-visible changes are recorded here. The format follows
 - Windows (installed package): Markdown and text files get their own document icons in
   Explorer instead of the app icon, so a file no longer looks like the app.
 - The About window follows the concept artwork: the Tachyon logo, a one-line tagline, a
-  "Faster than light" divider, then version, website, source, support and licence above the
+  "Faster than light" divider, then version, website, source, support and license above the
   Environment details. On a screen too short for it, such as a 1080p display at 150 %, the
   window fits the screen and its details scroll, so Copy details and Close stay visible.
 
@@ -110,7 +110,7 @@ All notable user-visible changes are recorded here. The format follows
   new files. A missing file is skipped, listed in a one-line notice on the first restored
   window; window bounds are clamped to fit the current display, since monitors change between
   sessions. `restore_session = true` (default on) in `settings.toml`, and a "Restore session on
-  start" command palette row; off keeps today's hot-exit-only behaviour and deletes the session
+  start" command palette row; off keeps today's hot-exit-only behavior and deletes the session
   file. Each window's position, size and maximized state are recorded as they change while the
   window is on screen, so a window minimized when the session is saved comes back as it was. Closing the last window keeps what it showed for next time, as closing an app does
   (`app::write_session_now`, `tachyon_editor::session`; [ADR
@@ -153,9 +153,9 @@ All notable user-visible changes are recorded here. The format follows
 - New windows no longer open at exactly the same screen position. Each one now offsets about one
   title-bar height down and right from the most recently opened window that is still open. On a
   screen too short to step down (a window fitted to 1080p at 125 % has under two steps to spare),
-  it keeps stepping right at the lowest position that still fits; it wraps back to the centred
+  it keeps stepping right at the lowest position that still fits; it wraps back to the centered
   position only when it would pass the right edge of the display's work area. The very first
-  window of a run is still centred, with no extra work before its first frame.
+  window of a run is still centered, with no extra work before its first frame.
 - A setting the command palette adds to `settings.toml` (one the file did not have yet) is now
   written after a blank line under its own comment, instead of directly below whatever comment
   the file happened to end with, where it read as belonging to another setting.
@@ -360,7 +360,7 @@ All notable user-visible changes are recorded here. The format follows
   pickers and prompt fit windows down to 480 × 360, and the Linux prompt no longer dims the
   document behind a translucent backdrop.
 - The find, replace and picker fields have a 1 px border that turns accent on the field receiving
-  typing, and a painted caret (the caret character showed colour fringes on Windows). While the
+  typing, and a painted caret (the caret character showed color fringes on Windows). While the
   find bar or a picker takes typing, the document caret is hidden, so only one caret shows.
 - The find bar no longer covers the match it points at: revealing a match keeps it below the bar,
   and at the top of the document the text moves down under an open bar.
@@ -374,7 +374,7 @@ All notable user-visible changes are recorded here. The format follows
   1080p with 125 % scaling its title bar started above the screen and its bottom edge went under
   the taskbar. It now shrinks so the window, frame included, fits the work area.
 - The MSIX package now includes its resource index (`resources.pri`). Without it, the Windows
-  taskbar ignored the small icon sizes and showed the large-icon art on an accent-coloured square.
+  taskbar ignored the small icon sizes and showed the large-icon art on an accent-colored square.
 - Typing into the active block of a Markdown file shaped like one giant fenced code block or one
   no-blank-line paragraph (many megabytes, no blank line anywhere to split it) no longer costs
   20-61 ms on the keystroke's frame. `Document::stale_block` no longer copies and rescans the
@@ -406,7 +406,7 @@ All notable user-visible changes are recorded here. The format follows
   the keystroke-cost fix above targets) now always rescans the whole block rather than risking
   the same misread through that fix's bounded-window shortcut, which does not hold for a
   construct that, unlike a fence, ends at the next blank line.
-- Table grid lines are 1 px: neighbouring cells drew two lines side by side (2 px at 100 %, and
+- Table grid lines are 1 px: neighboring cells drew two lines side by side (2 px at 100 %, and
   visibly heavier than card and field borders at 150 %).
 - Windows: the tray icon's context menu ("New window", "Quit Tachyon") now follows Tachyon's
   resolved theme instead of always rendering light, matching the native title bar
@@ -445,7 +445,7 @@ All notable user-visible changes are recorded here. The format follows
   the document, not just the edited part (487 ms for one `Enter` near the top of a 1,000,000-line
   log). Chunk boundaries no longer have to match a from-scratch chunking of the whole document;
   an edit now re-chunks only the block(s) it touched, splitting one that grew past the maximum
-  and merging one that fell under the minimum with its next neighbour, so the cost and the number
+  and merging one that fell under the minimum with its next neighbor, so the cost and the number
   of blocks touched no longer depend on the document's size.
 - Replace All on a document large enough for background find (over 5 MiB) silently replaced only
   the first 10,000 matches - the display highlight cap - with no notice, instead of every match

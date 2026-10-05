@@ -122,7 +122,7 @@ Two earlier attempts are not reported:
 ### c. Paste (5 MB)
 
 **Setup.**
-- The clipboard text was saved before each run and put back afterwards. Every run reported
+- The clipboard text was saved before each run and put back afterward. Every run reported
   `clipboard_restored=True` with an identical string. Only text can be restored this way:
   non-text clipboard content, such as images, would not survive this procedure. The clipboard held
   only text (`UnicodeText,System.String,Text`) at the start.
@@ -185,7 +185,7 @@ comment, keyword, string and number, horizontal rule).
   `C:\temp\tachyon-design-check\`, named `<theme>-<default|480x360>-<state>.png`. The states are
   `1-open`, `2-selection`, `3-find`, `4-replace`, `5-headings` and `6-recent`: 24 files.
 
-Colours sampled from the screenshots:
+Colors sampled from the screenshots:
 
 | Surface / element | Dark | Light | Expected |
 |---|---|---|---|
@@ -210,9 +210,9 @@ Contrast computed from those samples (WCAG):
 Every one of these is at or above 4.5:1.
 
 Per screenshot, both themes:
-- **1-open.** The colours match: near-black navy with light text, and near-white with deep-navy
+- **1-open.** The colors match: near-black navy with light text, and near-white with deep-navy
   text. The raw card (the heading, which holds the caret) has a 1 px border. There are no
-  gradients, shadows or blur. The code block has syntax colours: pink keyword, green string, orange
+  gradients, shadows or blur. The code block has syntax colors: pink keyword, green string, orange
   number, italic muted comment, blue function name. The link is blue and underlined, and math is
   violet. The checked task is a solid accent box with a check; the open task is an outlined box.
   All text is readable.
@@ -220,7 +220,7 @@ Per screenshot, both themes:
   selection is readable.
 - **3-find.** The bar shows `1/3` with three amber-underlined matches, two in the raw card and one
   in the quote. The current match has the 2 px underline and the stronger fill, so it can be told
-  apart by shape as well as colour, though 1 px against 2 px is a small difference. Text inside
+  apart by shape as well as color, though 1 px against 2 px is a small difference. Text inside
   the highlights is readable.
 - **4-replace.** `Find speed 1/1 Replace velocity`, with the caret in Replace after Tab, and the
   match in the code string highlighted.
@@ -252,7 +252,7 @@ Main build, dark theme, 480x360, keys only (`kb-*.png`).
 | Ctrl+Shift+O, Down, Down, Up, Enter | PASS: "Lists and tasks" selected; Enter jumps there and shows it raw | `kb-10`, `kb-11`, `kb-12` |
 | Ctrl+Shift+O, then Escape | PASS | `kb-13-headings-after-escape.png` |
 | Ctrl+R | PASS: opens ("no recent files" in this fresh profile; a filled list is in `*-6-recent.png`) | `kb-14`, `kb-15` |
-| Ctrl+W on a modified document | PASS: native dialog (class `#32770`, title "Warning": "Save changes before closing?", Save / Don't Save / Cancel), in the foreground; Escape cancelled and the window stayed | `kb-16-ctrl-w-dialog.png` |
+| Ctrl+W on a modified document | PASS: native dialog (class `#32770`, title "Warning": "Save changes before closing?", Save / Don't Save / Cancel), in the foreground; Escape canceled and the window stayed | `kb-16-ctrl-w-dialog.png` |
 
 States where keyboard focus is unclear:
 - **Replace bar.** The only sign of which field is active (Find or Replace) is the text caret.
@@ -289,7 +289,7 @@ Branch `feat/brand-icons` (`4fedbb2`), same private id and scratch profile.
   ProductVersion `0.1.0`, Company `Tachyon`, Copyright `MIT OR Apache-2.0`, OriginalFilename
   `tachyon.exe`, on both branches. This was read with `FileVersionInfo`, the same resource that
   Properties > Details shows; the Properties dialog itself was not opened.
-- **16 px legibility at 100 %.** The mark can be recognised, but at 16 px the arrow reads much like
+- **16 px legibility at 100 %.** The mark can be recognized, but at 16 px the arrow reads much like
   a "3", and the navy tile is low-contrast against the dark flyout (`tray-icon-16px.png`). It is
   legible, but only just.
 
@@ -347,8 +347,8 @@ Main build, `links.md` containing `[site](https://example.com)` and a bare
     is dark.
 12. **16 px tray icon.** `tray-icon-16px.png`: it reads like a "3" and has low contrast on the dark
     flyout.
-13. **Picker caret colours.** `light-default-6-recent.png`: the picker and find-field caret has
-    colour fringes (sampled pixel pairs `#712335`/`#1776B8` in light and `#EBC79C`/`#19249C` in
+13. **Picker caret colors.** `light-default-6-recent.png`: the picker and find-field caret has
+    color fringes (sampled pixel pairs `#712335`/`#1776B8` in light and `#EBC79C`/`#19249C` in
     dark). In Open recent (light) it looks maroon.
 14. **Paste window is not empty.** A new window (`-n`, no file) contains the welcome scratchpad,
     so the paste test's "empty scratch window" is not empty. The pasted text goes in before the

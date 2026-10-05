@@ -85,7 +85,7 @@ These are enforced in review; [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) expla
 
 ## Tests
 
-- Test behaviour a user or caller would notice: boundaries, invariants, error paths, state
+- Test behavior a user or caller would notice: boundaries, invariants, error paths, state
   transitions. The central invariant of the editor will be *incremental parse == full parse*,
   checked with property tests.
 - Do not test wording, wiring, or that a function forwards its arguments.

@@ -34,5 +34,5 @@ Bumping is a dedicated PR that:
 - Reproducible builds and deliberate upgrades; API churn is absorbed in one place at a time.
 - The first build clones the Zed repository (large) into the cargo git cache.
 - We must watch Zed's patch table on every bump; a missed patch shows up as a build failure or,
-  worse, subtly different executor behaviour.
+  worse, subtly different executor behavior.
 - Revisit if GPUI starts publishing current releases to crates.io.

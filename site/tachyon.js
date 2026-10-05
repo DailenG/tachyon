@@ -270,7 +270,7 @@
 
       out.innerHTML = (b >= 0 ? "" : "−") + f(Math.abs(b), 2) + "<i>c</i>";
       var tb = Bp[1], tc = Cp[1];
-      var dir = b > 0 ? "towards B" : b < 0 ? "away from B" : "";
+      var dir = b > 0 ? "toward B" : b < 0 ? "away from B" : "";
       live(read, pick({
         eli5: b === 0 ? "Standing still: A happens first, then B a second later, then C." :
           "Flying " + dir + " at " + pct(Math.abs(b)) + " of light speed. " + (tb < -1e-9 ? "<strong>For you, B happened before A!</strong>" : Math.abs(tb) < 1e-9 ? "For you, A and B happen at exactly the same moment." : "A still happens before B.") + " C always comes after A.",
@@ -404,7 +404,7 @@
         if (Math.abs(den) < 1e-9) { w = Infinity; t2 = t1; }
         else { w = (b - u) / den; t2 = t1 - x1 / w; }
       }
-      // back: the reply runs backwards in Alice's time (w > 0 while heading to smaller x),
+      // back: the reply runs backward in Alice's time (w > 0 while heading to smaller x),
       // which happens exactly when u·β > 1, and always for instantaneous signals.
       return { b: b, u: u, t1: t1, x1: x1, t2: t2, back: u === Infinity || u * b > 1, early: t2 < -1e-9, thr: u === Infinity ? 0 : 2 * u / (1 + u * u) };
     }
@@ -473,7 +473,7 @@
         2: {
           eli5: "Bob answers straight away. His answer is a tachyon too, super fast in his own way of counting time. " + (m.back ? "On Alice’s picture it heads <em>down</em>, into her past!" : "This time it still heads up, into Alice’s future."),
           eli13: "Bob replies at once, at " + (u ? f(u, 1) + " times light speed" : "infinite speed") + " in his frame. " + (m.back ? "Because uv > c², that reply runs into Alice’s past." : "Here uv < c², so in Alice’s frame the reply still moves forward in time, just slower."),
-          standard: "Bob replies immediately at " + (u ? f(u, 1) + "c" : "infinite speed") + " in his own frame. " + (m.back ? "Since u·v > c², the reply runs backwards in Alice’s time." : "Since u·v < c², the reply still runs forwards in Alice’s time."),
+          standard: "Bob replies immediately at " + (u ? f(u, 1) + "c" : "infinite speed") + " in his own frame. " + (m.back ? "Since u·v > c², the reply runs backward in Alice’s time." : "Since u·v < c², the reply still runs forwards in Alice’s time."),
           phd: "Reply velocity in A's frame: w = (β − u)/(1 − uβ)" + (u ? " = " + f((m.b - u) / (1 - u * m.b), 3) : " → 1/β") + "."
         },
         3: {

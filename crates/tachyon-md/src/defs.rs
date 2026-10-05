@@ -23,7 +23,7 @@ pub struct DefTable {
     footnotes: HashSet<UniCase<String>>,
     /// Footnote labels in first-definition order (for the parse prefix).
     footnote_order: Vec<String>,
-    /// Build-time only: the label inserted last (always `None` afterwards).
+    /// Build-time only: the label inserted last (always `None` afterward).
     last_link: Option<String>,
 }
 

@@ -64,11 +64,11 @@ Microsoft's own shutdown guidance rather than answering and hoping the write fin
   without a synchronous round trip to the application on every single query, so it always
   registers the reason; if it turns out nothing needed saving, `WM_ENDSESSION`'s own call below
   finishes at once and clears it well before Windows would ever show it to the user.
-- `WM_ENDSESSION` with `wParam != 0` (the session is actually ending, not cancelled by another
+- `WM_ENDSESSION` with `wParam != 0` (the session is actually ending, not canceled by another
   application refusing `WM_QUERYENDSESSION`): calls the tray's ordinary `on_event(TrayEvent::EndSession)`
   synchronously, which blocks this window procedure - and so this message - until the application
   has written every window's backup or a timeout passes. The reason registered above is destroyed
-  afterwards either way (`wParam == 0` too, so a cancelled session end never leaves a stale one
+  afterward either way (`wParam == 0` too, so a canceled session end never leaves a stale one
   registered). The process may be killed as soon as `WM_ENDSESSION` returns, so the write cannot
   be deferred to the usual 1.5 s typing-pause delay.
 
@@ -98,7 +98,7 @@ calling `std::process::exit(0)` (`gpui_windows` `handle_end_session`), so the pr
 before the tray thread's request is ever serviced. The save therefore also runs from an
 `on_app_quit` observer (`crates/tachyon/src/app.rs`), whenever the quit did not come from
 Tachyon's own Quit action. GPUI runs these observers synchronously with every window still open
-(it clears them only afterwards), so the observer does the work in its body rather than in the
+(it clears them only afterward), so the observer does the work in its body rather than in the
 returned future, which only gets a short timeout. The tray handler stays: it registers the
 shutdown block reason and covers a session end that reaches the tray window first. Running the
 save twice only rewrites the same files.

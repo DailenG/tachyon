@@ -411,7 +411,7 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
         if let Some(backups) = primary_backups {
             cx.set_global(backups);
         }
-        // With `restore_session` off, behaviour is exactly as before this feature: only the
+        // With `restore_session` off, behavior is exactly as before this feature: only the
         // hot-exit backups come back, in the order `Backups::restore` returns them.
         let mut missing = Vec::new();
         let mut session_openings: Vec<Opening> = if restore_session {
@@ -590,7 +590,7 @@ fn last_window_origin(cx: &mut App) -> Option<Point<Pixels>> {
 }
 
 /// Where a new window of `size` should go: `CASCADE_STEP` down and right from `last` (the most
-/// recently opened window still open), or `base` - the centred position `initial_bounds` also
+/// recently opened window still open), or `base` - the centered position `initial_bounds` also
 /// falls back to for the very first window - if `last` is `None` or the offset would put the
 /// window outside `work_area` (it wraps back to `base` rather than walking further off-screen).
 /// Pure and independent of any live display or window, so it is unit-tested directly
@@ -617,7 +617,7 @@ fn cascade_origin(
 
 /// `WINDOW_SIZE`, shrunk to fit with its frame in the primary display's work area. The very
 /// first window (nothing yet tracked in `WindowCascade`, so `last_window_origin` is a plain
-/// global lookup - no cost added before its first frame) is centred there; every later one
+/// global lookup - no cost added before its first frame) is centered there; every later one
 /// cascades from the last still-open one (`cascade_origin`).
 fn initial_bounds(cx: &mut App) -> Bounds<Pixels> {
     let Some(display) = cx.primary_display() else {
@@ -719,7 +719,7 @@ fn open_window(opening: Opening, cx: &mut App) -> Option<WindowHandle<Editor>> {
     let result = cx.open_window(options, move |window, cx| {
         tachyon_platform::set_window_icon(window);
         // Set before the window's first frame paints, so DWM never shows the OS dark-mode
-        // setting's colour for an instant: Tachyon keeps the native title bar, and it should
+        // setting's color for an instant: Tachyon keeps the native title bar, and it should
         // follow the theme the editor is about to render with, not the system's. The tray's
         // context menu (Windows) follows the same value, so a new window's theme choice also
         // becomes the menu's next time it shows.
@@ -1032,7 +1032,7 @@ fn last_note_origin(cx: &mut App) -> Option<Point<Pixels>> {
 }
 
 /// `NOTE_SIZE`, shrunk to fit the primary display's work area exactly like `initial_bounds`
-/// shrinks `WINDOW_SIZE`; the first note is centred there, every later one cascades from the last
+/// shrinks `WINDOW_SIZE`; the first note is centered there, every later one cascades from the last
 /// still-open note (`cascade_origin`).
 fn initial_note_bounds(cx: &mut App) -> Bounds<Pixels> {
     let Some(display) = cx.primary_display() else {
@@ -1253,7 +1253,7 @@ fn write_notes_state_now(cx: &mut App) {
 /// (`tachyon_editor::NotesChanged`'s own hook, set to this once in `run`).
 fn refresh_notes_state(cx: &mut App) {
     // Not while quitting: Quit wrote the state for every open note before closing them, and each
-    // note's close afterwards would otherwise rewrite it without the notes already gone, ending
+    // note's close afterward would otherwise rewrite it without the notes already gone, ending
     // with an empty list and nothing to restore.
     if !cx.global::<Lifecycle>().quitting {
         write_notes_state_now(cx);
@@ -1858,7 +1858,7 @@ mod tests {
     const BASE: Point<Pixels> = point(px(510.), px(40.));
 
     #[test]
-    fn cascade_origin_centres_the_very_first_window() {
+    fn cascade_origin_centers_the_very_first_window() {
         assert_eq!(cascade_origin(None, BASE, WIN_SIZE, WORK_AREA), BASE);
     }
 
@@ -1870,7 +1870,7 @@ mod tests {
     }
 
     #[test]
-    fn cascade_origin_wraps_back_to_the_centred_position_past_the_right_edge() {
+    fn cascade_origin_wraps_back_to_the_centered_position_past_the_right_edge() {
         // One step further would push the 900 px wide window past the 1920 px work area.
         let last = point(px(1000.), px(50.));
         assert_eq!(cascade_origin(Some(last), BASE, WIN_SIZE, WORK_AREA), BASE);
@@ -1890,7 +1890,7 @@ mod tests {
         let bottom = work_area.origin.y + work_area.size.height;
         let first = cascade_origin(Some(base), base, size, work_area);
         let second = cascade_origin(Some(first), base, size, work_area);
-        // Never lower than leaves room for the frame's bottom edge (here: exactly the centred
+        // Never lower than leaves room for the frame's bottom edge (here: exactly the centered
         // height), then right only.
         let lowest = bottom - size.height - BOTTOM_FRAME;
         assert_eq!(first, point(base.x + CASCADE_STEP, lowest));

@@ -1,6 +1,6 @@
 // The tachyonic antitelephone in 3D, for tachyon.html. Loaded on demand by tachyon.js.
 // The scene is a spacetime "block": two space axes (x along the motion, y across it) and time
-// rising upwards, in Alice's frame. Worldlines are drawn as tubes, light cones as translucent
+// rising upward, in Alice's frame. Worldlines are drawn as tubes, light cones as translucent
 // cones, and the two tachyon signals as arrows. Drag to orbit; the 2D diagram underneath
 // stays the accessible equivalent and the source of the live text readout.
 import {
@@ -141,7 +141,7 @@ export function mount(stage, opts) {
       label(lang[2], W(m.x1 * 0.78, m.t1 + (m.t2 < m.t1 ? 0.32 : -0.32), 0));
     }
     if (step >= 2) {
-      // Bob's line of simultaneity is what makes an instant reply run backwards in Alice's time.
+      // Bob's line of simultaneity is what makes an instant reply run backward in Alice's time.
       // It is only the reply's path when the signal is instantaneous in Bob's frame.
       if (m.u === Infinity) nowPlane(m.x1, m.t1, m.b, accent, Math.max(4, xMax + 1.5));
       world.add(arrow(W(m.x1, m.t1, 0), W(0, m.t2, 0), cyan));
@@ -154,17 +154,17 @@ export function mount(stage, opts) {
       label(lang[4], W(-0.25, m.t2 - 0.25, 0), "is-warn");
     }
     // Aim at the middle of the experiment; on first build, back off far enough to fit it.
-    const centre = W(xMax / 2 - 0.2, (tTop + tBot) / 2, 0);
+    const center = W(xMax / 2 - 0.2, (tTop + tBot) / 2, 0);
     if (!framed) {
       resize();
       const half = (camera.fov * Math.PI) / 360;
       const needH = (tTop - tBot + 0.8) * ST, needW = (xMax + 1.6) * SX;
       const dist = Math.max(needH / (2 * Math.tan(half)), needW / (2 * Math.tan(half) * camera.aspect)) * 1.12;
       const view = camera.position.clone().sub(controls.target).normalize();
-      camera.position.copy(centre).addScaledVector(view, dist);
+      camera.position.copy(center).addScaledVector(view, dist);
       framed = true;
     }
-    controls.target.copy(centre);
+    controls.target.copy(center);
     resize();
     frame();
   }
@@ -197,7 +197,7 @@ export function mount(stage, opts) {
   function kick() { if (!raf) raf = requestAnimationFrame(frame); }
   controls.addEventListener("change", kick);
   new ResizeObserver(() => { resize(); kick(); }).observe(canvas);
-  // theme changes recolour the scene
+  // theme changes recolor the scene
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", build);
 
   return {

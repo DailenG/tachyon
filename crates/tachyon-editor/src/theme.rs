@@ -60,18 +60,18 @@ pub struct TextColors {
     /// Text on a solid `accent` fill (selected picker row, prompt button, checked task).
     pub on_accent: Hsla,
     /// The rotating tip drawn behind the document (`Settings::tips`; see `render::tip_overlay`):
-    /// `surface.canvas` blended towards `muted` by `TIP_BLEND`, computed once here at theme
+    /// `surface.canvas` blended toward `muted` by `TIP_BLEND`, computed once here at theme
     /// build time rather than with a runtime alpha. Deliberately fainter than `muted` - it is
     /// decorative, always painted on `canvas` and never required reading - so it is not held to
     /// the 4.5:1 minimum the contrast test checks every other text color against.
     pub tip: Hsla,
 }
 
-/// How far `TextColors::tip` sits from `canvas` towards `muted`: enough to read as a soft
+/// How far `TextColors::tip` sits from `canvas` toward `muted`: enough to read as a soft
 /// watermark, not enough to compete with `muted` text or the document itself.
 const TIP_BLEND: f32 = 0.4;
 
-/// `canvas` blended towards `muted` by `TIP_BLEND`. `Hsla::blend` keeps `self`'s alpha, and
+/// `canvas` blended toward `muted` by `TIP_BLEND`. `Hsla::blend` keeps `self`'s alpha, and
 /// `canvas` is opaque, so the result is opaque too - no per-frame alpha compositing.
 fn tip_color(canvas: Hsla, muted: Hsla) -> Hsla {
     canvas.blend(muted.opacity(TIP_BLEND))

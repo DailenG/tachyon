@@ -7,7 +7,7 @@ Same as `docs/measurements/windows-reference-d28d304.md` (Core Ultra 7 155H, Int
 - Commit: `2f51c45 exp: re-measure the paste in the same Windows session`
 - Toolchain: 1.98.1-x86_64-pc-windows-msvc
 - GPUI source: `C:\Users\dailen\.cargo\git\checkouts\zed-a70e2ad075855582\933d8d9`, copied with robocopy (exit 1), `gpui-trace.patch` applied cleanly with no `--ignore-whitespace` needed.
-- Traced build: `cargo --config C:/temp/zed-trace/patch.toml build --release -p tachyon`, finished in 5m 20s. `Cargo.lock` restored with `git checkout -- Cargo.lock`; `git status` clean afterwards.
+- Traced build: `cargo --config C:/temp/zed-trace/patch.toml build --release -p tachyon`, finished in 5m 20s. `Cargo.lock` restored with `git checkout -- Cargo.lock`; `git status` clean afterward.
 - Normal build: `cargo build --release --locked -p tachyon` (target `C:\temp\cargo-target`), finished in 6m 38s; `git status` clean.
 
 ## Sanity check (traced binary, `--startup-report`)
@@ -23,7 +23,7 @@ Same as `docs/measurements/windows-reference-d28d304.md` (Core Ultra 7 155H, Int
 | direct-1440p, warm-1440p | 2560x1440 @ 59 Hz (set by the agent with ChangeDisplaySettingsEx, not saved to the registry) |
 | paste runs 4, 5, 6 | 2560x1440 @ 59 Hz |
 
-Display restored to 3840x2160 @ 30 Hz afterwards (`now: 3840x2160 @ 30 Hz`).
+Display restored to 3840x2160 @ 30 Hz afterward (`now: 3840x2160 @ 30 Hz`).
 
 ## Script output lines
 

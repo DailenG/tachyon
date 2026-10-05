@@ -161,7 +161,7 @@ pub(crate) fn format_keystroke(keystroke: &gpui::KeybindingKeystroke) -> String 
     parts.join("+")
 }
 
-/// A key's display name: letters upper-cased, named keys capitalised (`F3`, `Home`, `PageUp`).
+/// A key's display name: letters upper-cased, named keys capitalized (`F3`, `Home`, `PageUp`).
 fn key_name(key: &str) -> String {
     match key {
         "pageup" => "PageUp".to_owned(),

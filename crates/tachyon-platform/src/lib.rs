@@ -25,7 +25,7 @@ pub fn disable_window_transitions(window: &impl raw_window_handle::HasWindowHand
     imp::disable_window_transitions(window)
 }
 
-/// Sets whether `window`'s native title bar renders in dark or light colours, to match Tachyon's
+/// Sets whether `window`'s native title bar renders in dark or light colors, to match Tachyon's
 /// resolved theme (`Theme::for_window` in `tachyon-editor`) instead of the OS dark-mode setting
 /// DWM would otherwise follow: Tachyon keeps the native title bar rather than drawing its own, so
 /// without this a window whose theme differs from the system's would show a mismatched bar
@@ -111,7 +111,7 @@ pub fn global_hotkey_label(spec: &str) -> Option<String> {
 
 /// Whether [`set_window_opacity`] applies a whole-window alpha at the OS level: Windows (a layered
 /// window with `LWA_ALPHA`). Elsewhere the caller draws the window's content translucent over a
-/// transparent window background instead, which the compositor honours on Linux; on Windows it
+/// transparent window background instead, which the compositor honors on Linux; on Windows it
 /// does not (DWM composited such a window as if opaque on the test machine).
 pub fn supports_window_opacity() -> bool {
     cfg!(target_os = "windows")
@@ -210,7 +210,7 @@ pub enum TrayEvent {
     /// `WM_QUERYENDSESSION`/`WM_ENDSESSION`): write every open window's unsaved-document backup
     /// now, without closing anything, so hot exit is current even if the session ends before the
     /// next typing-pause backup would have written it. Harmless if the session end this followed
-    /// is later cancelled by another application: Tachyon just keeps running with every window
+    /// is later canceled by another application: Tachyon just keeps running with every window
     /// untouched.
     EndSession,
 }
@@ -402,7 +402,7 @@ pub fn config_dir() -> Option<std::path::PathBuf> {
 
 /// The user's Documents folder: `FOLDERID_Documents` via `SHGetKnownFolderPath` on Windows (may
 /// be OneDrive-redirected); `XDG_DOCUMENTS_DIR` from `~/.config/user-dirs.dirs` on Linux and
-/// BSD (honouring `$XDG_CONFIG_HOME`), else `$HOME/Documents`; `$HOME/Documents` on macOS.
+/// BSD (honoring `$XDG_CONFIG_HOME`), else `$HOME/Documents`; `$HOME/Documents` on macOS.
 /// `None` if the environment names no home (Linux, BSD, macOS) or the platform call fails
 /// (Windows).
 pub fn documents_dir() -> Option<std::path::PathBuf> {

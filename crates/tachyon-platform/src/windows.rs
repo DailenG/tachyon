@@ -239,7 +239,7 @@ pub fn disable_window_transitions(window: &impl raw_window_handle::HasWindowHand
 }
 
 /// Sets whether `window`'s native title bar (and its system menu, buttons and border) render
-/// with light-on-dark colours (`DWMWA_USE_IMMERSIVE_DARK_MODE`). Tachyon keeps the OS title bar
+/// with light-on-dark colors (`DWMWA_USE_IMMERSIVE_DARK_MODE`). Tachyon keeps the OS title bar
 /// rather than drawing its own, but DWM otherwise paints it for the *system's* dark-mode setting;
 /// without this call a Tachyon window whose theme (Settings, not the OS) is light would show a
 /// dark bar above a light canvas, or the reverse. Returns whether it was applied.
@@ -403,7 +403,7 @@ const OPEN_CLIPBOARD_DEADLINE: Duration = Duration::from_millis(50);
 /// the `GlobalLock`ed memory a `GlobalLock` on another thread is still reading, which is what
 /// crashed `tachyon.exe` (the Windows crash dumps that followed #47): `tachyon_editor`'s paste path already
 /// avoids that by construction (`PasteText::Reading`'s claim lets only one thread read the
-/// clipboard per paste), so this lock is defence in depth against any other caller added later.
+/// clipboard per paste), so this lock is defense in depth against any other caller added later.
 /// It cannot serialize against GPUI's own clipboard calls (`cx.read_from_clipboard`,
 /// `cx.write_to_clipboard`), which go through GPUI's platform layer, not this module.
 static CLIPBOARD_LOCK: Mutex<()> = Mutex::new(());

@@ -214,7 +214,7 @@ fn set_title(link: &IShellLinkW, title: &str) -> Result<()> {
     let value = PROPVARIANT::from(title);
     // SAFETY: `value` is a valid `PROPVARIANT` for the duration of this call; `SetValue` copies
     // it rather than taking ownership, so `value`'s own `Drop` (which frees its `BSTR`) still runs
-    // normally afterwards.
+    // normally afterward.
     unsafe { store.SetValue(&PKEY_Title, &value) }?;
     // SAFETY: single COM call on the live `store`.
     unsafe { store.Commit() }

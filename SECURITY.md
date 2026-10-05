@@ -14,7 +14,7 @@ Do not open a public issue.
 Include the affected version or commit, the platform, reproduction steps, and a sample input file
 if the issue is triggered by document content.
 
-You will get an acknowledgement within 7 days. Fixes are released as soon as practical;
+You will get an acknowledgment within 7 days. Fixes are released as soon as practical;
 the advisory is published once a fix is available.
 
 ## Scope

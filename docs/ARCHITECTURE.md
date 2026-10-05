@@ -115,7 +115,7 @@ into `Theme::content_width` fresh every `Editor::render`, from the current windo
 (`ContentWidth::resolve`): a pixel value scales with zoom like other sizes, a percentage is a
 share of the window's own width and is not scaled again. The result is capped to the window width
 less a real gap on each side (`CONTENT_WIDTH_GAP_REMS`, 3 rems - scaled by zoom, wider than the
-one-rem text inset `render_block`'s centred column separately pads its own text with), so text
+one-rem text inset `render_block`'s centered column separately pads its own text with), so text
 keeps a felt gap from the window frame at every width and zoom, including `100%`. Resolution is
 pure arithmetic against the viewport GPUI already reports each frame - no allocation - so a
 resize's only extra cost is `list`'s own re-wrap of the blocks whose measured height changes.
@@ -126,7 +126,7 @@ cause - a plain window resize changing a percentage width, not only a settings s
 height could stay keyed to its previous width, and its whole rendered content (caret included,
 painted at the item's own resolved bounds) would land wherever that stale height put it. The
 find bar and pickers keep their own, independent width caps (compact toolbars, not the
-running-text column); the tip line and every block's centred column follow `content_width` as
+running-text column); the tip line and every block's centered column follow `content_width` as
 before.
 
 An explicit `Editor::editing` flag, not the caret's mere presence, decides whether a block is
@@ -275,7 +275,7 @@ previous one instead of appending a new entry when the two are contiguous - eith
 parser event boundary with nothing between) or separated by exactly the one `\n` `open_line`
 inserts between visible lines, when the source byte there is also `\n` (true of code/HTML block
 content, which reproduces its source line by line). Both cases only ever merge `verbatim` spans,
-so `visible_to_source`/`source_to_visible`'s linear mapping is exactly as accurate afterwards -
+so `visible_to_source`/`source_to_visible`'s linear mapping is exactly as accurate afterward -
 merging changes how many spans it takes to say the same thing, never what they say. A long fenced
 code block, one `SourceSpan` per source line before, collapses to one span for the whole block
 (measured: 221,531 spans to 2 for a 15 MiB single-fence file). Inline syntax that is stripped
@@ -535,7 +535,7 @@ for that frame (the same `on_next_frame` hook `check_whats_new` already uses), s
 another platform window synchronously costs 40-60 ms on Windows and previously ran before the
 first window ever painted. `--background` carries a restored session the same way it already
 carries bare hot-exit backups (`PendingRestore`). Off (`restore_session = false`), the session
-file is neither written nor read, and behaviour is exactly hot exit alone, as before this
+file is neither written nor read, and behavior is exactly hot exit alone, as before this
 feature. A sticky note is excluded from this file entirely, by design
 (`Editor::session_state` returns `None` for one); see Sticky notes, below.
 
@@ -590,14 +590,14 @@ divider of concept sheet 5 - the logo is the sole approved exception to "no bran
 app" (`docs/design/DESIGN_DIRECTION.md`), an SVG embedded with `include_bytes!` and rasterized by
 GPUI only when this window's view is built, never on the startup path; it is declared at twice
 its display width because GPUI rasterizes an SVG image once at its declared size - the product
-links and licence, and an Environment table (OS name/version, installed-package vs. portable, resident vs.
+links and license, and an Environment table (OS name/version, installed-package vs. portable, resident vs.
 standalone, the update channel derived from the packaged build number, and the settings and
 backups paths, both clickable via `App::reveal_path`). `tachyon_platform::os_version` and
 `packaged_version` supply the platform facts (Linux: `/etc/os-release`'s `PRETTY_NAME`; Windows:
 `RtlGetVersion`'s build number and `GetCurrentPackageFullName`'s version segment); the binary
 sets `tachyon_editor::AppInfo` (its own crate version, and whether this launch is resident) once
 at start-up, since neither is available to `tachyon-editor` otherwise. The window opens at its
-440 x 760 design size centred in the primary display's work area, shortened to fit there with the
+440 x 760 design size centered in the primary display's work area, shortened to fit there with the
 same frame allowance as editor windows (`fit_about`); everything above the buttons sits in a
 scroll container, so on a short screen (a 1080p display at 150 %) the details scroll and the
 buttons stay visible.

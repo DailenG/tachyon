@@ -7,12 +7,12 @@ Prints SYMBOL_GRADIENT_ANGLE and SYMBOL_STOPS for scripts/brand/compose.py. Re-r
 owner replaces docs/design/concepts/masters/symbol-gradient.png, then paste the output into
 compose.py.
 
-The master's colour is not a plain left-to-right ramp: it runs cyan -> blue -> violet -> blue ->
+The master's color is not a plain left-to-right ramp: it runs cyan -> blue -> violet -> blue ->
 cyan along a direction tilted slightly upward, so the crescent's lower left is the most violet and
 its upper right the most cyan. SVG can only draw linear or radial gradients, so this finds the
 linear one that best reproduces the master: for each candidate angle it projects every inked
 pixel onto that direction, splits the projection into STOP_COUNT equal bins, takes each bin's
-mean colour as a stop, and keeps the angle whose stops leave the smallest colour error.
+mean color as a stop, and keeps the angle whose stops leave the smallest color error.
 
 Needs `magick` (ImageMagick 7) and numpy.
 """
@@ -49,11 +49,11 @@ def main() -> None:
         check=True, capture_output=True, text=True,
     ).stdout
     sw, sh = round(w * SAMPLE_SCALE), round(h * SAMPLE_SCALE)
-    colour = raw(MASTERS / "symbol-gradient.png", bbox, [], "rgb").reshape(sh, sw, 3)
+    color = raw(MASTERS / "symbol-gradient.png", bbox, [], "rgb").reshape(sh, sw, 3)
     shape = raw(MASTERS / "symbol-navy.png", bbox, ["-colorspace", "gray"], "gray")
     ink = shape.reshape(sh, sw) < 60
     ys, xs = np.nonzero(ink)
-    pixels = colour[ys, xs].astype(float)
+    pixels = color[ys, xs].astype(float)
     x, y = xs / SAMPLE_SCALE, ys / SAMPLE_SCALE  # back in master pixels
 
     best = None
@@ -73,7 +73,7 @@ def main() -> None:
     error, angle, lo, hi, stops = best
     t = np.radians(angle)
     rms = np.sqrt(error / pixels.size)
-    print(f"# Fitted by scripts/brand/fit_gradient.py: RMS colour error {rms:.1f} of 255.")
+    print(f"# Fitted by scripts/brand/fit_gradient.py: RMS color error {rms:.1f} of 255.")
     print(f"SYMBOL_GRADIENT_LINE = ({lo * np.cos(t):.1f}, {lo * np.sin(t):.1f}, "
           f"{hi * np.cos(t):.1f}, {hi * np.sin(t):.1f})  # x1, y1, x2, y2; {angle:g} degrees")
     print("SYMBOL_STOPS = [")

@@ -16,7 +16,7 @@
     { id: "escape", name: "Escape velocity",
       note: "A particle drifts along the top of the ring, then breaks orbit along its tangent in a blur." },
     { id: "retro", name: "Arrives before it leaves",
-      note: "A tachyon would be seen arriving before it sets off. The far node implodes first, the particle is already there, and a comet runs backwards, tail first, to the start, which only then bursts as it leaves." },
+      note: "A tachyon would be seen arriving before it sets off. The far node implodes first, the particle is already there, and a comet runs backward, tail first, to the start, which only then bursts as it leaves." },
     { id: "jump", name: "Escape, arriving first",
       note: "The drift of 1, but its jump is seen in reverse: the spot ahead implodes, the particle appears there, a blur streaks back to where it was, and only then does the original vanish." },
     { id: "cherenkov", name: "Cherenkov lap",
@@ -108,11 +108,11 @@
   function hideAll() { all.forEach(function (e) { e.setAttribute("opacity", "0"); }); }
   function show(e, a) { e.setAttribute("opacity", a > 0 ? a.toFixed(3) : "0"); }
   function place(g, p, a) { g.setAttribute("transform", "translate(" + n1(p.x) + " " + n1(p.y) + ")"); show(g, a); }
-  function colour(f) { return f < 0.12 ? "var(--orbit-hot)" : f < 0.5 ? "#00D1FF" : f < 0.8 ? "#2563FF" : "#7C3AED"; }
+  function color(f) { return f < 0.12 ? "var(--orbit-hot)" : f < 0.5 ? "#00D1FF" : f < 0.8 ? "#2563FF" : "#7C3AED"; }
   function drawSegment(k, d, w, a, f) {
     trail[k].setAttribute("d", d); halo[k].setAttribute("d", d);
     trail[k].setAttribute("stroke-width", w.toFixed(2)); halo[k].setAttribute("stroke-width", (w * 3.4).toFixed(2));
-    trail[k].style.stroke = colour(f);
+    trail[k].style.stroke = color(f);
     show(trail[k], a); show(halo[k], a * 0.28);
   }
   // A fading trail along the ring, from the particle at angle t back by `span` (dir +1 travels toward larger t).
@@ -137,7 +137,7 @@
     c.setAttribute("cx", n1(p.x)); c.setAttribute("cy", n1(p.y)); c.setAttribute("r", n1(7 + rmax * easeOut(f)));
     show(c, f > 0 && f < 1 ? 0.9 * (1 - f) : 0);
   }
-  // A burst run backwards: rings and sparks collapse onto p, accelerating into contact at f = 1.
+  // A burst run backward: rings and sparks collapse onto p, accelerating into contact at f = 1.
   function implode(p, f) {
     inRings.forEach(function (e, k) {
       var g = seg(k * 0.14, 0.72 + k * 0.14, f);

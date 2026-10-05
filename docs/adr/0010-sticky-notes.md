@@ -79,7 +79,7 @@ refresh. On Windows this is `SetWindowPos` with `HWND_TOPMOST`/`HWND_NOTOPMOST` 
 so the header's pin button does not appear there and the toggle is a no-op if reached some other
 way.
 
-Windows does not always honour the call. On a windowless `--background` start, a restored note
+Windows does not always honor the call. On a windowless `--background` start, a restored note
 is the UI thread's first window; the test machine's trace showed `SetWindowPos(HWND_TOPMOST)`
 putting `WS_EX_TOPMOST` on the note's owned "Default IME" window but not on the note itself,
 while calls made later worked. So `set_always_on_top` reads `WS_EX_TOPMOST` back and reports
@@ -97,10 +97,10 @@ opaque. How it is drawn depends on the platform (`tachyon_platform::supports_win
   at full opacity.
 - Elsewhere the window is opened with `WindowBackgroundAppearance::Transparent` (only below 1.0,
   so the fully-opaque default costs no compositor blend) and `render` draws the note at that
-  opacity; Linux compositors honour the alpha.
+  opacity; Linux compositors honor the alpha.
 
 The first build used the second path on Windows too, and on the test machine DWM composited the
-note as if opaque: the unfocused colours were the focused ones blended over black. This is the
+note as if opaque: the unfocused colors were the focused ones blended over black. This is the
 one approved exception to `DESIGN_DIRECTION.md`'s "no translucency" rule (see that document).
 
 **Restore.** A resident primary's open notes live in their own state file,

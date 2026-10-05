@@ -42,7 +42,7 @@ the app, pre-first-frame asset work) is excluded unless benchmarks and the owner
 - `crates/tachyon-md`: Markdown → blocks with owned render IR. No GPUI dependency, ever.
 - `crates/tachyon-doc`: document state and incremental reparse (`ParseJob`s). No GPUI dependency.
 - `xtask`: `cargo xtask ci` (required checks), `cargo xtask bench-startup` (startup budget).
-- `crates/tachyon-editor`: GPUI editor view (block swap, rendering, theme, input/IME). Behaviour
+- `crates/tachyon-editor`: GPUI editor view (block swap, rendering, theme, input/IME). Behavior
   tests run headless with `gpui::test`.
 
 ## Commands
@@ -73,7 +73,7 @@ cargo clippy --workspace --all-targets --target x86_64-pc-windows-msvc -- -D war
 
 ## Working rules
 
-- Verify behaviour by running the app, not only by compiling. On Linux, GPUI needs
+- Verify behavior by running the app, not only by compiling. On Linux, GPUI needs
   `WAYLAND_DISPLAY` or `DISPLAY`; without one the binary exits with an error by design.
 - Do not run the bench or release builds casually: fat LTO takes minutes.
 - Update `CHANGELOG.md` (Unreleased) for user-visible changes and write an ADR for architectural

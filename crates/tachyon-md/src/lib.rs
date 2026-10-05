@@ -819,7 +819,7 @@ impl<'a> Builder<'a> {
     /// lines, when the source byte at that same position is also `\n` (true whenever a line's
     /// content is copied byte-for-byte from consecutive source lines, as verbatim code/HTML
     /// block content is). Both cases merge only `verbatim` spans, so `visible_to_source`/
-    /// `source_to_visible`'s linear, byte-for-byte mapping stays exactly as accurate afterwards:
+    /// `source_to_visible`'s linear, byte-for-byte mapping stays exactly as accurate afterward:
     /// merging never changes what either function computes, only how many `SourceSpan`s it
     /// takes to say the same thing. A run of plain text split into many small parser events (a
     /// long fenced code block is one event per line) collapses from one span per event to one
