@@ -1,0 +1,512 @@
+/* "What is a tachyon?" (tachyon.html). Builds on styles.css tokens and components.
+   Reading levels: the radio group in .levels picks which .lv-* blocks show. CSS :has() does the
+   switching, so it works without JavaScript; tachyon.js adds saving, ?level= and keeping your
+   place. Without :has() support, only Standard shows (the default below). */
+
+/* Levels: Standard unless a level radio says otherwise. */
+.lv { display: none; }
+.lv-standard { display: block; }
+span.lv-standard { display: inline; }
+.levels-hint span { display: none; }
+.levels-hint .for-standard { display: inline; }
+
+body:has(.levels input[value="eli5"]:checked) .lv-standard,
+body:has(.levels input[value="eli13"]:checked) .lv-standard,
+body:has(.levels input[value="phd"]:checked) .lv-standard,
+body:has(.levels input[value="eli5"]:checked) .for-standard,
+body:has(.levels input[value="eli13"]:checked) .for-standard,
+body:has(.levels input[value="phd"]:checked) .for-standard { display: none; }
+
+body:has(.levels input[value="eli5"]:checked) div.lv-eli5,
+body:has(.levels input[value="eli5"]:checked) p.lv-eli5,
+body:has(.levels input[value="eli13"]:checked) div.lv-eli13,
+body:has(.levels input[value="eli13"]:checked) p.lv-eli13,
+body:has(.levels input[value="phd"]:checked) div.lv-phd,
+body:has(.levels input[value="phd"]:checked) p.lv-phd { display: block; }
+body:has(.levels input[value="eli5"]:checked) span.lv-eli5,
+body:has(.levels input[value="eli13"]:checked) span.lv-eli13,
+body:has(.levels input[value="phd"]:checked) span.lv-phd,
+body:has(.levels input[value="eli5"]:checked) .for-eli5,
+body:has(.levels input[value="eli13"]:checked) .for-eli13,
+body:has(.levels input[value="phd"]:checked) .for-phd { display: inline; }
+
+/* Shared by every level except ELI5. */
+body:has(.levels input[value="eli5"]:checked) .lv-notkid { display: none; }
+
+/* The level switch: a sticky segmented control under the site header. */
+.levels {
+  position: sticky;
+  top: 68px;
+  z-index: 15;
+  background: var(--header-bg);
+  backdrop-filter: saturate(180%) blur(8px);
+  -webkit-backdrop-filter: saturate(180%) blur(8px);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.levels-inner {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 56px;
+  flex-wrap: wrap;
+}
+
+.levels fieldset {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.levels legend {
+  float: left;
+  padding: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.levels-options {
+  display: inline-flex;
+  padding: 3px;
+  gap: 2px;
+  border-radius: 999px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-subtle);
+}
+
+.levels-options label { position: relative; }
+
+.levels-options input {
+  position: absolute;
+  opacity: 0;
+  inset: 0;
+  margin: 0;
+  cursor: pointer;
+}
+
+.levels-options span {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-body);
+  white-space: nowrap;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast);
+}
+
+.levels-options label:hover span { color: var(--text-strong); }
+
+.levels-options input:checked + span {
+  background: var(--surface-card);
+  color: var(--pill-text);
+  box-shadow: var(--shadow-sm);
+}
+
+.levels-options input:focus-visible + span {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.levels-hint {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+/* Anchor targets clear both sticky bars. */
+html:has(body.explainer) { scroll-padding-top: 140px; }
+
+/* Article */
+.explainer-body {
+  max-width: 760px;
+  padding-top: 56px;
+  padding-bottom: 96px;
+}
+
+.explainer-head h1 {
+  margin: 16px 0;
+  font-size: clamp(38px, 6vw, 60px);
+  letter-spacing: -0.02em;
+}
+
+.explainer-lead {
+  margin: 0 0 24px;
+  font-size: 20px;
+  line-height: 1.55;
+  color: var(--text-strong);
+}
+
+.feinberg {
+  margin: 32px 0 8px;
+  padding: 0 0 0 20px;
+  border-left: 3px solid var(--accent);
+}
+
+.feinberg p {
+  margin: 0 0 6px;
+  font-size: 22px;
+  line-height: 1.4;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.feinberg footer {
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+.explainer-body section { margin-top: 72px; }
+
+.explainer-body h2 {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin: 0 0 16px;
+  font-size: clamp(26px, 3.2vw, 34px);
+  line-height: 1.2;
+}
+
+.sec-num {
+  flex: none;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--pill-text);
+  background: var(--accent-soft);
+  border-radius: 999px;
+  min-width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transform: translateY(-4px);
+}
+
+.explainer-body p,
+.explainer-body li,
+.explainer-body dd {
+  color: var(--text-body);
+  font-size: 17px;
+  line-height: 1.7;
+}
+
+.explainer-body p { margin: 0 0 16px; }
+
+/* Not buttons: this selector outranks .btn-primary and turned its white label blue on blue. */
+.explainer-body a:not(.btn) { color: var(--text-link); }
+.explainer-body a:not(.btn):hover { color: var(--text-link-hover); }
+
+.honest {
+  padding: 14px 16px;
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-subtle);
+  font-size: 15px !important;
+}
+
+.honest strong { color: var(--text-strong); }
+
+.numbers { margin: 0 0 16px; padding-left: 20px; }
+
+.eq {
+  margin: 20px 0 !important;
+  padding: 14px 18px;
+  overflow-x: auto;
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  font-family: var(--font-mono);
+  font-size: 15px !important;
+  color: var(--text-strong) !important;
+  white-space: nowrap;
+}
+
+/* Visualizations */
+.viz {
+  margin: 32px 0 8px;
+  padding: 20px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-card);
+  border: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow-sm);
+}
+
+.viz-stage { position: relative; }
+
+.viz-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+  touch-action: none;
+  font-family: var(--font-sans);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.viz-svg text { fill: var(--text-muted); font-size: 13px; }
+.viz-svg .t-strong { fill: var(--text-strong); font-weight: 600; }
+.viz-svg .t-accent { fill: var(--pill-text); font-weight: 600; }
+.viz-svg .t-violet { fill: var(--violet-text); font-weight: 600; }
+.viz-svg .t-warn { fill: var(--warn-text); font-weight: 600; }
+.viz-svg .grid { stroke: var(--border-subtle); stroke-width: 1; }
+.viz-svg .axis { stroke: var(--border-default); stroke-width: 1.5; }
+.viz-svg .light { stroke: var(--viz-light); stroke-width: 2; stroke-dasharray: 2 6; stroke-linecap: round; }
+.viz-svg .cone-fill { fill: var(--viz-light); opacity: 0.08; }
+.viz-svg .now { stroke: var(--text-muted); stroke-width: 1.5; stroke-dasharray: 6 5; }
+.viz-svg .tachy-line { stroke: var(--violet); stroke-width: 2.5; stroke-dasharray: 8 6; }
+.viz-svg .brady-line { stroke: var(--accent); stroke-width: 2.5; }
+.viz-svg .frame-axis { stroke: var(--text-muted); stroke-width: 1.25; opacity: 0.7; }
+.viz-svg .event { stroke: var(--surface-card); stroke-width: 3; }
+.viz-svg .ev-a { fill: var(--text-strong); }
+.viz-svg .ev-b { fill: var(--violet); }
+.viz-svg .ev-c { fill: var(--accent); }
+.viz-svg .hyper { fill: none; stroke: var(--border-default); stroke-width: 1; stroke-dasharray: 3 4; }
+.viz-svg .curve { fill: none; stroke-width: 3; stroke-linecap: round; }
+.viz-svg .curve-brady { stroke: var(--accent); }
+.viz-svg .curve-tachy { stroke: var(--violet); }
+.viz-svg .wall { stroke: var(--text-strong); stroke-width: 2; stroke-dasharray: 4 4; }
+.viz-svg .wall-label { fill: var(--text-strong); font-weight: 600; font-size: 15px; }
+.viz-svg .dot { stroke: var(--surface-card); stroke-width: 3; cursor: grab; }
+.viz-svg .dot-brady { fill: var(--accent); }
+.viz-svg .dot-tachy { fill: var(--violet); }
+.viz-svg .dot:active { cursor: grabbing; }
+.viz-svg .wave { fill: none; stroke: var(--viz-light); stroke-width: 1.25; opacity: 0.55; }
+.viz-svg .shock { stroke: var(--cyan); stroke-width: 3; }
+.viz-svg .shock-fill { fill: var(--cyan); opacity: 0.07; }
+.viz-svg .particle { fill: var(--accent); stroke: var(--surface-card); stroke-width: 3; }
+.viz-svg .medium { fill: var(--surface-sunken); }
+.viz-svg .worldline { stroke: var(--text-strong); stroke-width: 2.5; }
+.viz-svg .worldline-b { stroke: var(--accent); stroke-width: 2.5; }
+.viz-svg .msg { stroke: var(--violet); stroke-width: 3; marker-end: url(#arrow-violet); }
+.viz-svg .reply { stroke: var(--cyan-strong); stroke-width: 3; marker-end: url(#arrow-cyan); }
+.viz-svg .bad { fill: var(--warn-text); }
+
+:root {
+  /* Text-safe tints of the brand colors for labels on cards (4.5:1 on --surface-card). */
+  --violet-text: #6d28d9;
+  --warn-text: #b42318;
+  --viz-light: #d97706;
+  --cyan-strong: #0891b2;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --violet-text: #b9a2ff;
+    --warn-text: #ff8a80;
+    --viz-light: #fbbf24;
+    --cyan-strong: #22d3ee;
+  }
+}
+
+.viz-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px 20px;
+  margin-top: 16px;
+}
+
+.ctl {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 6px 12px;
+}
+
+.ctl-wide { grid-column: 1 / -1; }
+
+.ctl-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.ctl-out {
+  font-variant-numeric: tabular-nums;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--pill-text);
+}
+
+.ctl input[type="range"] {
+  grid-column: 1 / -1;
+  width: 100%;
+  accent-color: var(--accent);
+  height: 28px;
+  margin: 0;
+}
+
+.ctl input[type="range"]:focus-visible,
+.check input:focus-visible,
+.pill-radio input:focus-visible + span {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.ctl-row {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--text-body);
+}
+
+.check input { accent-color: var(--accent); width: 18px; height: 18px; }
+
+.pill-radio { position: relative; }
+.pill-radio input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.pill-radio span {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border-default);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-body);
+}
+.pill-radio input:checked + span {
+  background: var(--accent-soft);
+  border-color: transparent;
+  color: var(--pill-text);
+}
+
+.phone-steps .btn[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--pill-text);
+  background: var(--accent-soft);
+}
+
+.viz-readout {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  background: var(--accent-soft);
+  color: var(--pill-text);
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.viz-readout .late { color: var(--pill-text); }
+.viz-readout strong { color: inherit; }
+
+.viz-note {
+  margin: 12px 0 0 !important;
+  font-size: 15px !important;
+  color: var(--text-muted) !important;
+}
+
+/* 3D antitelephone */
+.viz-stage-3d { aspect-ratio: 640 / 420; }
+.phone-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: none;
+  border-radius: var(--radius-md);
+  cursor: grab;
+  touch-action: none;
+}
+.phone-canvas:active { cursor: grabbing; }
+.viz-3d.is-3d .phone-canvas { display: block; }
+.viz-3d.is-3d .phone-fallback { visibility: hidden; }
+.phone-badge {
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  margin: 0 !important;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--surface-sunken);
+  color: var(--text-muted) !important;
+  font-size: 12px !important;
+  pointer-events: none;
+}
+.phone-label {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--surface-card);
+  border: 1px solid var(--border-subtle);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-strong);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* Myths */
+.myths { margin: 0; }
+.myths dt {
+  margin: 24px 0 6px;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+.myths dd { margin: 0; }
+
+/* Orbit cards */
+.orbit-cards {
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+.orbit-cards li {
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-card);
+  border: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow-sm);
+}
+.orbit-cards strong { display: block; margin-bottom: 6px; color: var(--text-strong); }
+.orbit-cards span { display: block; flex: 1; font-size: 15px; line-height: 1.55; color: var(--text-body); }
+.orbit-play { margin-top: 10px; font-size: 14px; font-weight: 600; }
+.orbit-play::after { content: " \2192"; }
+
+/* References */
+.refs { padding-left: 22px; }
+.refs li { font-size: 15px !important; margin-bottom: 8px; }
+.refs li:target { background: var(--accent-soft); border-radius: 6px; }
+
+@media (max-width: 980px) {
+  .levels { top: 68px; }
+  .levels-hint { display: none; }
+}
+
+@media (max-width: 620px) {
+  .levels legend { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .levels-options { width: 100%; justify-content: space-between; }
+  .levels-options label { flex: 1; }
+  .levels-options span { justify-content: center; padding: 0 6px; font-size: 13px; }
+  .viz { padding: 14px; margin-left: -8px; margin-right: -8px; }
+  .explainer-body p, .explainer-body li, .explainer-body dd { font-size: 16px; }
+}
+
+
+/* The 3D view's labels (positioned by tachyon-3d.js). */
+.phone-label.is-warn { color: var(--warn-text); }
