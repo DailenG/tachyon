@@ -118,12 +118,14 @@ named, a note's file name never changes, even if you edit the heading later. A n
 ever typed into it writes no file at all, and one that is typed into and then emptied out again
 has its file deleted.
 
-Three settings in `settings.toml` (`Ctrl+,`) control sticky notes:
+Four settings in `settings.toml` (`Ctrl+,` opens Preferences) control sticky notes:
 
 - `sticky_hotkey` (default `"win+shift+n"`): the global hotkey that opens a new note from
   anywhere, in `Ctrl+Alt+Shift+Win+<letter or digit>` combinations (e.g. `"ctrl+shift+n"`);
   empty turns it off. Windows only.
 - `sticky_on_top` (default `true`): whether a new note starts always-on-top.
+- `sticky_default_mode` (`"markdown"` or `"plain"`, default `"markdown"`): the mode a new note
+  starts in. `"plain"` shows what you type literally, for logs and snippets.
 - `sticky_unfocused_opacity` (default `1.0`, range `0.3`-`1.0`): a note's opacity while its
   window is not focused; `1.0` turns this off. A focused note is always fully opaque, and
   ordinary (non-note) windows are never affected.
@@ -132,12 +134,14 @@ Three settings in `settings.toml` (`Ctrl+,`) control sticky notes:
 or pasting a whole document leaves every block rendered. A click or keystroke starts editing.
 `scrollbar` (`"auto"` or `"never"`, default `"auto"`): an overlay thumb while scrolling or while
 the pointer is on the right edge. It hides a second later and does not change the text width.
-Each note has its own compact header instead of the native title bar, with a drag area, a pin
-button and a close button. The pin button and `Ctrl+Shift+T` toggle that note's always-on-top
+Each note has its own compact header instead of the native title bar, with a drag area, a
+`MD`/`TXT` button that switches the note between Markdown and plain text (also `Ctrl+Shift+M`;
+each note remembers its own mode across restarts, and the file stays `.md`), a pin button and a
+close button. The pin button and `Ctrl+Shift+T` toggle that note's always-on-top
 state on or off individually (Windows: `SetWindowPos(HWND_TOPMOST)`); always-on-top is not
 implemented on Linux yet, so the pin button does not appear there.
 
-Every note that is open when a resident instance quits reopens, in the same place and pin state,
+Every note that is open when a resident instance quits reopens, in the same place, pin state and mode,
 the next time that instance starts - including a windowless `--background` start (login
 autostart) - kept in its own state file, entirely separate from the regular session file and
 hot exit's backups.

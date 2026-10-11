@@ -1784,6 +1784,10 @@ impl Editor {
             return;
         }
         self.retag_to(target, cx);
+        // A note's mode is part of what its state file records, so a restart reopens it the same.
+        if self.is_note() {
+            crate::notes::notify_notes_changed(cx);
+        }
         cx.notify();
     }
 

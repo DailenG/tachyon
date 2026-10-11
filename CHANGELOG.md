@@ -8,6 +8,11 @@ All notable user-visible changes are recorded here. The format follows
 
 ### Added
 
+- Sticky notes can be plain text: a `MD`/`TXT` button in the note header (next to the pin) switches
+  the note between Markdown and plain text, the same switch as `Ctrl+Shift+M`. Each note
+  remembers its mode across restarts; its file stays `.md` (#115).
+- A `sticky_default_mode` setting (`"markdown"` or `"plain"`, default `"markdown"`) chooses the
+  mode a new sticky note starts in. It is in Preferences too (#116).
 - Save As follows the new extension: an untitled Markdown document saved as `server.log` or
   `data.json` becomes plain text (no Markdown parsing, `#` stays literal), and a plain-text
   document saved as `notes.md` becomes Markdown (up to 128 KiB, and never for binary or

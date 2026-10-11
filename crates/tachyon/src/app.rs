@@ -396,6 +396,7 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
                 path: note.path,
                 bounds: note.bounds,
                 pinned: note.pinned,
+                plain: note.plain,
             })
             .collect();
         let primary_backups = primary_backups.filter(|_| settings.hot_exit);
@@ -1070,6 +1071,8 @@ enum NoteSource {
         path: PathBuf,
         bounds: Bounds<Pixels>,
         pinned: bool,
+        /// The mode recorded for the note: plain text rather than Markdown.
+        plain: bool,
     },
 }
 
@@ -1111,13 +1114,17 @@ fn open_note_window(source: NoteSource, cx: &mut App) -> Option<WindowHandle<Edi
     // A new note is always the user's request (hotkey, `--note`, tray, palette), so it comes to
     // the front; restored notes open where they were without taking focus from anything.
     let activate = matches!(source, NoteSource::New | NoteSource::Reopen { .. });
-    let (bounds, pinned, path) = match source {
-        NoteSource::New => (initial_note_bounds(cx), settings.sticky_on_top, None),
-        NoteSource::Reopen { path } => {
-            (initial_note_bounds(cx), settings.sticky_on_top, Some(path))
+    // New notes start in `sticky_default_mode`; a restored one in the mode recorded for it; a
+    // reopened one is a file picked from the list, with no record, so Markdown as it always was.
+    let (bounds, pinned, path, plain) = match source {
+        NoteSource::New => {
+            (initial_note_bounds(cx), settings.sticky_on_top, None, settings.sticky_plain)
         }
-        NoteSource::Restore { path, bounds, pinned } => {
-            (clamp_note_to_work_area(bounds, cx), pinned, Some(path))
+        NoteSource::Reopen { path } => {
+            (initial_note_bounds(cx), settings.sticky_on_top, Some(path), false)
+        }
+        NoteSource::Restore { path, bounds, pinned, plain } => {
+            (clamp_note_to_work_area(bounds, cx), pinned, Some(path), plain)
         }
     };
     let translucent = settings.sticky_unfocused_opacity < 1.0;
@@ -1134,9 +1141,14 @@ fn open_note_window(source: NoteSource, cx: &mut App) -> Option<WindowHandle<Edi
             if let Some(notice) = notice.clone() {
                 editor.set_app_notice(notice, cx);
             }
-            if let Some(path) = path.clone() {
-                editor.reserve_note_file(path.clone());
-                load_note_file(path, cx);
+            match path.clone() {
+                Some(path) => {
+                    editor.reserve_note_file(path.clone());
+                    load_note_file(path, plain, cx);
+                }
+                // Blank: nothing to parse yet, so switching now costs nothing.
+                None if plain => editor.set_note_plain(true, cx),
+                None => {}
             }
             editor
         })
@@ -1200,12 +1212,13 @@ fn retry_note_pin(handle: WindowHandle<Editor>, cx: &mut App) {
 /// Markdown/plain-text/size-limit rules any other file gets), off the UI thread. Unlike an
 /// ordinary window's `load_file`, there is no "Loading..." placeholder (a note is always small
 /// enough that this is brief) and nothing recorded to reapply once it lands (notes keep no
-/// caret/scroll/mode - see `tachyon_editor::notes`'s own module doc comment); a file that
+/// caret/scroll - see `tachyon_editor::notes`'s own module doc comment; its mode is recorded,
+/// and `plain` applies it); a file that
 /// vanished or failed to read between the state file listing it and this read running is left as
 /// a blank, unnamed note rather than showing an error string in a small chrome-less window - it
 /// simply never had this path assigned, so its own next autosave (typing something) names it
 /// afresh.
-fn load_note_file(path: PathBuf, cx: &mut Context<Editor>) {
+fn load_note_file(path: PathBuf, plain: bool, cx: &mut Context<Editor>) {
     cx.spawn(async move |editor, cx| {
         let read_path = path.clone();
         let outcome = cx
@@ -1215,6 +1228,11 @@ fn load_note_file(path: PathBuf, cx: &mut Context<Editor>) {
         let _ = editor.update(cx, |editor, cx| {
             if let Ok(tachyon_editor::LoadOutcome::Loaded(loaded)) = outcome {
                 editor.set_loaded(*loaded, cx);
+                // The file was opened by its extension (`.md`: Markdown); the note's recorded
+                // mode applies on top, keeping the text just loaded.
+                if plain {
+                    editor.set_note_plain(true, cx);
+                }
                 editor.adopt_note_file(path, cx);
                 editor.rest_after_load(cx);
             } else {
