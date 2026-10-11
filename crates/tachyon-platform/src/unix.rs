@@ -346,7 +346,7 @@ fn autostart_desktop_file(exe: &std::path::Path) -> String {
 fn application_desktop_file(exe: &std::path::Path) -> String {
     let exec = desktop_exec(exe);
     format!(
-        "[Desktop Entry]\nType=Application\nName=Tachyon\nGenericName=Markdown Editor\nComment=Read and edit Markdown\nExec={exec} %F\nIcon=tachyon\nTerminal=false\nCategories=Utility;TextEditor;\nMimeType=text/markdown;text/x-markdown;text/plain;\nKeywords=markdown;notes;editor;scratchpad;\nStartupWMClass=tachyon\n"
+        "[Desktop Entry]\nType=Application\nName=Tachyon\nGenericName=Markdown Editor\nComment=Read and edit Markdown\nExec={exec} %F\nIcon=tachyon\nTerminal=false\nCategories=Utility;TextEditor;\nMimeType=text/markdown;text/x-markdown;text/plain;text/x-log;application/json;application/toml;application/x-yaml;text/yaml;text/csv;text/tab-separated-values;application/xml;text/xml;\nKeywords=markdown;notes;editor;scratchpad;\nStartupWMClass=tachyon\n"
     )
 }
 
@@ -553,6 +553,11 @@ mod autostart_tests {
         assert!(entry.contains("\nIcon=tachyon\n"));
         assert!(entry.contains("\nStartupWMClass=tachyon\n"));
         assert!(entry.contains("MimeType=text/markdown;"));
+        // Plain-text mode opens any text file, so the common data formats are offered too.
+        for mime in ["text/plain", "application/json", "application/toml", "text/csv", "text/x-log"]
+        {
+            assert!(entry.contains(&format!(";{mime};")), "{mime} is offered in Open with");
+        }
     }
 
     #[test]

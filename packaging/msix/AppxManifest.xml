@@ -77,7 +77,8 @@
           </uap:FileTypeAssociation>
         </uap:Extension>
         <!-- Plain-text mode (crates/tachyon-editor: `DocMode::Plain`) opens these as literal
-             text; a separate association from `markdown` above, so Windows offers "Open with
+             text (any extension but Markdown's does; these are the common ones worth listing
+             under "Open with", which Windows only offers for registered types); a separate association from `markdown` above, so Windows offers "Open with
              Tachyon" for both kinds without conflating them into one file-type group. -->
         <uap:Extension Category="windows.fileTypeAssociation">
           <uap:FileTypeAssociation Name="plaintext">
@@ -86,6 +87,20 @@
               <uap:FileType>.txt</uap:FileType>
               <uap:FileType>.text</uap:FileType>
               <uap:FileType>.log</uap:FileType>
+              <uap:FileType>.json</uap:FileType>
+              <uap:FileType>.jsonc</uap:FileType>
+              <uap:FileType>.toml</uap:FileType>
+              <uap:FileType>.yaml</uap:FileType>
+              <uap:FileType>.yml</uap:FileType>
+              <uap:FileType>.ini</uap:FileType>
+              <uap:FileType>.cfg</uap:FileType>
+              <uap:FileType>.conf</uap:FileType>
+              <uap:FileType>.csv</uap:FileType>
+              <uap:FileType>.tsv</uap:FileType>
+              <uap:FileType>.xml</uap:FileType>
+              <uap:FileType>.env</uap:FileType>
+              <uap:FileType>.gitignore</uap:FileType>
+              <uap:FileType>.editorconfig</uap:FileType>
             </uap:SupportedFileTypes>
           </uap:FileTypeAssociation>
         </uap:Extension>
