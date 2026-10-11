@@ -266,6 +266,8 @@ impl Editor {
     /// space or `x` inside `[ ]` becomes the other, as one undoable edit that leaves the caret,
     /// the selection and the block's rendered state alone. Returns whether `at` was a task item.
     pub(crate) fn toggle_task_at(&mut self, at: usize, cx: &mut Context<Self>) -> bool {
+        // Decided from the text as the user saw it when they clicked: which line, where its mark
+        // is, whether it is checked.
         if !self.in_list_context(at) {
             return false;
         }
@@ -273,12 +275,28 @@ impl Editor {
         let (start, end) = (movement::home(rope, at), movement::end(rope, at));
         let line = rope.byte_slice(start..end).to_string();
         let Some((mark, checked)) = task_mark(&line) else { return false };
+        let mut mark_at = start + mark;
         // A paste still being read or prepared lands first, so the edits keep the order of the
-        // user's input (every other non-typing input does the same).
+        // user's input (every other non-typing input does the same). It may move the box, so the
+        // mark's offset follows it; and the byte found there must still be the mark we decided
+        // on, so a paste that rewrote the box itself toggles nothing.
+        let before = self.doc.buffer().version();
         self.flush_pending_paste(cx);
+        if let Some(edits) = self.doc.buffer().edits_since(before) {
+            mark_at = edits.fold(mark_at, |at, edit| edit.map_offset(at));
+        }
+        let rope = self.doc.buffer().rope();
+        let current = (mark_at < rope.len_bytes()).then(|| rope.byte_slice(mark_at..mark_at + 1));
+        let intact = current.is_some_and(|byte| {
+            let byte = byte.to_string();
+            if checked { byte == "x" || byte == "X" } else { byte == " " }
+        });
+        if !intact {
+            return false;
+        }
         let (caret, reversed, reveal) = (self.selection.clone(), self.reversed, self.reveal);
         self.doc.seal_undo_group();
-        self.replace(start + mark..start + mark + 1, if checked { " " } else { "x" }, cx);
+        self.replace(mark_at..mark_at + 1, if checked { " " } else { "x" }, cx);
         self.doc.seal_undo_group();
         // `replace` puts the caret after the edit and asks for it to be scrolled into view; a
         // checkbox click is neither a caret move nor a reason to leave the box that was clicked.

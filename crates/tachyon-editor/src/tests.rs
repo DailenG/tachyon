@@ -3279,3 +3279,21 @@ fn a_task_toggle_does_not_ask_for_the_caret_to_be_scrolled_into_view(cx: &mut Te
     assert!(typing, "typing reveals the caret");
     assert!(!toggle, "a toggle asks for no caret reveal");
 }
+
+#[gpui::test]
+fn a_task_toggle_follows_its_box_when_a_pending_paste_lands_before_it(cx: &mut TestAppContext) {
+    let paste = "pasted\n".repeat(tachyon_doc::UNPARSED_SPLIT_THRESHOLD / 4);
+    let (editor, cx) = open_with_reader("- [ ] one\n- [ ] two\n", Some(paste.clone()), cx);
+    // The caret is at the very start, so the paste lands *before* both boxes and shifts them.
+    cx.simulate_keystrokes("ctrl-home");
+    editor.update_in(cx, |e, window, cx| e.paste(&crate::editor::Paste, window, cx));
+    assert_eq!(text(&editor, cx), "- [ ] one\n- [ ] two\n", "the paste has not landed yet");
+
+    // "two" is clicked at the offset it had when drawn; the paste then moves it.
+    let two_when_drawn = "- [ ] one\n".len();
+    editor.update(cx, |e, cx| e.toggle_task_at(two_when_drawn, cx));
+    cx.run_until_parked();
+
+    let after = text(&editor, cx);
+    assert_eq!(after, format!("{paste}- [ ] one\n- [x] two\n"), "the box that was clicked toggled");
+}
