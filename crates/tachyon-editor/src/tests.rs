@@ -3236,3 +3236,46 @@ fn a_real_click_on_a_task_items_text_edits_it_instead_of_toggling(cx: &mut TestA
     assert_eq!(text(&editor, cx), "intro\n\n- [ ] one two three\n", "nothing toggled");
     assert_eq!(editor.read_with(cx, |e, _| e.active_block()), Some(1), "the item is being edited");
 }
+
+#[gpui::test]
+fn a_task_toggle_waits_for_a_pending_paste_so_edits_keep_input_order(cx: &mut TestAppContext) {
+    let paste = "pasted\n".repeat(tachyon_doc::UNPARSED_SPLIT_THRESHOLD / 4);
+    let (editor, cx) = open_with_reader("- [ ] one\n", Some(paste.clone()), cx);
+    cx.simulate_keystrokes("ctrl-end");
+    editor.update_in(cx, |e, window, cx| e.paste(&crate::editor::Paste, window, cx));
+    // The paste is read and prepared in the background: still pending right now.
+    assert_eq!(text(&editor, cx), "- [ ] one\n", "the paste has not landed yet");
+
+    // The box is clicked before it lands; the paste was the earlier input, so it goes first.
+    editor.update(cx, |e, cx| e.toggle_task_at(0, cx));
+    cx.run_until_parked();
+
+    let after = text(&editor, cx);
+    assert!(after.starts_with("- [x] one\n"), "the box toggled");
+    assert!(after.ends_with(&paste), "the paste landed at the caret, after the list");
+    assert_eq!(after.len(), "- [x] one\n".len() + paste.len(), "nothing else changed");
+    // Two separate undo steps: the toggle, then the paste.
+    cx.simulate_keystrokes("secondary-z");
+    cx.run_until_parked();
+    assert!(text(&editor, cx).starts_with("- [ ] one\n"), "undo reverts the toggle");
+    assert!(text(&editor, cx).ends_with(&paste), "the paste is still there");
+}
+
+#[gpui::test]
+fn a_task_toggle_does_not_ask_for_the_caret_to_be_scrolled_into_view(cx: &mut TestAppContext) {
+    let (editor, cx) = open("- [ ] one\n", cx);
+    // An edit sets `reveal` (keep the caret on screen), which clicking a box elsewhere in a
+    // long document must not do: the view would jump away from the box that was clicked.
+    // Read inside the same update as the call: a repaint between would consume the flag.
+    let (toggle, typing) = editor.update(cx, |e, cx| {
+        e.reveal = false;
+        e.toggle_task_at(0, cx);
+        let toggle = e.reveal;
+        // Control: an ordinary edit does ask for one, so the assertion below can fail.
+        e.reveal = false;
+        e.replace(0..0, "x", cx);
+        (toggle, e.reveal)
+    });
+    assert!(typing, "typing reveals the caret");
+    assert!(!toggle, "a toggle asks for no caret reveal");
+}

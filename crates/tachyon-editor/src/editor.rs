@@ -239,7 +239,7 @@ pub struct Editor {
     moved_since_edit: bool,
     pub(crate) selecting: bool,
     /// The caret should be scrolled into view at the next paint.
-    reveal: bool,
+    pub(crate) reveal: bool,
     /// Block indices the list drew in the last completed frame, and the
     /// ones it is rendering in the current one.
     pub(crate) rendered: Range<usize>,
