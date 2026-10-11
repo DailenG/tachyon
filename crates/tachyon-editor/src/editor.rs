@@ -1815,7 +1815,8 @@ impl Editor {
     /// for the other one (`mode_after_save_as`), keeping the text, caret and undo history.
     fn follow_extension(&mut self, cx: &mut Context<Self>) {
         let Some(path) = self.file.clone() else { return };
-        if let Some(mode) = mode_after_save_as(self.doc.mode(), &path, self.doc.len()) {
+        let mode = mode_after_save_as(self.doc.mode(), &path, self.doc.len(), self.lossy);
+        if let Some(mode) = mode {
             self.flush_pending_paste(cx);
             self.retag_to(mode, cx);
             cx.notify();
@@ -2222,14 +2223,29 @@ pub(crate) fn suggested_name(mode: DocMode) -> &'static str {
     }
 }
 
+/// Above this a plain document saved as `.md` stays plain: retagging parses the whole text on
+/// the UI thread, and `PARSE_CHUNK` is how much of it the editor ever parses in one go there
+/// (the same bound that keeps a keystroke's reparse under a frame). `Ctrl+Shift+M` still
+/// switches a larger one on request, as it always has.
+const SAVE_AS_MARKDOWN_LIMIT: usize = tachyon_doc::PARSE_CHUNK;
+
 /// The mode a document in `mode` should switch to after being saved as `path`, if the new
 /// extension calls for the other one: a Markdown document saved as `notes.log` becomes plain
-/// text, a plain one saved as `notes.md` becomes Markdown. `None` when nothing changes, and when
-/// the switch would be to Markdown above `MARKDOWN_SIZE_LIMIT` (too big to parse; it stays plain).
-pub(crate) fn mode_after_save_as(mode: DocMode, path: &Path, len: usize) -> Option<DocMode> {
+/// text (always cheap), a plain one saved as `notes.md` becomes Markdown. `None` when nothing
+/// changes, and when the switch would be to Markdown but the document is
+/// - above [`SAVE_AS_MARKDOWN_LIMIT`] (parsing it here would stall a frame), or
+/// - `lossy` (decoded from invalid or binary-looking bytes, which `load_document` also never
+///   parses as Markdown).
+pub(crate) fn mode_after_save_as(
+    mode: DocMode,
+    path: &Path,
+    len: usize,
+    lossy: bool,
+) -> Option<DocMode> {
     let target = tachyon_doc::mode_for_extension(path);
-    let too_big = target == DocMode::Markdown && len as u64 > tachyon_doc::MARKDOWN_SIZE_LIMIT;
-    (target != mode && !too_big).then_some(target)
+    let to_markdown_is_unsafe =
+        target == DocMode::Markdown && (len > SAVE_AS_MARKDOWN_LIMIT || lossy);
+    (target != mode && !to_markdown_is_unsafe).then_some(target)
 }
 
 /// Writes `bytes` to a temporary file next to `path` and renames it over

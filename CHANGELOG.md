@@ -10,9 +10,10 @@ All notable user-visible changes are recorded here. The format follows
 
 - Save As follows the new extension: an untitled Markdown document saved as `server.log` or
   `data.json` becomes plain text (no Markdown parsing, `#` stays literal), and a plain-text
-  document saved as `notes.md` becomes Markdown. The text, caret and undo history are kept. Save
-  As suggests `untitled.txt` for a plain-text document. A plain Save keeps a mode you chose with
-  `Ctrl+Shift+M` (#123).
+  document saved as `notes.md` becomes Markdown (up to 128 KiB, and never for binary or
+  garbled text, so it cannot stall a frame; `Ctrl+Shift+M` still switches larger ones). The text,
+  caret and undo history are kept. Save As suggests `untitled.txt` for a plain-text document. A
+  plain Save keeps a mode you chose with `Ctrl+Shift+M` (#123).
 - "Open with Tachyon" is offered for more text files: `.json`, `.jsonc`, `.toml`, `.yaml`,
   `.yml`, `.ini`, `.cfg`, `.conf`, `.csv`, `.tsv`, `.xml`, `.env`, `.gitignore` and
   `.editorconfig` on Windows (next to `.txt`, `.text`, `.log`), and the matching MIME types in

@@ -3094,14 +3094,43 @@ fn save_as_suggests_an_extension_that_matches_the_mode() {
 }
 
 #[test]
-fn a_save_as_never_switches_a_huge_document_to_markdown() {
+fn save_as_switches_to_markdown_only_when_that_is_cheap_and_sensible() {
     use std::path::Path;
-    use tachyon_doc::{DocMode, MARKDOWN_SIZE_LIMIT};
+    use tachyon_doc::{DocMode, PARSE_CHUNK};
     let f = super::editor::mode_after_save_as;
-    let huge = MARKDOWN_SIZE_LIMIT as usize + 1;
-    assert_eq!(f(DocMode::Plain, Path::new("big.md"), huge), None, "too big to parse");
-    assert_eq!(f(DocMode::Plain, Path::new("small.md"), 10), Some(DocMode::Markdown));
-    assert_eq!(f(DocMode::Markdown, Path::new("a.json"), 10), Some(DocMode::Plain));
-    assert_eq!(f(DocMode::Markdown, Path::new("a.MD"), 10), None, "extension is case-insensitive");
-    assert_eq!(f(DocMode::Plain, Path::new("README"), 10), None, "no extension is plain");
+    let big = PARSE_CHUNK + 1;
+    assert_eq!(f(DocMode::Plain, Path::new("small.md"), 10, false), Some(DocMode::Markdown));
+    assert_eq!(
+        f(DocMode::Plain, Path::new("edge.md"), PARSE_CHUNK, false),
+        Some(DocMode::Markdown)
+    );
+    // Parsing this much on the UI thread would stall a frame; Ctrl+Shift+M still offers it.
+    assert_eq!(f(DocMode::Plain, Path::new("big.md"), big, false), None);
+    // Binary or garbled text is never parsed as Markdown, as when such a file is opened.
+    assert_eq!(f(DocMode::Plain, Path::new("junk.md"), 10, true), None);
+    // Going to plain text is always cheap, whatever the size or content.
+    assert_eq!(f(DocMode::Markdown, Path::new("a.json"), big, true), Some(DocMode::Plain));
+    assert_eq!(f(DocMode::Markdown, Path::new("a.MD"), 10, false), None, "case-insensitive");
+    assert_eq!(f(DocMode::Plain, Path::new("README"), 10, false), None, "no extension is plain");
+}
+
+#[gpui::test]
+fn saving_a_large_plain_document_as_markdown_leaves_it_plain(cx: &mut TestAppContext) {
+    let dir = save_dir("large-stays-plain");
+    let big = "word ".repeat(tachyon_doc::PARSE_CHUNK / 4);
+    assert!(big.len() > tachyon_doc::PARSE_CHUNK);
+    let (editor, cx) = open("", cx);
+    editor.update(cx, |e, cx| {
+        e.set_document(tachyon_doc::Document::new_plain(&big), cx);
+    });
+    assert_eq!(mode_of(&editor, cx), tachyon_doc::DocMode::Plain);
+
+    editor.update_in(cx, |e, window, cx| {
+        e.write_to(dir.join("big.md"), false, window, cx, |_, _| {})
+    });
+    cx.run_until_parked();
+
+    assert_eq!(mode_of(&editor, cx), tachyon_doc::DocMode::Plain, "no UI-thread parse");
+    assert_eq!(std::fs::metadata(dir.join("big.md")).unwrap().len() as usize, big.len());
+    let _ = std::fs::remove_dir_all(&dir);
 }
