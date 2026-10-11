@@ -37,6 +37,10 @@ pub(crate) enum CommandEffect {
     ReopenNote,
     /// Flips the overlay scrollbar between auto and never.
     ToggleScrollbar,
+    /// Flips drawing Mermaid code blocks as diagrams.
+    ToggleMermaid,
+    /// Restores every default after asking (the Preferences panel's reset row).
+    ResetSettings,
 }
 
 /// One row's name and what it does.
@@ -79,7 +83,9 @@ const COMMANDS: &[Command] = &[
         name: "Frame-time overlay",
         effect: CommandEffect::Action("editor::ToggleFrameStats"),
     },
+    Command { name: "Preferences", effect: CommandEffect::Action("editor::OpenPreferences") },
     Command { name: "Open settings file", effect: CommandEffect::Action("tachyon::OpenSettings") },
+    Command { name: "Reset settings to defaults...", effect: CommandEffect::ResetSettings },
     Command { name: "About Tachyon", effect: CommandEffect::Action("about::About") },
     Command { name: "What's new", effect: CommandEffect::Action("tachyon::WhatsNew") },
     Command { name: "Theme: System", effect: CommandEffect::Theme(ThemeChoice::System) },
@@ -89,6 +95,7 @@ const COMMANDS: &[Command] = &[
     Command { name: "Show what's new after updates", effect: CommandEffect::ToggleWhatsNew },
     Command { name: "Restore session on start", effect: CommandEffect::ToggleRestoreSession },
     Command { name: "Scrollbar", effect: CommandEffect::ToggleScrollbar },
+    Command { name: "Mermaid diagrams", effect: CommandEffect::ToggleMermaid },
     Command { name: "Width: 680px", effect: CommandEffect::ContentWidth(ContentWidth::Px(680.)) },
     Command { name: "Width: 820px", effect: CommandEffect::ContentWidth(ContentWidth::Px(820.)) },
     Command { name: "Width: 1100px", effect: CommandEffect::ContentWidth(ContentWidth::Px(1100.)) },
@@ -233,7 +240,14 @@ fn command_items(cx: &App) -> Vec<Item> {
                     false,
                     None,
                 ),
-                CommandEffect::ReopenNote => (command.name.to_owned(), false, None),
+                CommandEffect::ToggleMermaid => (
+                    format!("{}: {}", command.name, if settings.mermaid { "On" } else { "Off" }),
+                    false,
+                    None,
+                ),
+                CommandEffect::ReopenNote | CommandEffect::ResetSettings => {
+                    (command.name.to_owned(), false, None)
+                }
                 CommandEffect::ContentWidth(width) => {
                     (command.name.to_owned(), settings.content_width == width, None)
                 }
@@ -322,6 +336,16 @@ impl Editor {
                         crate::settings::ScrollbarMode::Never
                     };
                 });
+            }
+            CommandEffect::ToggleMermaid => {
+                let next = !cx.try_global::<Settings>().is_none_or(|s| s.mermaid);
+                let value = if next { "true" } else { "false" };
+                crate::settings::apply_setting(cx, "mermaid", value, move |settings| {
+                    settings.mermaid = next;
+                });
+            }
+            CommandEffect::ResetSettings => {
+                self.pick_preference(crate::preferences::PreferencePick::Reset, window, cx);
             }
 
             CommandEffect::ContentWidth(width) => {

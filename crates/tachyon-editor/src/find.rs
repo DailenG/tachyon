@@ -231,6 +231,9 @@ impl Editor {
     /// every block renders and the caret is not painted, until the next click, keystroke, caret
     /// movement or edit turns editing back on (`Editor::move_to`/`Editor::after_edit`).
     pub(crate) fn cancel(&mut self, _: &Cancel, _: &mut Window, cx: &mut Context<Self>) {
+        if self.cancel_preference_value(cx) {
+            return;
+        }
         if self.find.take().is_some() | self.picker.take().is_some() {
             cx.notify();
             return;
@@ -314,6 +317,9 @@ impl Editor {
     /// (`PendingFindAction::ReplaceCurrentThenStep`) instead of `find_next` running immediately
     /// against matches `replace_current` has not caught up to yet.
     pub(crate) fn find_enter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.picker.as_ref().is_some_and(|p| p.editing.is_some()) {
+            return self.commit_preference_value(cx);
+        }
         if self.picker.is_some() {
             return self.picker_pick(None, window, cx);
         }

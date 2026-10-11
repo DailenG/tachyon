@@ -320,7 +320,7 @@ fn save_writes_the_file_with_its_line_endings(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("ctrl-end");
     cx.simulate_input("!");
     assert!(editor.read_with(cx, |e, _| e.is_modified()));
-    assert!(editor.read_with(cx, |e, _| e.title()).starts_with("• note.md"));
+    assert_eq!(editor.read_with(cx, |e, _| e.title()), "*note.md - Tachyon");
 
     cx.simulate_keystrokes("secondary-s");
     cx.run_until_parked();
@@ -2777,4 +2777,241 @@ fn ctrl_shift_t_toggles_the_pinned_state_and_it_is_written_to_the_notes_state_fi
     assert_eq!(crate::read_notes_state(&state_path), vec![record]);
 
     std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A stand-in Mermaid renderer: an SVG of a fixed size for any source starting `graph`, an error
+/// otherwise, and a panic for `boom`, like a renderer bug on input it does not handle.
+fn fake_mermaid(source: &str, _dark: bool) -> Result<String, String> {
+    if source.starts_with("boom") {
+        panic!("renderer bug");
+    }
+    if source.starts_with("graph") {
+        Ok(r#"<svg xmlns="http://www.w3.org/2000/svg" width="120" height="40" viewBox="0 0 120 40"><rect width="120" height="40"/></svg>"#.to_owned())
+    } else {
+        Err("unexpected token".to_owned())
+    }
+}
+
+fn diagram_states(editor: &Entity<Editor>, cx: &mut VisualTestContext) -> Vec<&'static str> {
+    editor.read_with(cx, |e, _| e.diagram_states())
+}
+
+#[gpui::test]
+fn mermaid_blocks_render_in_the_background_and_stay_code_when_they_fail(cx: &mut TestAppContext) {
+    cx.update(|cx| cx.set_global(crate::MermaidRenderer(fake_mermaid)));
+    let doc = "para\n\n```mermaid\ngraph TD\n```\n\n```mermaid\nnot a diagram\n```\n\n```mermaid\nboom\n```\n\n```rust\ngraph\n```\n";
+    let (editor, cx) = open(doc, cx);
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    // One rendered diagram, one refused source, and a renderer panic contained as a failure;
+    // the Rust block is never sent to the renderer.
+    let mut states = diagram_states(&editor, cx);
+    states.sort();
+    assert_eq!(states, vec!["failed", "failed", "ready"]);
+    assert!(editor.read_with(cx, |e, _| e.text() == doc), "rendering never edits the text");
+}
+
+#[gpui::test]
+fn mermaid_off_or_no_renderer_shows_code_and_renders_nothing(cx: &mut TestAppContext) {
+    let doc = "para\n\n```mermaid\ngraph TD\n```\n";
+    {
+        let (editor, cx) = open(doc, cx);
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        assert!(diagram_states(&editor, cx).is_empty(), "no renderer installed");
+    }
+    cx.update(|cx| {
+        cx.set_global(crate::MermaidRenderer(fake_mermaid));
+        cx.set_global(crate::Settings { mermaid: false, ..Default::default() });
+    });
+    let (editor, cx) = open(doc, cx);
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    assert!(diagram_states(&editor, cx).is_empty(), "the setting is off");
+}
+
+#[gpui::test]
+fn preferences_flip_a_flag_and_write_it_keeping_comments(cx: &mut TestAppContext) {
+    let dir = backup_dir("preferences-flag");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let file = dir.join("settings.toml");
+    // An early build's file: empty. The panel still lists every setting.
+    std::fs::write(&file, "").expect("write");
+    cx.update(|cx| cx.set_global(crate::SettingsFile(file.clone())));
+    let (editor, cx) = open("text\n", cx);
+
+    cx.simulate_keystrokes("secondary-,");
+    let rows = editor.read_with(cx, |e, _| e.picker.as_ref().map(|p| p.items.len()));
+    assert_eq!(rows, Some(crate::settings::KEYS.len() + 1), "every setting, then reset");
+
+    cx.simulate_input("mermaid");
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    let settings = cx.update(|_, cx| cx.global::<crate::Settings>().clone());
+    assert!(!settings.mermaid, "flipped at once");
+    let label = editor.read_with(cx, |e, _| {
+        let p = e.picker.as_ref().expect("stays open");
+        p.items[p.matches[p.selected]].label.clone()
+    });
+    assert_eq!(label, "Mermaid diagrams: Off", "on the same row, showing the new value");
+    let query = editor.read_with(cx, |e, _| e.picker.as_ref().map(|p| p.query.clone()));
+    assert_eq!(query.as_deref(), Some("mermaid"), "the filter survives the change");
+    let written = std::fs::read_to_string(&file).expect("read");
+    assert!(written.contains("# Draw ```mermaid code blocks as diagrams"), "{written}");
+    assert!(written.ends_with("mermaid = false\n"), "{written}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[gpui::test]
+fn preferences_value_field_refuses_bad_input_and_applies_good(cx: &mut TestAppContext) {
+    let (editor, cx) = open("text\n", cx);
+    cx.simulate_keystrokes("secondary-,");
+    cx.simulate_input("Zoom of new");
+    cx.simulate_keystrokes("enter");
+    let query = editor.read_with(cx, |e, _| e.picker.as_ref().map(|p| p.query.clone()));
+    assert_eq!(query.as_deref(), Some("1"), "prefilled with the current value");
+
+    cx.simulate_keystrokes("backspace");
+    cx.simulate_input("9");
+    cx.simulate_keystrokes("enter");
+    let problem = editor.read_with(cx, |e, _| e.picker.as_ref().and_then(|p| p.problem.clone()));
+    assert_eq!(problem.as_deref(), Some("zoom is a number from 0.5 to 3.0"));
+    let zoom = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| cx.try_global::<crate::Settings>().cloned().unwrap_or_default().zoom)
+    };
+    assert_eq!(zoom(cx), 1., "nothing applied");
+
+    cx.simulate_keystrokes("backspace");
+    cx.simulate_input("1.5");
+    cx.simulate_keystrokes("enter");
+    assert_eq!(zoom(cx), 1.5);
+    let back = editor.read_with(cx, |e, _| e.picker.as_ref().map(|p| p.editing.is_none()));
+    assert_eq!(back, Some(true), "back to the list");
+
+    // Escape in the field goes back to the list; Escape there closes it.
+    cx.simulate_keystrokes("enter escape");
+    assert!(editor.read_with(cx, |e, _| e.picker.as_ref().is_some_and(|p| p.editing.is_none())));
+    cx.simulate_keystrokes("escape");
+    assert!(editor.read_with(cx, |e, _| e.picker.is_none()));
+}
+
+#[gpui::test]
+fn reset_restores_defaults_after_asking_and_keeps_a_backup(cx: &mut TestAppContext) {
+    let dir = backup_dir("preferences-reset");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let file = dir.join("settings.toml");
+    std::fs::write(&file, "theme = \"dark\"\nzoom = 2\n").expect("write");
+    cx.update(|cx| {
+        cx.set_global(crate::Settings::parse("theme = \"dark\"\nzoom = 2\n").0);
+        cx.set_global(crate::SettingsFile(file.clone()));
+    });
+    let (_editor, cx) = open("text\n", cx);
+
+    cx.simulate_keystrokes("secondary-,");
+    cx.simulate_input("Reset all");
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert!(cx.has_pending_prompt());
+    cx.simulate_prompt_answer("Cancel");
+    cx.run_until_parked();
+    assert_eq!(
+        cx.update(|_, cx| cx.global::<crate::Settings>().zoom),
+        2.,
+        "cancel changes nothing"
+    );
+
+    // Cancel returns to the panel on the reset row, so Enter asks again.
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    cx.simulate_prompt_answer("Reset");
+    cx.run_until_parked();
+    assert_eq!(
+        cx.update(|_, cx| cx.global::<crate::Settings>().clone()),
+        crate::Settings::default()
+    );
+    assert_eq!(std::fs::read_to_string(&file).expect("read"), crate::DEFAULT_SETTINGS);
+    let backup = std::fs::read_to_string(crate::settings::backup_path(&file)).expect("backup");
+    assert_eq!(backup, "theme = \"dark\"\nzoom = 2\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[gpui::test]
+fn unsaved_scratch_and_undo_to_saved_title_follow_the_asterisk_rule(cx: &mut TestAppContext) {
+    let (editor, cx) = open("", cx);
+    assert_eq!(editor.read_with(cx, |e, _| e.title()), "Tachyon");
+    cx.simulate_input("x");
+    assert_eq!(editor.read_with(cx, |e, _| e.title()), "*Tachyon", "scratch with unsaved text");
+    cx.simulate_keystrokes("secondary-z");
+    assert_eq!(editor.read_with(cx, |e, _| e.title()), "Tachyon", "undone back to unmodified");
+
+    editor.update(cx, |e, _| e.set_title_override("What's new in Tachyon"));
+    cx.simulate_input("y");
+    assert_eq!(
+        editor.read_with(cx, |e, _| e.title()),
+        "What's new in Tachyon",
+        "an override keeps its fixed title"
+    );
+}
+
+#[gpui::test]
+fn preferences_keep_the_changed_row_when_the_filter_matched_its_old_value(cx: &mut TestAppContext) {
+    let (editor, cx) = open("text\n", cx);
+    cx.simulate_keystrokes("secondary-,");
+    // "mermaid diagrams: on" matches only while the value is On.
+    cx.simulate_input("diagrams: on");
+    cx.simulate_keystrokes("enter");
+    let chosen = |cx: &mut VisualTestContext| {
+        editor.read_with(cx, |e, _| {
+            let p = e.picker.as_ref().expect("stays open");
+            p.items[p.matches[p.selected]].label.clone()
+        })
+    };
+    assert_eq!(chosen(cx), "Mermaid diagrams: Off");
+    // A second Enter acts on the same setting, not on whatever else the filter matches.
+    cx.simulate_keystrokes("enter");
+    assert_eq!(chosen(cx), "Mermaid diagrams: On");
+}
+
+#[gpui::test]
+fn a_reset_queued_after_a_change_leaves_the_file_at_the_defaults(cx: &mut TestAppContext) {
+    let dir = backup_dir("preferences-order");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let file = dir.join("settings.toml");
+    std::fs::write(&file, crate::DEFAULT_SETTINGS).expect("write");
+    cx.update(|cx| cx.set_global(crate::SettingsFile(file.clone())));
+    let (_editor, cx) = open("text\n", cx);
+    // A change and a reset in the same turn: their writes must land in that order.
+    cx.simulate_keystrokes("secondary-,");
+    cx.simulate_input("mermaid");
+    cx.simulate_keystrokes("enter");
+    cx.simulate_keystrokes("escape secondary-,");
+    cx.simulate_input("Reset all");
+    cx.simulate_keystrokes("enter");
+    cx.simulate_prompt_answer("Reset");
+    cx.run_until_parked();
+    assert_eq!(std::fs::read_to_string(&file).expect("read"), crate::DEFAULT_SETTINGS);
+    let backup = std::fs::read_to_string(crate::settings::backup_path(&file)).expect("backup");
+    assert!(backup.ends_with("mermaid = false\n"), "the change was saved before the reset");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[gpui::test]
+fn a_reset_whose_backup_cannot_be_written_leaves_the_file_and_says_so(cx: &mut TestAppContext) {
+    let dir = backup_dir("preferences-backup-fails");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let file = dir.join("settings.toml");
+    std::fs::write(&file, "zoom = 2\n").expect("write");
+    // A directory where the backup file should go: writing it fails.
+    std::fs::create_dir_all(crate::settings::backup_path(&file).join("blocker")).expect("dir");
+    cx.update(|cx| cx.set_global(crate::SettingsFile(file.clone())));
+    let (editor, cx) = open("text\n", cx);
+    cx.simulate_keystrokes("secondary-,");
+    cx.simulate_input("Reset all");
+    cx.simulate_keystrokes("enter");
+    cx.simulate_prompt_answer("Reset");
+    cx.run_until_parked();
+    assert_eq!(std::fs::read_to_string(&file).expect("read"), "zoom = 2\n", "file untouched");
+    let notice = editor.read_with(cx, |e, _| e.notice.clone()).expect("a notice");
+    assert!(notice.starts_with("Settings were not saved: could not keep a backup"), "{notice}");
+    let _ = std::fs::remove_dir_all(&dir);
 }

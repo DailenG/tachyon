@@ -60,8 +60,8 @@ start as fast as a scratchpad and edit like Typora: one pane, inline WYSIWYG, no
   following the system or a setting, zoom, `Ctrl+click` links, list continuation and `Tab`
   nesting, syntax highlighting in fenced code (Rust, Python, JS/TS, C family, Go, Java, C#,
   shells, PowerShell, SQL, JSON, TOML, YAML), a command palette, Go to heading, quick open, Open
-  recent, hot exit, Copy as HTML, local images, external file change reload, a settings file, and
-  math.
+  recent, hot exit, Copy as HTML, local images, Mermaid diagrams, external file change reload, a
+  Preferences panel over a plain settings file, and math.
 
 ## Keyboard shortcuts
 
@@ -74,7 +74,7 @@ start as fast as a scratchpad and edit like Typora: one pane, inline WYSIWYG, no
 | Save / Save As | `Ctrl+S` / `Ctrl+Shift+S` |
 | Close window / Quit | `Ctrl+W` / `Ctrl+Q` |
 | Command palette | `Ctrl+Shift+P` (also `F1`); right-click the document |
-| Settings | `Ctrl+,` |
+| Preferences (every setting, editable in place) | `Ctrl+,` |
 | Open recent / quick open (the same picker) | `Ctrl+R` or `Ctrl+P` |
 | Find | `Ctrl+F` |
 | Find next / previous | `F3` / `Shift+F3` (also `Ctrl+G` / `Ctrl+Shift+G`) |
@@ -247,14 +247,30 @@ restartable apps and restart them when I sign back in" (Settings > Accounts > Si
 the same windowless start autostart uses, reopening whatever was unsaved.
 
 `cargo xtask dist` builds a release archive in `target/dist/`. `tachyon --help` lists all options.
-Settings live in `settings.toml` (`Ctrl+,` opens it): theme, zoom of new windows, whether Quit
+`Ctrl+,` opens Preferences: every setting with its current value and what it does. Picking an
+on/off setting flips it, a setting with a few values steps to the next, and any other opens a
+field (a value it does not accept says why and changes nothing). Changes apply to every window at
+once. "Reset all settings to defaults" restores every default and keeps the old file as
+`settings.toml.bak`; "Open settings file" in the command palette opens the file itself.
+
+Settings live in `settings.toml`: theme, zoom of new windows, whether Quit
 keeps unsaved documents, whether the whole session (open files, window position and size, caret
 and scroll) is restored at the next start with no files given on the command line, whether a
 faint rotating tip shows behind the document, whether an update opens a "What's new" window (the
 command palette's "What's new" row opens it any time regardless), the text column width (a pixel
 size like `820px` or a percentage like `80%`, always leaving a minimum gap to the window frame),
 and sticky notes' own global hotkey (`sticky_hotkey`, Windows only), whether a new note starts
-always-on-top (`sticky_on_top`), and its opacity while unfocused (`sticky_unfocused_opacity`).
+always-on-top (`sticky_on_top`), its opacity while unfocused (`sticky_unfocused_opacity`), and
+whether ```` ```mermaid ```` code blocks show as diagrams (`mermaid`, on by default).
+
+## Mermaid diagrams
+
+A fenced code block marked `mermaid` shows as a diagram when the caret is elsewhere; click it to
+edit the source. Flowcharts, sequence, state, class, ER, Gantt, pie, journey, timeline, mindmap,
+git graph and other diagram types render with a bundled pure-Rust renderer, in the background, so
+typing never waits for one (a large graph can take a quarter second to appear). A diagram that
+does not parse stays code, with the reason underneath. Documents without diagrams cost nothing
+([ADR 0012](docs/adr/0012-mermaid-diagrams.md)).
 
 ## Development
 

@@ -12,9 +12,11 @@ mod frame_log;
 mod frame_stats;
 mod links;
 mod lists;
+mod mermaid;
 mod movement;
 mod notes;
 mod picker;
+mod preferences;
 mod prompt;
 mod render;
 mod scrollbar;
@@ -30,6 +32,7 @@ pub use crate::editor::{
     ClipboardReader, CloseWindow, Editor, HtmlClipboard, KEY_CONTEXT, OpenNote, OpenPaths, Save,
     SaveAs, key_bindings,
 };
+pub use crate::mermaid::MermaidRenderer;
 pub use crate::notes::{
     NoteWindowState, NotesChanged, NotesDir, existing_notes, read_notes_state, write_notes_state,
 };

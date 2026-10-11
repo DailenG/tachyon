@@ -18,3 +18,4 @@ that supersedes the old one.
 | [0009](0009-session-restore.md) | Session restore on top of hot exit | Accepted |
 | [0010](0010-sticky-notes.md) | Sticky notes | Accepted |
 | [0011](0011-design-system-and-traced-brand-assets.md) | The Claude Design system is the design source, and brand assets are traced from masters | Accepted |
+| [0012](0012-mermaid-diagrams.md) | Mermaid diagrams: a bundled pure-Rust renderer, run lazily off the UI thread | Accepted |
