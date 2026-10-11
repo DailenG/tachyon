@@ -1811,6 +1811,18 @@ impl Editor {
         self.move_to(caret, false, cx);
     }
 
+    /// After a save under a new name: switches the document's mode if the new extension calls
+    /// for the other one (`mode_after_save_as`), keeping the text, caret and undo history.
+    fn follow_extension(&mut self, cx: &mut Context<Self>) {
+        let Some(path) = self.file.clone() else { return };
+        let mode = mode_after_save_as(self.doc.mode(), &path, self.doc.len(), self.lossy);
+        if let Some(mode) = mode {
+            self.flush_pending_paste(cx);
+            self.retag_to(mode, cx);
+            cx.notify();
+        }
+    }
+
     pub(crate) fn save(&mut self, _: &Save, window: &mut Window, cx: &mut Context<Self>) {
         self.confirm_lossy_then(window, cx, |editor, window, cx| {
             editor.save_then(window, cx, |_, _| {});
@@ -1888,11 +1900,10 @@ impl Editor {
             .map(Path::to_path_buf)
             .or_else(|| std::env::current_dir().ok())
             .unwrap_or_default();
-        let name = self
-            .file
-            .as_ref()
-            .and_then(|p| p.file_name())
-            .map_or_else(|| "untitled.md".to_owned(), |n| n.to_string_lossy().into_owned());
+        let name = self.file.as_ref().and_then(|p| p.file_name()).map_or_else(
+            || suggested_name(self.doc.mode()).to_owned(),
+            |n| n.to_string_lossy().into_owned(),
+        );
         let chosen = cx.prompt_for_new_path(&directory, Some(&name));
         cx.spawn_in(window, async move |this, cx| {
             let Ok(Ok(Some(path))) = chosen.await else { return };
@@ -1908,7 +1919,7 @@ impl Editor {
     /// (O(1): `ropey` shares nodes via `Arc`) and the line-ending conversion itself
     /// (`tachyon_text::saved_text`, `O(document size)`) runs on the background executor, not
     /// here, so a save of a huge document never stalls a frame building the string to write.
-    fn write_to(
+    pub(crate) fn write_to(
         &mut self,
         path: PathBuf,
         force: bool,
@@ -1953,8 +1964,14 @@ impl Editor {
                     editor.settings_saved(&path, cx);
                     editor.disk_stamp = stamp;
                     editor.disk_changed = false;
+                    // Save As (or a first save) to a different name re-derives the mode from
+                    // the new extension; an ordinary save keeps a manual `Ctrl+Shift+M` choice.
+                    let renamed = editor.file.as_ref() != Some(&path);
                     editor.file = Some(path);
                     editor.saved_history_position = history_position;
+                    if renamed {
+                        editor.follow_extension(cx);
+                    }
                     // The bytes now on disk are exactly what the document holds (U+FFFD in
                     // place of whatever did not decode the first time): the round trip is
                     // lossless from here on, so later saves need not ask again.
@@ -2195,6 +2212,40 @@ pub(crate) fn map_drawn(drawn: &Range<usize>, old: &Range<usize>, new_len: usize
         old.start + replaced.min(new_len)
     };
     start..end.max(start)
+}
+
+/// The name Save As offers for a document that has no file yet: `untitled.md` for Markdown,
+/// `untitled.txt` for plain text, so the suggested extension agrees with the document's mode.
+pub(crate) fn suggested_name(mode: DocMode) -> &'static str {
+    match mode {
+        DocMode::Markdown => "untitled.md",
+        DocMode::Plain => "untitled.txt",
+    }
+}
+
+/// Above this a plain document saved as `.md` stays plain: retagging parses the whole text on
+/// the UI thread, and `PARSE_CHUNK` is how much of it the editor ever parses in one go there
+/// (the same bound that keeps a keystroke's reparse under a frame). `Ctrl+Shift+M` still
+/// switches a larger one on request, as it always has.
+const SAVE_AS_MARKDOWN_LIMIT: usize = tachyon_doc::PARSE_CHUNK;
+
+/// The mode a document in `mode` should switch to after being saved as `path`, if the new
+/// extension calls for the other one: a Markdown document saved as `notes.log` becomes plain
+/// text (always cheap), a plain one saved as `notes.md` becomes Markdown. `None` when nothing
+/// changes, and when the switch would be to Markdown but the document is
+/// - above [`SAVE_AS_MARKDOWN_LIMIT`] (parsing it here would stall a frame), or
+/// - `lossy` (decoded from invalid or binary-looking bytes, which `load_document` also never
+///   parses as Markdown).
+pub(crate) fn mode_after_save_as(
+    mode: DocMode,
+    path: &Path,
+    len: usize,
+    lossy: bool,
+) -> Option<DocMode> {
+    let target = tachyon_doc::mode_for_extension(path);
+    let to_markdown_is_unsafe =
+        target == DocMode::Markdown && (len > SAVE_AS_MARKDOWN_LIMIT || lossy);
+    (target != mode && !to_markdown_is_unsafe).then_some(target)
 }
 
 /// Writes `bytes` to a temporary file next to `path` and renames it over

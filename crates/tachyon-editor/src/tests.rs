@@ -3015,3 +3015,122 @@ fn a_reset_whose_backup_cannot_be_written_leaves_the_file_and_says_so(cx: &mut T
     assert!(notice.starts_with("Settings were not saved: could not keep a backup"), "{notice}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+fn save_dir(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("tachyon-saveas-{}-{name}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    dir
+}
+
+fn mode_of(editor: &Entity<Editor>, cx: &mut VisualTestContext) -> tachyon_doc::DocMode {
+    editor.read_with(cx, |e, _| e.document().mode())
+}
+
+#[gpui::test]
+fn saving_under_a_text_extension_switches_a_markdown_document_to_plain_text(
+    cx: &mut TestAppContext,
+) {
+    let dir = save_dir("to-plain");
+    let (editor, cx) = open("# Title\n\nbody\n", cx);
+    assert_eq!(mode_of(&editor, cx), tachyon_doc::DocMode::Markdown);
+    let text_before = text(&editor, cx);
+
+    editor.update_in(cx, |e, window, cx| {
+        e.write_to(dir.join("server.log"), false, window, cx, |_, _| {})
+    });
+    cx.run_until_parked();
+
+    assert_eq!(mode_of(&editor, cx), tachyon_doc::DocMode::Plain, "the extension decides");
+    assert_eq!(text(&editor, cx), text_before, "the text is untouched");
+    assert_eq!(kinds(&editor, cx), vec![BlockKind::Plain], "'#' is now literal");
+    assert_eq!(std::fs::read_to_string(dir.join("server.log")).unwrap(), "# Title\n\nbody\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[gpui::test]
+fn saving_a_plain_document_as_markdown_switches_it_to_markdown(cx: &mut TestAppContext) {
+    let dir = save_dir("to-markdown");
+    let (editor, cx) = open("# Title\n", cx);
+    editor.update(cx, |e, cx| e.retag_to(tachyon_doc::DocMode::Plain, cx));
+    assert_eq!(mode_of(&editor, cx), tachyon_doc::DocMode::Plain);
+
+    editor.update_in(cx, |e, window, cx| {
+        e.write_to(dir.join("notes.md"), false, window, cx, |_, _| {})
+    });
+    cx.run_until_parked();
+
+    assert_eq!(mode_of(&editor, cx), tachyon_doc::DocMode::Markdown);
+    assert_eq!(kinds(&editor, cx), vec![BlockKind::Heading(1)]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[gpui::test]
+fn an_ordinary_save_keeps_a_manual_mode_choice(cx: &mut TestAppContext) {
+    let dir = save_dir("keeps-choice");
+    let path = dir.join("notes.md");
+    std::fs::write(&path, "# Title\n").unwrap();
+    let (editor, cx) = open("", cx);
+    let loaded = tachyon_doc::Document::new("# Title\n");
+    editor.update(cx, |e, cx| {
+        e.set_document(loaded, cx);
+        e.set_file(path.clone(), cx);
+    });
+    // A `.md` file the user switched to plain text with Ctrl+Shift+M stays plain when saved
+    // under its own name; only a rename re-derives the mode.
+    cx.simulate_keystrokes("ctrl-shift-m");
+    assert_eq!(mode_of(&editor, cx), tachyon_doc::DocMode::Plain);
+    cx.simulate_keystrokes("secondary-s");
+    cx.run_until_parked();
+    assert_eq!(mode_of(&editor, cx), tachyon_doc::DocMode::Plain);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn save_as_suggests_an_extension_that_matches_the_mode() {
+    use tachyon_doc::DocMode;
+    assert_eq!(super::editor::suggested_name(DocMode::Markdown), "untitled.md");
+    assert_eq!(super::editor::suggested_name(DocMode::Plain), "untitled.txt");
+}
+
+#[test]
+fn save_as_switches_to_markdown_only_when_that_is_cheap_and_sensible() {
+    use std::path::Path;
+    use tachyon_doc::{DocMode, PARSE_CHUNK};
+    let f = super::editor::mode_after_save_as;
+    let big = PARSE_CHUNK + 1;
+    assert_eq!(f(DocMode::Plain, Path::new("small.md"), 10, false), Some(DocMode::Markdown));
+    assert_eq!(
+        f(DocMode::Plain, Path::new("edge.md"), PARSE_CHUNK, false),
+        Some(DocMode::Markdown)
+    );
+    // Parsing this much on the UI thread would stall a frame; Ctrl+Shift+M still offers it.
+    assert_eq!(f(DocMode::Plain, Path::new("big.md"), big, false), None);
+    // Binary or garbled text is never parsed as Markdown, as when such a file is opened.
+    assert_eq!(f(DocMode::Plain, Path::new("junk.md"), 10, true), None);
+    // Going to plain text is always cheap, whatever the size or content.
+    assert_eq!(f(DocMode::Markdown, Path::new("a.json"), big, true), Some(DocMode::Plain));
+    assert_eq!(f(DocMode::Markdown, Path::new("a.MD"), 10, false), None, "case-insensitive");
+    assert_eq!(f(DocMode::Plain, Path::new("README"), 10, false), None, "no extension is plain");
+}
+
+#[gpui::test]
+fn saving_a_large_plain_document_as_markdown_leaves_it_plain(cx: &mut TestAppContext) {
+    let dir = save_dir("large-stays-plain");
+    let big = "word ".repeat(tachyon_doc::PARSE_CHUNK / 4);
+    assert!(big.len() > tachyon_doc::PARSE_CHUNK);
+    let (editor, cx) = open("", cx);
+    editor.update(cx, |e, cx| {
+        e.set_document(tachyon_doc::Document::new_plain(&big), cx);
+    });
+    assert_eq!(mode_of(&editor, cx), tachyon_doc::DocMode::Plain);
+
+    editor.update_in(cx, |e, window, cx| {
+        e.write_to(dir.join("big.md"), false, window, cx, |_, _| {})
+    });
+    cx.run_until_parked();
+
+    assert_eq!(mode_of(&editor, cx), tachyon_doc::DocMode::Plain, "no UI-thread parse");
+    assert_eq!(std::fs::metadata(dir.join("big.md")).unwrap().len() as usize, big.len());
+    let _ = std::fs::remove_dir_all(&dir);
+}
