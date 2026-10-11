@@ -74,10 +74,30 @@ fn oversample(svg: &str) -> Option<(String, Size<Pixels>)> {
     Some((out, size(px(w), px(h))))
 }
 
-/// A window's rendered diagrams, keyed by a hash of the source and whether the theme is dark.
+/// A window's rendered diagrams, keyed by a hash of the source and whether the theme is dark,
+/// each with the frame it was last drawn in.
 #[derive(Default)]
 pub(crate) struct Diagrams {
-    entries: HashMap<u64, Diagram>,
+    entries: HashMap<u64, (Diagram, u64)>,
+    /// Counts `mermaid_diagram` calls; an entry's stamp is the count when it was last asked for.
+    clock: u64,
+}
+
+impl Diagrams {
+    /// Makes room for one more entry: drops the least recently drawn ones, down to half the
+    /// limit, so a burst of new diagrams costs one sweep rather than one per diagram. Never drops
+    /// one asked for within the last `CACHE_LIMIT` calls, so every diagram on screen survives
+    /// (a screen cannot show `CACHE_LIMIT` blocks), and with them the renders in flight.
+    fn make_room(&mut self) {
+        if self.entries.len() < CACHE_LIMIT {
+            return;
+        }
+        let mut stamps: Vec<u64> = self.entries.values().map(|&(_, stamp)| stamp).collect();
+        stamps.sort_unstable();
+        let cutoff = stamps[self.entries.len() - CACHE_LIMIT / 2]
+            .min(self.clock.saturating_sub(CACHE_LIMIT as u64));
+        self.entries.retain(|_, &mut (_, stamp)| stamp >= cutoff);
+    }
 }
 
 fn key(source: &str, dark: bool) -> u64 {
@@ -119,13 +139,14 @@ impl Editor {
         let render = cx.try_global::<MermaidRenderer>()?.0;
         let dark = self.theme.dark;
         let key = key(source, dark);
-        if let Some(diagram) = self.diagrams.entries.get(&key) {
+        self.diagrams.clock += 1;
+        let now = self.diagrams.clock;
+        if let Some((diagram, stamp)) = self.diagrams.entries.get_mut(&key) {
+            *stamp = now;
             return Some(diagram.clone());
         }
-        if self.diagrams.entries.len() >= CACHE_LIMIT {
-            self.diagrams.entries.clear();
-        }
-        self.diagrams.entries.insert(key, Diagram::Pending);
+        self.diagrams.make_room();
+        self.diagrams.entries.insert(key, (Diagram::Pending, now));
         let source = source.to_owned();
         cx.spawn(async move |editor, cx| {
             let result = cx
@@ -140,8 +161,8 @@ impl Editor {
                 Err(error) => Diagram::Failed(error),
             };
             let _ = editor.update(cx, |editor, cx| {
-                // A clear since this started (cache full, or the setting turned off) drops it.
-                if let Some(slot) = editor.diagrams.entries.get_mut(&key) {
+                // Dropped since this started (evicted, or the setting turned off): discard it.
+                if let Some((slot, _)) = editor.diagrams.entries.get_mut(&key) {
                     *slot = diagram;
                     // The block's height changes from code to diagram.
                     editor.list.remeasure();
@@ -164,7 +185,7 @@ impl Editor {
         self.diagrams
             .entries
             .values()
-            .map(|d| match d {
+            .map(|(d, _)| match d {
                 Diagram::Pending => "pending",
                 Diagram::Ready(..) => "ready",
                 Diagram::Failed(_) => "failed",
@@ -189,6 +210,42 @@ mod tests {
             "{out}"
         );
         assert!(out.ends_with(r#"<rect width="236.5"/></svg>"#), "only the root changes: {out}");
+    }
+
+    #[test]
+    fn eviction_keeps_recently_drawn_entries_and_drops_the_oldest() {
+        let mut diagrams = Diagrams::default();
+        // Fill to the limit, oldest first.
+        for k in 0..CACHE_LIMIT as u64 {
+            diagrams.clock += 1;
+            diagrams.entries.insert(k, (Diagram::Pending, diagrams.clock));
+        }
+        // The first half keeps being drawn (on screen, two frames); the second half is not, and
+        // falls out of the protected window of the last `CACHE_LIMIT` calls.
+        for _ in 0..2 {
+            for k in 0..(CACHE_LIMIT / 2) as u64 {
+                diagrams.clock += 1;
+                diagrams.entries.get_mut(&k).unwrap().1 = diagrams.clock;
+            }
+        }
+        diagrams.make_room();
+        assert!(diagrams.entries.len() < CACHE_LIMIT, "room was made");
+        for k in 0..(CACHE_LIMIT / 2) as u64 {
+            assert!(diagrams.entries.contains_key(&k), "recently drawn {k} kept");
+        }
+    }
+
+    #[test]
+    fn eviction_never_drops_entries_asked_for_within_the_last_limit_calls() {
+        // A screen's worth of diagrams, all asked for in the current pass: nothing is dropped,
+        // so the cache can grow past the limit rather than thrash.
+        let mut diagrams = Diagrams::default();
+        for k in 0..CACHE_LIMIT as u64 {
+            diagrams.clock += 1;
+            diagrams.entries.insert(k, (Diagram::Pending, diagrams.clock));
+        }
+        diagrams.make_room();
+        assert_eq!(diagrams.entries.len(), CACHE_LIMIT);
     }
 
     #[test]

@@ -457,41 +457,33 @@ pub(crate) fn apply_setting(
     mutate(&mut settings);
     cx.set_global(settings);
     cx.defer(apply_to_windows);
-    let Some(path) = cx.try_global::<SettingsFile>().map(|file| file.0.clone()) else { return };
     let value = value.into();
-    cx.background_executor()
-        .spawn(async move {
-            let text =
-                std::fs::read_to_string(&path).unwrap_or_else(|_| DEFAULT_SETTINGS.to_owned());
-            let updated = set_setting_line(&text, key, &value);
-            if let Some(dir) = path.parent() {
-                let _ = std::fs::create_dir_all(dir);
-            }
-            let _ = crate::editor::write_atomically(&path, updated.as_bytes());
-        })
-        .detach();
+    write_settings_file(cx, move |path| {
+        let text = std::fs::read_to_string(path).unwrap_or_else(|_| DEFAULT_SETTINGS.to_owned());
+        crate::editor::write_atomically(path, set_setting_line(&text, key, &value).as_bytes())
+    });
 }
 
 /// Restores every setting to its default, in memory and on disk: the settings file is replaced
 /// by [`DEFAULT_SETTINGS`] (every key, each with its comment), the previous file kept beside it
-/// as `settings.toml.bak` so a reset is never a loss.
+/// as `settings.toml.bak`. If that backup cannot be written the file is left alone and the
+/// window says so, so a reset never loses settings.
 pub(crate) fn reset_settings(cx: &mut Context<Editor>) {
     cx.set_global(Settings::default());
     cx.defer(apply_to_windows);
-    let Some(path) = cx.try_global::<SettingsFile>().map(|file| file.0.clone()) else { return };
-    cx.background_executor()
-        .spawn(async move {
-            if let Some(dir) = path.parent() {
-                let _ = std::fs::create_dir_all(dir);
-            }
-            if let Ok(old) = std::fs::read(&path)
-                && old != DEFAULT_SETTINGS.as_bytes()
-            {
-                let _ = crate::editor::write_atomically(&backup_path(&path), &old);
-            }
-            let _ = crate::editor::write_atomically(&path, DEFAULT_SETTINGS.as_bytes());
-        })
-        .detach();
+    write_settings_file(cx, |path| {
+        if let Ok(old) = std::fs::read(path)
+            && old != DEFAULT_SETTINGS.as_bytes()
+        {
+            crate::editor::write_atomically(&backup_path(path), &old).map_err(|error| {
+                std::io::Error::new(
+                    error.kind(),
+                    format!("could not keep a backup ({error}); the settings file is unchanged"),
+                )
+            })?;
+        }
+        crate::editor::write_atomically(path, DEFAULT_SETTINGS.as_bytes())
+    });
 }
 
 /// Where [`reset_settings`] keeps the file it replaced: the same name with `.bak` appended.
@@ -499,6 +491,46 @@ pub(crate) fn backup_path(path: &std::path::Path) -> std::path::PathBuf {
     let mut name = path.as_os_str().to_owned();
     name.push(".bak");
     name.into()
+}
+
+/// Writes to the settings file are applied one at a time, in the order they were asked for: each
+/// waits for the one before it. A preference change followed at once by a reset (or the
+/// reverse) therefore ends with the file matching the last action, as the windows already do.
+#[derive(Default)]
+struct SettingsWrites(Option<futures::future::Shared<gpui::Task<()>>>);
+
+impl Global for SettingsWrites {}
+
+/// Queues `write` against the settings file (creating its folder first) behind every earlier
+/// write, on the background executor. A failure is shown as the requesting window's notice.
+fn write_settings_file(
+    cx: &mut Context<Editor>,
+    write: impl FnOnce(&std::path::Path) -> std::io::Result<()> + Send + 'static,
+) {
+    use futures::FutureExt as _;
+    let Some(path) = cx.try_global::<SettingsFile>().map(|file| file.0.clone()) else { return };
+    let previous = cx.default_global::<SettingsWrites>().0.take();
+    let executor = cx.background_executor().clone();
+    let editor = cx.entity().downgrade();
+    let task = cx.spawn(async move |_, cx| {
+        if let Some(previous) = previous {
+            previous.await;
+        }
+        let result = executor
+            .spawn(async move {
+                if let Some(dir) = path.parent() {
+                    std::fs::create_dir_all(dir)?;
+                }
+                write(&path)
+            })
+            .await;
+        if let Err(error) = result {
+            let _ = editor.update(cx, |editor, cx| {
+                editor.set_notice(format!("Settings were not saved: {error}").into(), cx);
+            });
+        }
+    });
+    cx.global_mut::<SettingsWrites>().0 = Some(task.shared());
 }
 
 /// Rewrites `key`'s line in a settings file's text to `key = value`, keeping any trailing

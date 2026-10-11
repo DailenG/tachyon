@@ -2952,3 +2952,66 @@ fn unsaved_scratch_and_undo_to_saved_title_follow_the_asterisk_rule(cx: &mut Tes
         "an override keeps its fixed title"
     );
 }
+
+#[gpui::test]
+fn preferences_keep_the_changed_row_when_the_filter_matched_its_old_value(cx: &mut TestAppContext) {
+    let (editor, cx) = open("text\n", cx);
+    cx.simulate_keystrokes("secondary-,");
+    // "mermaid diagrams: on" matches only while the value is On.
+    cx.simulate_input("diagrams: on");
+    cx.simulate_keystrokes("enter");
+    let chosen = |cx: &mut VisualTestContext| {
+        editor.read_with(cx, |e, _| {
+            let p = e.picker.as_ref().expect("stays open");
+            p.items[p.matches[p.selected]].label.clone()
+        })
+    };
+    assert_eq!(chosen(cx), "Mermaid diagrams: Off");
+    // A second Enter acts on the same setting, not on whatever else the filter matches.
+    cx.simulate_keystrokes("enter");
+    assert_eq!(chosen(cx), "Mermaid diagrams: On");
+}
+
+#[gpui::test]
+fn a_reset_queued_after_a_change_leaves_the_file_at_the_defaults(cx: &mut TestAppContext) {
+    let dir = backup_dir("preferences-order");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let file = dir.join("settings.toml");
+    std::fs::write(&file, crate::DEFAULT_SETTINGS).expect("write");
+    cx.update(|cx| cx.set_global(crate::SettingsFile(file.clone())));
+    let (_editor, cx) = open("text\n", cx);
+    // A change and a reset in the same turn: their writes must land in that order.
+    cx.simulate_keystrokes("secondary-,");
+    cx.simulate_input("mermaid");
+    cx.simulate_keystrokes("enter");
+    cx.simulate_keystrokes("escape secondary-,");
+    cx.simulate_input("Reset all");
+    cx.simulate_keystrokes("enter");
+    cx.simulate_prompt_answer("Reset");
+    cx.run_until_parked();
+    assert_eq!(std::fs::read_to_string(&file).expect("read"), crate::DEFAULT_SETTINGS);
+    let backup = std::fs::read_to_string(crate::settings::backup_path(&file)).expect("backup");
+    assert!(backup.ends_with("mermaid = false\n"), "the change was saved before the reset");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[gpui::test]
+fn a_reset_whose_backup_cannot_be_written_leaves_the_file_and_says_so(cx: &mut TestAppContext) {
+    let dir = backup_dir("preferences-backup-fails");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let file = dir.join("settings.toml");
+    std::fs::write(&file, "zoom = 2\n").expect("write");
+    // A directory where the backup file should go: writing it fails.
+    std::fs::create_dir_all(crate::settings::backup_path(&file).join("blocker")).expect("dir");
+    cx.update(|cx| cx.set_global(crate::SettingsFile(file.clone())));
+    let (editor, cx) = open("text\n", cx);
+    cx.simulate_keystrokes("secondary-,");
+    cx.simulate_input("Reset all");
+    cx.simulate_keystrokes("enter");
+    cx.simulate_prompt_answer("Reset");
+    cx.run_until_parked();
+    assert_eq!(std::fs::read_to_string(&file).expect("read"), "zoom = 2\n", "file untouched");
+    let notice = editor.read_with(cx, |e, _| e.notice.clone()).expect("a notice");
+    assert!(notice.starts_with("Settings were not saved: could not keep a backup"), "{notice}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

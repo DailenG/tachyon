@@ -131,9 +131,21 @@ impl Picker {
         self.filter();
     }
 
-    /// Chooses the row showing `items[item]`, if it matches the filter; otherwise the first.
+    /// Chooses the row showing `items[item]`. If the filter no longer matches it (the Preferences
+    /// panel after a change: the filter may have matched the old value), it is put back where it
+    /// was, so the row just changed stays in view and Enter acts on it again.
     pub(crate) fn select_item(&mut self, item: usize) {
-        self.selected = self.matches.iter().position(|&i| i == item).unwrap_or(0);
+        if item >= self.items.len() {
+            self.selected = 0;
+            return;
+        }
+        if let Some(row) = self.matches.iter().position(|&i| i == item) {
+            self.selected = row;
+            return;
+        }
+        let row = self.matches.iter().position(|&i| i > item).unwrap_or(self.matches.len());
+        self.matches.insert(row, item);
+        self.selected = row;
     }
 
     /// The `rows` in view (at least one): indices into `matches`, keeping `selected` visible.

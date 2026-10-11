@@ -693,6 +693,8 @@ impl Editor {
         self.appearance_unconfirmed = false;
         if dark != self.theme.dark {
             self.theme = self.theme.restyled(dark);
+            // Diagrams are cached per theme and may differ in height between them.
+            self.list.remeasure();
             cx.notify();
         }
         if settings.content_width != self.content_width {
