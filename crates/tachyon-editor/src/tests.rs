@@ -3134,3 +3134,105 @@ fn saving_a_large_plain_document_as_markdown_leaves_it_plain(cx: &mut TestAppCon
     assert_eq!(std::fs::metadata(dir.join("big.md")).unwrap().len() as usize, big.len());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Where the task box of the list item on `line` (0-based) is drawn, for clicking it: found by
+/// asking the editor for the same offset the render path passes to the toggle.
+fn task_offset(editor: &Entity<Editor>, line_text: &str, cx: &mut VisualTestContext) -> usize {
+    editor.read_with(cx, |e, _| e.text().find(line_text).expect("the item is in the text"))
+}
+
+#[gpui::test]
+fn clicking_a_task_box_toggles_it_without_moving_the_caret_or_swapping_the_block(
+    cx: &mut TestAppContext,
+) {
+    let (editor, cx) = open("intro\n\n- [ ] one\n- [x] two\n- plain\n", cx);
+    // The caret rests in the intro paragraph; the list is rendered, not raw.
+    let caret_before = editor.read_with(cx, |e, _| e.selection());
+    let active_before = editor.read_with(cx, |e, _| e.active_block());
+    let one = task_offset(&editor, "- [ ] one", cx);
+
+    editor.update(cx, |e, cx| assert!(e.toggle_task_at(one, cx)));
+    cx.run_until_parked();
+
+    assert_eq!(text(&editor, cx), "intro\n\n- [x] one\n- [x] two\n- plain\n");
+    assert_eq!(editor.read_with(cx, |e, _| e.selection()), caret_before, "the caret did not move");
+    assert_eq!(editor.read_with(cx, |e, _| e.active_block()), active_before, "no block went raw");
+
+    // A checked box unchecks, from any offset on its line.
+    let two = task_offset(&editor, "- [x] two", cx);
+    editor.update(cx, |e, cx| assert!(e.toggle_task_at(two + 6, cx)));
+    assert_eq!(text(&editor, cx), "intro\n\n- [x] one\n- [ ] two\n- plain\n");
+}
+
+#[gpui::test]
+fn a_task_toggle_is_one_undo_step_of_its_own(cx: &mut TestAppContext) {
+    let (editor, cx) = open("- [ ] a\n- [ ] b\n", cx);
+    cx.simulate_keystrokes("ctrl-end");
+    cx.simulate_input("!");
+    let a = task_offset(&editor, "- [ ] a", cx);
+    editor.update(cx, |e, cx| e.toggle_task_at(a, cx));
+    let b = task_offset(&editor, "- [ ] b", cx);
+    editor.update(cx, |e, cx| e.toggle_task_at(b, cx));
+    assert_eq!(text(&editor, cx), "- [x] a\n- [x] b\n!");
+
+    cx.simulate_keystrokes("secondary-z");
+    assert_eq!(text(&editor, cx), "- [x] a\n- [ ] b\n!", "undo reverts the last toggle only");
+    cx.simulate_keystrokes("secondary-z");
+    assert_eq!(text(&editor, cx), "- [ ] a\n- [ ] b\n!", "then the first, not the typing");
+    cx.simulate_keystrokes("secondary-z");
+    assert_eq!(text(&editor, cx), "- [ ] a\n- [ ] b\n", "then the typing");
+}
+
+#[gpui::test]
+fn a_task_toggle_refuses_lines_that_are_not_tasks_and_code(cx: &mut TestAppContext) {
+    let doc = "- plain [ ] inline\n\n```\n- [ ] in code\n```\n\ntext\n";
+    let (editor, cx) = open(doc, cx);
+    for needle in ["- plain", "- [ ] in code", "text"] {
+        let at = task_offset(&editor, needle, cx);
+        editor.update(cx, |e, cx| assert!(!e.toggle_task_at(at, cx), "{needle:?} is not a task"));
+    }
+    assert_eq!(text(&editor, cx), doc, "nothing changed");
+}
+
+#[gpui::test]
+fn a_task_toggle_keeps_a_selection_in_place(cx: &mut TestAppContext) {
+    let (editor, cx) = open("- [ ] one two\n", cx);
+    editor.update(cx, |e, cx| {
+        e.move_to(6, false, cx);
+        e.move_to(9, true, cx);
+    });
+    let selection = editor.read_with(cx, |e, _| e.selection());
+    assert_eq!(selection, 6..9);
+    editor.update(cx, |e, cx| e.toggle_task_at(0, cx));
+    assert_eq!(editor.read_with(cx, |e, _| e.selection()), selection);
+    assert_eq!(text(&editor, cx), "- [x] one two\n");
+}
+
+#[gpui::test]
+fn a_real_click_on_a_task_box_toggles_it_and_leaves_the_caret_alone(cx: &mut TestAppContext) {
+    let (editor, cx) = open("intro\n\n- [ ] one\n- [x] two\n", cx);
+    let caret_before = editor.read_with(cx, |e, _| e.selection());
+    // Each box's selector carries its item's source offset: "one" starts at byte 7.
+    let boxed = cx.debug_bounds("task-box-7").expect("the first task box is drawn");
+
+    cx.simulate_click(boxed.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+
+    assert_eq!(text(&editor, cx), "intro\n\n- [x] one\n- [x] two\n");
+    assert_eq!(editor.read_with(cx, |e, _| e.selection()), caret_before, "the caret stayed");
+    assert!(!editor.read_with(cx, |e, _| e.selecting), "a toggle does not start a drag");
+}
+
+#[gpui::test]
+fn a_real_click_on_a_task_items_text_edits_it_instead_of_toggling(cx: &mut TestAppContext) {
+    let (editor, cx) = open("intro\n\n- [ ] one two three\n", cx);
+    let boxed = cx.debug_bounds("task-box-7").expect("the task box is drawn");
+    // On the item's text, a box-width and a half to the right of the box.
+    let on_text = gpui::point(boxed.right() + boxed.size.width * 2., boxed.center().y);
+
+    cx.simulate_click(on_text, gpui::Modifiers::none());
+    cx.run_until_parked();
+
+    assert_eq!(text(&editor, cx), "intro\n\n- [ ] one two three\n", "nothing toggled");
+    assert_eq!(editor.read_with(cx, |e, _| e.active_block()), Some(1), "the item is being edited");
+}

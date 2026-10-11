@@ -18,6 +18,10 @@ All notable user-visible changes are recorded here. The format follows
   `.yml`, `.ini`, `.cfg`, `.conf`, `.csv`, `.tsv`, `.xml`, `.env`, `.gitignore` and
   `.editorconfig` on Windows (next to `.txt`, `.text`, `.log`), and the matching MIME types in
   the Linux desktop entry. They open in plain-text mode (#123).
+- Clicking a task-list checkbox toggles it (`[ ]` / `[x]`) in the source, as its own undo step,
+  without moving the caret, starting a selection, or turning the block into raw Markdown. Works
+  in every window, in nested lists, numbered lists and quotes; sticky notes autosave the change
+  (#129).
 - Mermaid diagrams: a fenced code block marked `mermaid` shows as a diagram when the caret is
   elsewhere (click it to edit the source). Rendered in the background by a bundled renderer, so
   typing never waits and documents without diagrams cost nothing. A diagram that does not parse
