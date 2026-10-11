@@ -203,6 +203,8 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
             cx.set_global(tachyon_editor::NotesDir(dir.join("tachyon").join("notes")));
         }
         cx.set_global(tachyon_editor::NotesChanged(refresh_notes_state));
+        // A plain function pointer: nothing of the renderer runs until a diagram is drawn.
+        cx.set_global(tachyon_editor::MermaidRenderer(render_mermaid));
         if is_primary && resident {
             cx.set_global(tachyon_editor::StickyHotkeyRegistration { sync: sync_hotkey });
         }
@@ -217,7 +219,6 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
             KeyBinding::new("secondary-q", Quit, None),
             KeyBinding::new("secondary-n", NewWindow, None),
             KeyBinding::new("secondary-o", Open, None),
-            KeyBinding::new("secondary-,", OpenSettings, None),
         ]);
         cx.on_action(|_: &OpenSettings, cx| {
             let Some(file) = cx.try_global::<tachyon_editor::SettingsFile>().map(|f| f.0.clone())
@@ -1844,6 +1845,20 @@ fn serve_forwarded_launches(listener: Listener, cx: &mut App) {
         }
     })
     .detach();
+}
+
+/// [`tachyon_editor::MermaidRenderer`]: Mermaid source to SVG, run on the background executor
+/// (ADR 0012). The renderer's own theme supplies the diagram colors, light or dark to match the
+/// editor; its solid background is made transparent so the diagram sits on the editor's canvas.
+fn render_mermaid(source: &str, dark: bool) -> Result<String, String> {
+    use mermaid_rs_renderer::{RenderOptions, Theme};
+    let mut theme = if dark { Theme::dark() } else { Theme::modern() };
+    theme.background = "transparent".to_owned();
+    let options = RenderOptions { theme, ..RenderOptions::default() };
+    mermaid_rs_renderer::render_with_options(source, options).map_err(|error| {
+        // The renderer's messages are one line; keep the first in case one is not.
+        error.to_string().lines().next().unwrap_or("could not be drawn").to_owned()
+    })
 }
 
 #[cfg(test)]

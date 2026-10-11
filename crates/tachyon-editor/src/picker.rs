@@ -27,6 +27,18 @@ pub(crate) enum Pick {
     /// Reopens this sticky note (or focuses it), through [`crate::editor::OpenNote`].
     Note(PathBuf),
     Command(CommandEffect),
+    /// A Preferences row (`preferences.rs`).
+    Preference(crate::preferences::PreferencePick),
+}
+
+/// The Preferences panel's value field: which setting it edits (an index into
+/// `settings::KEYS`) and its display name, shown as the field's title.
+#[derive(Clone)]
+pub(crate) struct ValueEdit {
+    pub(crate) index: usize,
+    pub(crate) name: &'static str,
+    /// The list's filter when the field opened, restored when it closes.
+    pub(crate) list_query: String,
 }
 
 pub(crate) struct Item {
@@ -61,6 +73,11 @@ pub(crate) struct Picker {
     pub(crate) matches: Vec<usize>,
     /// Index into `matches` of the chosen row.
     pub(crate) selected: usize,
+    /// Set while the Preferences panel's value field is open: the query is then the value being
+    /// typed, not a filter, and there are no rows.
+    pub(crate) editing: Option<ValueEdit>,
+    /// Why the typed value was refused (the value field only).
+    pub(crate) problem: Option<String>,
 }
 
 impl Picker {
@@ -79,12 +96,18 @@ impl Picker {
             items,
             matches: Vec::new(),
             selected,
+            editing: None,
+            problem: None,
         };
         picker.filter();
         picker
     }
 
     fn filter(&mut self) {
+        if self.editing.is_some() {
+            self.problem = None;
+            return;
+        }
         let query = self.query.to_lowercase();
         let mut ranked: Vec<(usize, (u8, usize, usize))> = (0..self.items.len())
             .filter_map(|i| {
@@ -99,6 +122,18 @@ impl Picker {
         ranked.sort_by_key(|&(_, rank)| rank);
         self.matches = ranked.into_iter().map(|(i, _)| i).collect();
         self.selected = self.selected.min(self.matches.len().saturating_sub(1));
+    }
+
+    /// Replaces the filter (no IME composition) and re-filters.
+    pub(crate) fn set_query(&mut self, query: String) {
+        self.query = query;
+        self.composing = 0;
+        self.filter();
+    }
+
+    /// Chooses the row showing `items[item]`, if it matches the filter; otherwise the first.
+    pub(crate) fn select_item(&mut self, item: usize) {
+        self.selected = self.matches.iter().position(|&i| i == item).unwrap_or(0);
     }
 
     /// The `rows` in view (at least one): indices into `matches`, keeping `selected` visible.
@@ -418,6 +453,13 @@ impl Editor {
                 });
             }
             Pick::Command(effect) => self.run_command(effect, window, cx),
+            Pick::Preference(pick) => {
+                // The panel stays: the row's handler reads its filter, then rebuilds it.
+                let pick = *pick;
+                self.picker = Some(picker);
+                cx.notify();
+                return self.pick_preference(pick, window, cx);
+            }
             Pick::Note(path) => {
                 let path = path.clone();
                 cx.defer(move |cx: &mut App| {

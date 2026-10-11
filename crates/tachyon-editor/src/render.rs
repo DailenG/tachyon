@@ -177,6 +177,7 @@ impl Render for Editor {
             .on_action(cx.listener(Self::go_to_heading))
             .on_action(cx.listener(Self::open_recent))
             .on_action(cx.listener(Self::open_command_palette))
+            .on_action(cx.listener(Self::open_preferences))
             .on_action(cx.listener(Self::replace_bar))
             .on_action(cx.listener(Self::replace_all))
             .on_action(cx.listener(Self::find_next))
@@ -404,10 +405,14 @@ impl Editor {
             .max(OVERLAY_MARGIN);
         let room = viewport.height - top - OVERLAY_MARGIN - theme.scaled(px(16.)) - row_height;
         let fit = (room / row_height).floor().max(1.) as usize;
+        // Preferences rows carry long descriptions: shown in full, wrapped, under the list for
+        // the chosen row only, instead of cut off beside every label.
+        let preferences = picker.title == crate::preferences::TITLE;
         let rows = picker.window(fit.min(crate::picker::VISIBLE_ROWS)).map(|row| {
             let item = &picker.items[picker.matches[row]];
             let selected = row == picker.selected;
             let detail_color = if selected { theme.text.on_accent } else { theme.text.muted };
+            let detail = if preferences { None } else { item.detail.clone() };
             div()
                 .id(row)
                 .flex()
@@ -422,7 +427,7 @@ impl Editor {
                 } else {
                     item.label.clone()
                 }))
-                .children(item.detail.clone().map(|detail| {
+                .children(detail.map(|detail| {
                     div()
                         .text_color(detail_color)
                         .overflow_hidden()
@@ -439,13 +444,26 @@ impl Editor {
                     editor.picker_pick(Some(row), window, cx)
                 }))
         });
-        let note = if picker.items.is_empty() {
-            Some(picker.empty)
+        let note = if let Some(edit) = &picker.editing {
+            Some(match &picker.problem {
+                Some(problem) => problem.clone(),
+                None => format!(
+                    "{} Enter applies, Escape goes back.",
+                    crate::settings::description(crate::settings::KEYS[edit.index].0)
+                ),
+            })
+        } else if picker.items.is_empty() {
+            Some(picker.empty.to_owned())
         } else if picker.matches.is_empty() {
-            Some("no matches")
+            Some("no matches".to_owned())
+        } else if preferences {
+            picker.matches.get(picker.selected).and_then(|&i| picker.items[i].detail.clone())
         } else {
             None
         };
+        let title = picker.editing.as_ref().map_or(picker.title, |edit| edit.name);
+        let note_color =
+            if picker.problem.is_some() { theme.text.primary } else { theme.text.muted };
         Some(
             div()
                 .id("picker-dismiss")
@@ -496,7 +514,7 @@ impl Editor {
                                 div()
                                     .flex()
                                     .gap_3()
-                                    .child(div().text_color(theme.text.muted).child(picker.title))
+                                    .child(div().text_color(theme.text.muted).child(title))
                                     .child(div().flex_1().min_w_0().child(field(
                                         theme,
                                         &picker.query,
@@ -504,9 +522,17 @@ impl Editor {
                                     ))),
                             )
                             .children(rows)
-                            .children(
-                                note.map(|note| div().text_color(theme.text.muted).child(note)),
-                            ),
+                            .children(note.map(|note| {
+                                div()
+                                    .text_color(note_color)
+                                    .when(preferences, |d| {
+                                        d.mt_1()
+                                            .pt_1()
+                                            .border_t_1()
+                                            .border_color(theme.border.subtle)
+                                    })
+                                    .child(note)
+                            })),
                     ),
                 )
                 .into_any_element(),
@@ -786,6 +812,11 @@ impl Editor {
             if block.is_stale() || (active && leaf.is_none()) {
                 let code = matches!(parsed.kind, BlockKind::CodeBlock { .. } | BlockKind::Html);
                 self.render_raw(index, range, code, window, cx)
+            } else if let BlockKind::CodeBlock { fenced: true, lang } = &parsed.kind
+                && crate::mermaid::is_mermaid(lang.as_deref())
+                && let Some(diagram) = self.mermaid_diagram(&parsed.ir.text, cx)
+            {
+                self.render_mermaid(index, range.start, parsed.clone(), diagram, window, cx)
             } else {
                 self.render_rendered(index, range.start, parsed, leaf, window, cx)
             }
@@ -802,6 +833,67 @@ impl Editor {
         wrapper
             .child(div().w_full().max_w(self.theme.content_width).px_4().child(content))
             .into_any_element()
+    }
+
+    /// A Mermaid block that is not being edited: its diagram once rendered, scaled down to fit
+    /// the column; its code meanwhile; its code and the renderer's error if the source does not
+    /// parse. A click edits the source, like an image.
+    fn render_mermaid(
+        &mut self,
+        index: usize,
+        block_start: usize,
+        parsed: Arc<ParsedBlock>,
+        diagram: crate::mermaid::Diagram,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        use crate::mermaid::Diagram;
+        match diagram {
+            Diagram::Ready(image, shown) => {
+                let editor = cx.entity();
+                let offset = block_start + parsed.ir.visible_to_source(0);
+                div()
+                    .id(("mermaid", index))
+                    .my_2()
+                    .flex()
+                    .justify_center()
+                    .cursor_text()
+                    .child(
+                        img(image)
+                            .w(self.theme.scaled(shown.width))
+                            .h(self.theme.scaled(shown.height))
+                            .max_w_full()
+                            .object_fit(ObjectFit::ScaleDown),
+                    )
+                    .on_mouse_down(MouseButton::Left, move |event: &MouseDownEvent, window, cx| {
+                        editor.update(cx, |editor, cx| {
+                            editor.mouse_down(
+                                offset,
+                                event.modifiers,
+                                event.click_count,
+                                window,
+                                cx,
+                            )
+                        });
+                        cx.stop_propagation();
+                    })
+                    .into_any_element()
+            }
+            Diagram::Pending => self.render_rendered(index, block_start, parsed, None, window, cx),
+            Diagram::Failed(error) => {
+                let code = self.render_rendered(index, block_start, parsed, None, window, cx);
+                div()
+                    .child(code)
+                    .child(
+                        div()
+                            .mb_2()
+                            .text_size(self.theme.code_size)
+                            .text_color(self.theme.text.muted)
+                            .child(format!("Mermaid: {error}")),
+                    )
+                    .into_any_element()
+            }
+        }
     }
 
     /// The active block's (or, in `DocMode::Plain`, any block's) source, caret and selection.

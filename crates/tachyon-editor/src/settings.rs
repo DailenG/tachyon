@@ -121,6 +121,8 @@ pub struct Settings {
     /// Overlay scrollbar. `Never` draws nothing. `Auto` shows a thumb only while scrolling or
     /// while the pointer is on the right edge.
     pub scrollbar: ScrollbarMode,
+    /// Render ```mermaid fenced code blocks as diagrams (`mermaid.rs`). Off: they show as code.
+    pub mermaid: bool,
 }
 
 impl Default for Settings {
@@ -138,6 +140,7 @@ impl Default for Settings {
             sticky_unfocused_opacity: 1.0,
             start_without_active_block: false,
             scrollbar: ScrollbarMode::Auto,
+            mermaid: true,
         }
     }
 }
@@ -195,7 +198,48 @@ start_without_active_block = false
 # Overlay scrollbar: \"auto\" shows a thumb while scrolling or hovering the right edge;
 # \"never\" draws none. It never reserves layout width.
 scrollbar = \"auto\"
+
+# Draw ```mermaid code blocks as diagrams; false shows them as code. Rendering happens in the
+# background, so a document with no diagrams costs nothing.
+mermaid = true
 ";
+
+/// How the Preferences panel edits a setting.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Kind {
+    /// `true`/`false`: picking the row flips it.
+    Flag,
+    /// One of these values (as written in the file, quotes included): picking cycles them.
+    Choice(&'static [&'static str]),
+    /// Anything [`Settings::set`] accepts: picking opens a field to type it.
+    Value,
+}
+
+/// Every setting, in the order `DEFAULT_SETTINGS` lists them, with the name the Preferences
+/// panel shows. A new setting adds a row here, a field, a `set`/`value` arm, and its commented
+/// line in `DEFAULT_SETTINGS` (a test checks they agree).
+pub(crate) const KEYS: &[(&str, &str, Kind)] = &[
+    ("theme", "Theme", Kind::Choice(&["\"system\"", "\"light\"", "\"dark\""])),
+    ("zoom", "Zoom of new windows", Kind::Value),
+    ("hot_exit", "Hot exit", Kind::Flag),
+    ("tips", "Tips", Kind::Flag),
+    ("whats_new", "What's new after updates", Kind::Flag),
+    ("restore_session", "Restore session on start", Kind::Flag),
+    ("content_width", "Text column width", Kind::Value),
+    ("sticky_hotkey", "Sticky note hotkey", Kind::Value),
+    ("sticky_on_top", "Sticky notes on top", Kind::Flag),
+    ("sticky_unfocused_opacity", "Sticky note opacity when unfocused", Kind::Value),
+    ("start_without_active_block", "Open with every block rendered", Kind::Flag),
+    ("scrollbar", "Scrollbar", Kind::Choice(&["\"auto\"", "\"never\""])),
+    ("mermaid", "Mermaid diagrams", Kind::Flag),
+];
+
+/// `key`'s description: its comment in `DEFAULT_SETTINGS`, joined into one line.
+pub(crate) fn description(key: &str) -> String {
+    let lines: Vec<&str> =
+        default_comment(key).into_iter().map(|line| line.trim_start_matches('#').trim()).collect();
+    lines.join(" ").replace("\\\"", "\"")
+}
 
 impl Settings {
     /// Parses a settings file. Unknown keys and invalid values are skipped (reported in the
@@ -213,84 +257,110 @@ impl Settings {
                 problems.push(format!("{number}: expected `key = value`"));
                 continue;
             };
-            let value = value.trim();
-            let unquoted = value.trim_matches('"');
-            match key.trim() {
-                "theme" => match unquoted {
-                    "system" => settings.theme = ThemeChoice::System,
-                    "dark" => settings.theme = ThemeChoice::Dark,
-                    "light" => settings.theme = ThemeChoice::Light,
-                    _ => problems
-                        .push(format!("{number}: theme is \"system\", \"dark\" or \"light\"")),
-                },
-                "zoom" => match value.parse::<f32>() {
-                    Ok(zoom) if (0.5..=3.).contains(&zoom) => settings.zoom = zoom,
-                    _ => problems.push(format!("{number}: zoom is a number from 0.5 to 3.0")),
-                },
-                "hot_exit" => match value {
-                    "true" => settings.hot_exit = true,
-                    "false" => settings.hot_exit = false,
-                    _ => problems.push(format!("{number}: hot_exit is true or false")),
-                },
-                "tips" => match value {
-                    "true" => settings.tips = true,
-                    "false" => settings.tips = false,
-                    _ => problems.push(format!("{number}: tips is true or false")),
-                },
-                "whats_new" => match value {
-                    "true" => settings.whats_new = true,
-                    "false" => settings.whats_new = false,
-                    _ => problems.push(format!("{number}: whats_new is true or false")),
-                },
-                "restore_session" => match value {
-                    "true" => settings.restore_session = true,
-                    "false" => settings.restore_session = false,
-                    _ => problems.push(format!("{number}: restore_session is true or false")),
-                },
-                "content_width" => match ContentWidth::parse(unquoted) {
-                    Some(width) => settings.content_width = width,
-                    None => problems.push(format!(
-                        "{number}: content_width is a pixel width of at least {CONTENT_WIDTH_MIN_PX}px (e.g. \"820px\") or a percentage from 1% to 100% (e.g. \"80%\")"
-                    )),
-                },
-                "sticky_hotkey" => {
-                    if unquoted.is_empty() || tachyon_platform::Hotkey::parse(unquoted).is_some() {
-                        settings.sticky_hotkey = unquoted.to_owned();
-                    } else {
-                        problems.push(format!(
-                            "{number}: sticky_hotkey is empty (off) or a combination like \"win+shift+n\""
-                        ));
-                    }
-                }
-                "sticky_on_top" => match value {
-                    "true" => settings.sticky_on_top = true,
-                    "false" => settings.sticky_on_top = false,
-                    _ => problems.push(format!("{number}: sticky_on_top is true or false")),
-                },
-                "sticky_unfocused_opacity" => match value.parse::<f32>() {
-                    Ok(opacity) if (0.3..=1.0).contains(&opacity) => {
-                        settings.sticky_unfocused_opacity = opacity;
-                    }
-                    _ => problems.push(format!(
-                        "{number}: sticky_unfocused_opacity is a number from 0.3 to 1.0"
-                    )),
-                },
-                "start_without_active_block" => match value {
-                    "true" => settings.start_without_active_block = true,
-                    "false" => settings.start_without_active_block = false,
-                    _ => problems.push(format!(
-                        "{number}: start_without_active_block is true or false"
-                    )),
-                },
-                "scrollbar" => match unquoted {
-                    "auto" => settings.scrollbar = ScrollbarMode::Auto,
-                    "never" => settings.scrollbar = ScrollbarMode::Never,
-                    _ => problems.push(format!("{number}: scrollbar is \"auto\" or \"never\"")),
-                },
-                other => problems.push(format!("{number}: unknown setting `{other}`")),
+            if let Err(problem) = settings.set(key.trim(), value.trim()) {
+                problems.push(format!("{number}: {problem}"));
             }
         }
         (settings, problems)
+    }
+
+    /// Sets one setting from its `settings.toml` spelling (`value` as written after `=`, quotes
+    /// optional). The file parser and the Preferences panel both go through this, so a value is
+    /// accepted or rejected the same way in either place. `Err` describes the valid values.
+    pub fn set(&mut self, key: &str, value: &str) -> Result<(), String> {
+        let unquoted = value.trim_matches('"');
+        let flag = |name: &str| match unquoted {
+            "true" => Ok(true),
+            "false" => Ok(false),
+            _ => Err(format!("{name} is true or false")),
+        };
+        match key {
+            "theme" => {
+                self.theme = match unquoted {
+                    "system" => ThemeChoice::System,
+                    "dark" => ThemeChoice::Dark,
+                    "light" => ThemeChoice::Light,
+                    _ => return Err("theme is \"system\", \"dark\" or \"light\"".into()),
+                }
+            }
+            "zoom" => match unquoted.parse::<f32>() {
+                Ok(zoom) if (0.5..=3.).contains(&zoom) => self.zoom = zoom,
+                _ => return Err("zoom is a number from 0.5 to 3.0".into()),
+            },
+            "hot_exit" => self.hot_exit = flag(key)?,
+            "tips" => self.tips = flag(key)?,
+            "whats_new" => self.whats_new = flag(key)?,
+            "restore_session" => self.restore_session = flag(key)?,
+            "content_width" => match ContentWidth::parse(unquoted) {
+                Some(width) => self.content_width = width,
+                None => {
+                    return Err(format!(
+                        "content_width is a pixel width of at least {CONTENT_WIDTH_MIN_PX}px (e.g. \"820px\") or a percentage from 1% to 100% (e.g. \"80%\")"
+                    ));
+                }
+            },
+            "sticky_hotkey" => {
+                if unquoted.is_empty() || tachyon_platform::Hotkey::parse(unquoted).is_some() {
+                    self.sticky_hotkey = unquoted.to_owned();
+                } else {
+                    return Err(
+                        "sticky_hotkey is empty (off) or a combination like \"win+shift+n\"".into(),
+                    );
+                }
+            }
+            "sticky_on_top" => self.sticky_on_top = flag(key)?,
+            "sticky_unfocused_opacity" => match unquoted.parse::<f32>() {
+                Ok(opacity) if (0.3..=1.0).contains(&opacity) => {
+                    self.sticky_unfocused_opacity = opacity;
+                }
+                _ => return Err("sticky_unfocused_opacity is a number from 0.3 to 1.0".into()),
+            },
+            "start_without_active_block" => self.start_without_active_block = flag(key)?,
+            "scrollbar" => {
+                self.scrollbar = match unquoted {
+                    "auto" => ScrollbarMode::Auto,
+                    "never" => ScrollbarMode::Never,
+                    _ => return Err("scrollbar is \"auto\" or \"never\"".into()),
+                }
+            }
+            "mermaid" => self.mermaid = flag(key)?,
+            other => return Err(format!("unknown setting `{other}`")),
+        }
+        Ok(())
+    }
+
+    /// One setting's current value in `settings.toml` syntax (strings quoted, as
+    /// `DEFAULT_SETTINGS` writes them): what the Preferences panel shows and what it writes.
+    /// `None` for an unknown key.
+    pub fn value(&self, key: &str) -> Option<String> {
+        let quoted = |s: &str| format!("\"{s}\"");
+        let flag = |b: bool| if b { "true" } else { "false" }.to_owned();
+        Some(match key {
+            "theme" => quoted(match self.theme {
+                ThemeChoice::System => "system",
+                ThemeChoice::Dark => "dark",
+                ThemeChoice::Light => "light",
+            }),
+            "zoom" => self.zoom.to_string(),
+            "hot_exit" => flag(self.hot_exit),
+            "tips" => flag(self.tips),
+            "whats_new" => flag(self.whats_new),
+            "restore_session" => flag(self.restore_session),
+            "content_width" => quoted(&match self.content_width {
+                ContentWidth::Px(value) => format!("{value}px"),
+                ContentWidth::Percent(percent) => format!("{percent}%"),
+            }),
+            "sticky_hotkey" => quoted(&self.sticky_hotkey),
+            "sticky_on_top" => flag(self.sticky_on_top),
+            "sticky_unfocused_opacity" => self.sticky_unfocused_opacity.to_string(),
+            "start_without_active_block" => flag(self.start_without_active_block),
+            "scrollbar" => quoted(match self.scrollbar {
+                ScrollbarMode::Auto => "auto",
+                ScrollbarMode::Never => "never",
+            }),
+            "mermaid" => flag(self.mermaid),
+            _ => return None,
+        })
     }
 
     /// Whether the theme is dark, given what the system prefers.
@@ -375,11 +445,12 @@ impl Editor {
 
 /// Applies an in-memory settings change to every open window and writes it to the settings
 /// file, keeping the file's comments and other keys (see `set_setting_line`). Used by the
-/// command palette's settings commands, which apply immediately rather than waiting for a save.
+/// command palette's settings commands and the Preferences panel, which apply immediately rather
+/// than waiting for a save.
 pub(crate) fn apply_setting(
     cx: &mut Context<Editor>,
     key: &'static str,
-    value: &'static str,
+    value: impl Into<String>,
     mutate: impl FnOnce(&mut Settings),
 ) {
     let mut settings = cx.try_global::<Settings>().cloned().unwrap_or_default();
@@ -387,17 +458,47 @@ pub(crate) fn apply_setting(
     cx.set_global(settings);
     cx.defer(apply_to_windows);
     let Some(path) = cx.try_global::<SettingsFile>().map(|file| file.0.clone()) else { return };
+    let value = value.into();
     cx.background_executor()
         .spawn(async move {
             let text =
                 std::fs::read_to_string(&path).unwrap_or_else(|_| DEFAULT_SETTINGS.to_owned());
-            let updated = set_setting_line(&text, key, value);
+            let updated = set_setting_line(&text, key, &value);
             if let Some(dir) = path.parent() {
                 let _ = std::fs::create_dir_all(dir);
             }
             let _ = crate::editor::write_atomically(&path, updated.as_bytes());
         })
         .detach();
+}
+
+/// Restores every setting to its default, in memory and on disk: the settings file is replaced
+/// by [`DEFAULT_SETTINGS`] (every key, each with its comment), the previous file kept beside it
+/// as `settings.toml.bak` so a reset is never a loss.
+pub(crate) fn reset_settings(cx: &mut Context<Editor>) {
+    cx.set_global(Settings::default());
+    cx.defer(apply_to_windows);
+    let Some(path) = cx.try_global::<SettingsFile>().map(|file| file.0.clone()) else { return };
+    cx.background_executor()
+        .spawn(async move {
+            if let Some(dir) = path.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            if let Ok(old) = std::fs::read(&path)
+                && old != DEFAULT_SETTINGS.as_bytes()
+            {
+                let _ = crate::editor::write_atomically(&backup_path(&path), &old);
+            }
+            let _ = crate::editor::write_atomically(&path, DEFAULT_SETTINGS.as_bytes());
+        })
+        .detach();
+}
+
+/// Where [`reset_settings`] keeps the file it replaced: the same name with `.bak` appended.
+pub(crate) fn backup_path(path: &std::path::Path) -> std::path::PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(".bak");
+    name.into()
 }
 
 /// Rewrites `key`'s line in a settings file's text to `key = value`, keeping any trailing

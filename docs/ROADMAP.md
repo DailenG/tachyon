@@ -210,11 +210,16 @@ frame.
       off the UI thread
 - [x] Open recent (`Ctrl+R`): recently opened and saved files (up to 30, newest first, kept in
       the state directory) in a filterable list; the pickers share one implementation
-- [x] A settings file (`settings.toml`, `Ctrl+,` opens it, created with comments): theme
+- [x] A settings file (`settings.toml`, created with comments): theme
       (system, dark, light), zoom of new windows, hot exit on or off; read on a thread at
       start-up (waited for at most 15 ms), so the first frame already uses it; saving it from
       Tachyon applies the theme to open windows. Warm launch on Linux p95 30.7-31.5 ms (was
       29-32)
+- [x] Preferences (`Ctrl+,`): every setting in a picker-style panel, edited in place with the
+      file parser's own validation; reset to defaults keeps `settings.toml.bak`
+- [x] Mermaid diagrams: ```` ```mermaid ```` blocks render with a bundled pure-Rust renderer on
+      the background executor, cached per window; no startup or memory change measured
+      ([ADR 0012](adr/0012-mermaid-diagrams.md))
 - [x] Images: local images (relative to the document, absolute, `file:`) shown in rendered
       blocks, scaled down to the column and at most 480 px high, loaded and decoded off the UI
       thread by GPUI; a line that is only an image shows just the image, and clicking it edits

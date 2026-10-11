@@ -8,6 +8,18 @@ All notable user-visible changes are recorded here. The format follows
 
 ### Added
 
+- Mermaid diagrams: a fenced code block marked `mermaid` shows as a diagram when the caret is
+  elsewhere (click it to edit the source). Rendered in the background by a bundled renderer, so
+  typing never waits and documents without diagrams cost nothing. A diagram that does not parse
+  stays code, with the reason underneath. The `mermaid` setting turns this off.
+- Preferences (`Ctrl+,`): every setting in one list with its current value and what it does, even
+  when the settings file is empty or from an older version. Pick a row to flip it, step to its
+  next value, or type a new one (a value Tachyon does not accept says why and changes nothing).
+  Changes apply to every window at once and keep the file's comments. "Open settings file" in the
+  command palette still opens the file.
+- Reset all settings to defaults, from Preferences or the command palette: asks first, then
+  rewrites the settings file with every setting and its comment, keeping the old file as
+  `settings.toml.bak`.
 - Website: the orbit ring around the hero screenshot is animated, with four small nods to the
   physics of tachyons (escape velocity, arriving before leaving, a reversed jump and a Cherenkov
   lap). A picker under the screenshot chooses one (on phones: tap the screenshot) and the site
@@ -18,6 +30,12 @@ All notable user-visible changes are recorded here. The format follows
   spacetime and simultaneity, the tachyonic antitelephone (3D, drag to turn) and Cherenkov
   radiation, plus cited references. It works without JavaScript and under reduced motion; the 3D
   library loads only when that diagram scrolls into view.
+
+### Changed
+
+- Unsaved documents are marked with `*` in the window title (`*notes.md - Tachyon`), the
+  Windows convention, instead of a bullet (#112).
+- `Ctrl+,` opens Preferences instead of the settings file.
 
 ## [1.3.0] - 2026-10-04
 

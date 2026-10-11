@@ -50,6 +50,16 @@ The one cost: a `tachyon-editor`-only test binary (`cargo test -p tachyon-editor
 `tachyon`, so its own actions are not registered there; palette tests exercise `tachyon-editor`'s
 own actions instead, and the cross-crate ones are proven by running the app.
 
+**Preferences panel (`tachyon-editor`, `preferences.rs`).** `Ctrl+,` opens the picker overlay
+listing every setting in `settings::KEYS` against the live `Settings`, each with its current
+value and, under the list, its `DEFAULT_SETTINGS` comment for the chosen row. A settings file that
+is empty or older than the build still shows every setting. Flags flip and choices step on pick;
+other values open a field validated by `Settings::set`, the same function the file parser uses,
+so the panel and the file accept exactly the same values. Changes go through `apply_setting`
+(every window, then the file rewritten keeping its comments). "Reset all settings" asks, writes
+`DEFAULT_SETTINGS`, and keeps the previous file as `settings.toml.bak`. A unit test keeps
+`KEYS`, `Settings::value`/`set` and `DEFAULT_SETTINGS` in agreement.
+
 ## State
 
 GPUI entities and text shaping stay on the main thread. Background work receives an immutable
@@ -444,6 +454,12 @@ flowchart LR
   executor-agnostic: the caller decides where each `ParseJob` runs.
 - **Correctness invariant.** Property and corpus tests: after any sequence of edits, undo, streamed
   input and interleaved jobs, a clean document equals `tachyon_md::parse_document` of its text.
+- **Mermaid diagrams** ([ADR 0012](adr/0012-mermaid-diagrams.md), `mermaid.rs`). A non-active
+  ```` ```mermaid ```` block asks `Editor::mermaid_diagram` for its diagram while being drawn; the
+  first ask starts one background job (the renderer the application installed as
+  `MermaidRenderer`, panic-guarded) and the block shows its code until the SVG returns. Results
+  are cached per window by source and theme, so nothing re-renders on unrelated edits or repaints;
+  a landed result remeasures the list because the block's height changes.
 
 ## Platform layer
 

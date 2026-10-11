@@ -17,6 +17,7 @@ futures.workspace = true
 gpui.workspace = true
 gpui_platform.workspace = true
 lexopt.workspace = true
+mermaid-rs-renderer = { version = "0.3.1", default-features = false }
 tachyon-doc.workspace = true
 tachyon-editor.workspace = true
 tachyon-platform.workspace = true

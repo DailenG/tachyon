@@ -44,6 +44,7 @@ actions!(
         GoToHeading,
         OpenRecent,
         OpenCommandPalette,
+        OpenPreferences,
         Replace,
         ReplaceAll,
         FindNext,
@@ -115,6 +116,8 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         // F1 is the fallback when another app owns Ctrl+Shift+P globally. Listed after the
         // primary so the palette still shows Ctrl+Shift+P (`shortcut_for` takes the first).
         KeyBinding::new("f1", OpenCommandPalette, c),
+        // The Preferences panel; the command palette's "Open settings file" opens the file.
+        KeyBinding::new("secondary-,", OpenPreferences, c),
         KeyBinding::new("ctrl-h", Replace, c),
         KeyBinding::new("cmd-alt-f", Replace, c),
         KeyBinding::new("secondary-enter", ReplaceAll, c),
@@ -264,6 +267,10 @@ pub struct Editor {
     /// pointer comparison can never alias a dropped-and-reallocated one), unchanged across
     /// frames unless the block is actually reparsed.
     pub(crate) rendered_heights_cache: Option<(Arc<ParsedBlock>, Vec<Pixels>)>,
+    /// Mermaid diagrams rendered for this window (`mermaid.rs`), by source and theme.
+    pub(crate) diagrams: crate::mermaid::Diagrams,
+    /// `Settings::mermaid` as last applied to this window (`apply_settings`).
+    pub(crate) mermaid_shown: bool,
     /// Window-coordinate y of the bottom edge of the open find bar overlay, refreshed every
     /// frame it renders (see `render::find_bar`); `reveal_caret_at` keeps revealed content below
     /// it so the bar (which floats over the document without reflowing it) never hides the
@@ -419,6 +426,8 @@ impl Editor {
             window_item_bounds: std::collections::HashMap::new(),
             raw_chunk_cache: None,
             rendered_heights_cache: None,
+            diagrams: Default::default(),
+            mermaid_shown: settings.mermaid,
             find_bar_bottom: px(0.),
             caret_painted: false,
             file: None,
@@ -508,9 +517,10 @@ impl Editor {
     }
 
     /// Window title: `title_override` if one was set and the document has no file yet, else the
-    /// file name (or "Tachyon" for a scratch buffer), with a leading dot while there are unsaved
-    /// changes. Save As on an overridden document (the What's new window) gives it a file, so
-    /// this reverts to the ordinary rule from then on rather than keeping a stale fixed title.
+    /// file name (or "Tachyon" for a scratch buffer), with a leading `*` while there are unsaved
+    /// changes (`*notes.md - Tachyon`, the Windows convention; issue #112). Save As on an
+    /// overridden document (the What's new window) gives it a file, so this reverts to the
+    /// ordinary rule from then on rather than keeping a stale fixed title.
     pub fn title(&self) -> String {
         if self.is_note() {
             return self
@@ -531,7 +541,7 @@ impl Editor {
             .and_then(|p| p.file_name())
             .map(|n| format!("{} - Tachyon", n.to_string_lossy()))
             .unwrap_or_else(|| "Tachyon".to_owned());
-        if self.is_modified() { format!("• {name}") } else { name }
+        if self.is_modified() { format!("*{name}") } else { name }
     }
 
     /// Overrides the ordinary file-name/scratch-buffer window title with a fixed one: for a
@@ -693,6 +703,14 @@ impl Editor {
             cx.notify();
         }
         self.set_tips_shown(settings.tips, cx);
+        if settings.mermaid != self.mermaid_shown {
+            // On: blocks render their diagrams again; off: they go back to code. Either way
+            // their heights change.
+            self.mermaid_shown = settings.mermaid;
+            self.clear_diagrams();
+            self.list.remeasure();
+            cx.notify();
+        }
     }
 
     /// Picks this window's tip the first time it runs (deferred past construction, see
