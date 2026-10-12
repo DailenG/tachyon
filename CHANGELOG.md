@@ -6,6 +6,14 @@ All notable user-visible changes are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `.json`, `.jsonc` and `.json5` files now have syntax colour (strings, numbers, `true`/`false`/
+  `null`, and `//` and `/* */` comments), in the same theme colours as fenced code in Markdown (#113).
+  The file still opens as plain text and edits as before: colour is computed for the part on screen
+  as it is drawn, never for the whole file. Files over 5 MB stay uncoloured, so the large-file path
+  is unchanged. Other plain-text files (logs, TOML, YAML and so on) are not coloured.
+
 ## [1.4.2] - 2026-10-12
 
 ### Changed

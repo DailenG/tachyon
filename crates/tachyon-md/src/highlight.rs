@@ -260,7 +260,9 @@ const DATA: Lang = Lang {
 const JSON: Lang = Lang {
     keywords: &["true", "false", "null"],
     line_comments: C_COMMENTS,
-    block_comment: None,
+    // JSONC and JSON5 allow `/* */`; plain JSON never has one, so reading it as a comment costs
+    // nothing there.
+    block_comment: Some(("/*", "*/")),
     quotes: b"\"",
     triple: false,
     types: false,
@@ -282,9 +284,11 @@ fn lang(name: &str) -> Option<&'static Lang> {
     })
 }
 
-/// Token styles for `code` written in `lang` (a fence's info string word), as byte ranges into
-/// `code` in order. Empty for languages it does not know.
-pub(crate) fn highlight(lang_name: &str, code: &str) -> Vec<(Range<usize>, Style)> {
+/// Token styles for `code` written in `lang` (a fence's info string word, or a file extension
+/// such as `json`), as byte ranges into `code` in order. Empty for languages it does not know.
+/// One pass over `code`, no allocation beyond the result: cheap enough to run per visible chunk
+/// at paint time.
+pub fn highlight(lang_name: &str, code: &str) -> Vec<(Range<usize>, Style)> {
     let Some(lang) = lang(lang_name) else { return Vec::new() };
     let bytes = code.as_bytes();
     let mut tokens = Vec::new();
@@ -423,5 +427,46 @@ mod tests {
     fn unknown_languages_are_plain() {
         assert!(tokens("brainfuck", "fn main() {}").is_empty());
         assert!(tokens("", "fn main() {}").is_empty());
+    }
+}
+
+#[cfg(test)]
+mod json_tests {
+    use super::*;
+
+    fn kinds(code: &str) -> Vec<(&str, Style)> {
+        highlight("json", code).into_iter().map(|(r, s)| (&code[r], s)).collect()
+    }
+
+    #[test]
+    fn json_colours_strings_numbers_keywords_and_both_comment_forms() {
+        assert_eq!(
+            kinds("{\"a\": [1, -2.5e3, true, null], /* c */ \"b\": \"x\\\"y\"} // t"),
+            [
+                ("\"a\"", Style::STRING),
+                ("1", Style::NUMBER),
+                ("2.5e3", Style::NUMBER),
+                ("true", Style::KEYWORD),
+                ("null", Style::KEYWORD),
+                ("/* c */", Style::COMMENT),
+                ("\"b\"", Style::STRING),
+                ("\"x\\\"y\"", Style::STRING),
+                ("// t", Style::COMMENT),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_json_string_ends_at_its_line_so_chunks_can_be_coloured_alone() {
+        // An unterminated string must not swallow the rest of the chunk.
+        assert_eq!(kinds("\"open\n1"), [("\"open", Style::STRING), ("1", Style::NUMBER)],);
+    }
+
+    #[test]
+    fn the_extension_aliases_resolve_and_unknown_names_colour_nothing() {
+        for name in ["json", "JSON", "jsonc", "json5"] {
+            assert!(!highlight(name, "{\"a\":1}").is_empty(), "{name}");
+        }
+        assert!(highlight("nonsense", "{\"a\":1}").is_empty());
     }
 }

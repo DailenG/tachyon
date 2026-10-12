@@ -4243,3 +4243,54 @@ fn shift_enter_in_a_block_awaiting_its_parse_still_inserts_a_hard_break(cx: &mut
         "a hard break, not a plain newline (pending={pending})"
     );
 }
+
+fn plain_json_editor<'a>(
+    name: &str,
+    text: &str,
+    cx: &'a mut TestAppContext,
+) -> (Entity<Editor>, &'a mut VisualTestContext) {
+    let (editor, cx) = open("", cx);
+    let path = std::env::temp_dir().join(format!("tachyon-colour-{}-{name}", std::process::id()));
+    editor.update(cx, |e, cx| {
+        e.set_document(tachyon_doc::Document::new_plain(text), cx);
+        e.set_file(path, cx);
+    });
+    cx.run_until_parked();
+    (editor, cx)
+}
+
+#[gpui::test]
+fn only_json_files_in_plain_mode_are_coloured_and_only_up_to_the_size_limit(
+    cx: &mut TestAppContext,
+) {
+    for (name, expected) in [
+        ("a.json", Some("json")),
+        ("a.JSON", Some("json")),
+        ("a.jsonc", Some("jsonc")),
+        ("a.json5", Some("json5")),
+        ("a.txt", None),
+        ("a.log", None),
+        ("a.toml", None),
+        ("json", None),
+    ] {
+        let (editor, cx) = plain_json_editor(name, "{\"a\": 1}\n", cx);
+        let got = editor.read_with(cx, |e, _| e.plain_language());
+        assert_eq!(got, expected, "{name}");
+    }
+    let big = format!("[{}]\n", "1,".repeat(crate::render::COLOUR_LIMIT / 2));
+    let (editor, cx) = plain_json_editor("big.json", &big, cx);
+    assert!(big.len() > crate::render::COLOUR_LIMIT);
+    assert_eq!(editor.read_with(cx, |e, _| e.plain_language()), None, "over the limit: unstyled");
+}
+
+#[gpui::test]
+fn a_json_file_in_plain_mode_still_draws_and_edits_as_plain_text(cx: &mut TestAppContext) {
+    let (editor, cx) =
+        plain_json_editor("draw.json", "{\n  \"name\": \"tachyon\",\n  \"n\": 42\n}\n", cx);
+    assert_eq!(editor.read_with(cx, |e, _| e.document().mode()), tachyon_doc::DocMode::Plain);
+    cx.simulate_keystrokes("ctrl-end");
+    cx.simulate_input("// end");
+    cx.run_until_parked();
+    assert!(text(&editor, cx).ends_with("}\n// end"), "typing into coloured text works");
+    assert_eq!(note_text_lines(&editor, cx), 0, "plain blocks carry no rendered IR");
+}

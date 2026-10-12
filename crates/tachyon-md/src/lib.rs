@@ -25,6 +25,7 @@ use pulldown_cmark::{
 
 pub use crate::autolink::bare_urls;
 pub use crate::defs::{DefTable, LinkTarget};
+pub use crate::highlight::highlight as highlight_code;
 pub use crate::ir::{BlockIr, LineInfo, LineKind, LinkSpan, Marker, SourceSpan, Style, StyleRun};
 pub use crate::presegment::{
     ends_in_fence, ends_in_fence_chunks, opens_html_block, presegment, presegment_chunks,

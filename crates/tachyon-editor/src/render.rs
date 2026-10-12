@@ -31,6 +31,11 @@ const INDENT: f32 = 22.;
 /// this large.
 pub(crate) const RAW_SPLIT_THRESHOLD: usize = tachyon_doc::PLAIN_CHUNK_BYTES * 2;
 
+/// The largest plain-text document that gets syntax colour (a `.json` file, see
+/// `Editor::plain_language`). Above it the text is drawn unstyled, as before, so a huge file
+/// never pays for colour.
+pub(crate) const COLOUR_LIMIT: usize = 5 * 1024 * 1024;
+
 /// Same idea as [`RAW_SPLIT_THRESHOLD`] for [`Editor::render_rendered`]'s per-line loop: below
 /// this many lines, every line still gets a real element, as before.
 const LINE_SPLIT_THRESHOLD: usize = 2_000;
@@ -1100,6 +1105,17 @@ impl Editor {
         (start..end, keep_outside, before, after)
     }
 
+    /// The language to colour a plain-text document in, from its file's extension: the JSON
+    /// family only, and only up to [`COLOUR_LIMIT`] bytes - larger files stay unstyled so the
+    /// large-file path is exactly what it was. `None` for everything else.
+    pub(crate) fn plain_language(&self) -> Option<&'static str> {
+        if self.doc.len() > COLOUR_LIMIT {
+            return None;
+        }
+        let extension = self.file()?.extension()?.to_str()?;
+        ["json", "jsonc", "json5"].into_iter().find(|lang| extension.eq_ignore_ascii_case(lang))
+    }
+
     /// One piece of the active block's (or, in `DocMode::Plain`, any block's) source: its own
     /// caret, highlights and mouse handling, exactly as [`Editor::render_raw`] drew the whole
     /// block before it could be split into several of these.
@@ -1130,6 +1146,15 @@ impl Editor {
                 if let Some(local) = intersect(&token, &range, base, len) {
                     highlights = overlay(highlights, local, theme.highlight(style));
                 }
+            }
+        }
+        if plain && let Some(lang) = self.plain_language() {
+            // One lexing pass over this visible chunk only (a few KiB), never the document: the
+            // same per-chunk, paint-time cost as the link scan below. A JSON string cannot span
+            // lines and chunks are cut at line ends, so a chunk lexes on its own; only a
+            // `/* */` comment spanning a chunk boundary (JSONC) is coloured wrongly past it.
+            for (token, style) in tachyon_md::highlight_code(lang, &text) {
+                highlights = overlay(highlights, token, theme.highlight(style));
             }
         }
         if plain {
