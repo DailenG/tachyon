@@ -118,7 +118,7 @@ named, a note's file name never changes, even if you edit the heading later. A n
 ever typed into it writes no file at all, and one that is typed into and then emptied out again
 has its file deleted.
 
-Four settings in `settings.toml` (`Ctrl+,` opens Preferences) control sticky notes:
+Five settings in `settings.toml` (`Ctrl+,` opens Preferences) control sticky notes:
 
 - `sticky_hotkey` (default `"win+shift+n"`): the global hotkey that opens a new note from
   anywhere, in `Ctrl+Alt+Shift+Win+<letter or digit>` combinations (e.g. `"ctrl+shift+n"`);
@@ -126,6 +126,10 @@ Four settings in `settings.toml` (`Ctrl+,` opens Preferences) control sticky not
 - `sticky_on_top` (default `true`): whether a new note starts always-on-top.
 - `sticky_default_mode` (`"markdown"` or `"plain"`, default `"markdown"`): the mode a new note
   starts in. `"plain"` shows what you type literally, for logs and snippets.
+- `sticky_folder` (default empty, meaning `<Documents>/tachyon/notes`): where notes are saved, as a
+  plain path (no `~` or variables). It applies to notes saved from then on: nothing is moved, an
+  existing note keeps its file, and "Reopen sticky note" lists the folder that is set. The
+  command palette's "Open sticky notes folder" opens it.
 - `sticky_unfocused_opacity` (default `1.0`, range `0.3`-`1.0`): a note's opacity while its
   window is not focused; `1.0` turns this off. A focused note is always fully opaque, and
   ordinary (non-note) windows are never affected.

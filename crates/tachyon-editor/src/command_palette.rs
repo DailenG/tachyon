@@ -35,6 +35,8 @@ pub(crate) enum CommandEffect {
     ContentWidth(ContentWidth),
     /// Opens the picker of stored sticky notes.
     ReopenNote,
+    /// Opens the folder sticky notes are saved in, in the system file manager.
+    OpenNotesFolder,
     /// Flips the overlay scrollbar between auto and never.
     ToggleScrollbar,
     /// Flips drawing Mermaid code blocks as diagrams.
@@ -55,6 +57,7 @@ const COMMANDS: &[Command] = &[
     Command { name: "New window", effect: CommandEffect::Action("tachyon::NewWindow") },
     Command { name: "New sticky note", effect: CommandEffect::Action("tachyon::NewNote") },
     Command { name: "Reopen sticky note...", effect: CommandEffect::ReopenNote },
+    Command { name: "Open sticky notes folder", effect: CommandEffect::OpenNotesFolder },
     Command { name: "Open", effect: CommandEffect::Action("tachyon::Open") },
     Command { name: "Save", effect: CommandEffect::Action("editor::Save") },
     Command { name: "Save As", effect: CommandEffect::Action("editor::SaveAs") },
@@ -245,9 +248,9 @@ fn command_items(cx: &App) -> Vec<Item> {
                     false,
                     None,
                 ),
-                CommandEffect::ReopenNote | CommandEffect::ResetSettings => {
-                    (command.name.to_owned(), false, None)
-                }
+                CommandEffect::ReopenNote
+                | CommandEffect::OpenNotesFolder
+                | CommandEffect::ResetSettings => (command.name.to_owned(), false, None),
                 CommandEffect::ContentWidth(width) => {
                     (command.name.to_owned(), settings.content_width == width, None)
                 }
@@ -323,6 +326,7 @@ impl Editor {
                 });
             }
             CommandEffect::ReopenNote => self.open_note_picker(cx),
+            CommandEffect::OpenNotesFolder => self.open_notes_folder(cx),
             CommandEffect::ToggleScrollbar => {
                 let current = cx
                     .try_global::<Settings>()

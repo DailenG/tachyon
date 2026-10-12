@@ -27,6 +27,30 @@ pub struct NotesDir(pub PathBuf);
 
 impl Global for NotesDir {}
 
+/// What "Open sticky notes folder" does with the folder once it exists: show it in the system file
+/// manager. Set by the application (to `App::open_with_system`); without it - every test, since
+/// GPUI's test platform has no file manager - the command creates the folder and stops there. The
+/// same function-pointer-global bridge `picker::RecentFilesOs` uses to keep OS effects out of this
+/// crate's tests.
+#[derive(Clone, Copy)]
+pub struct OpenFolder(pub fn(&mut App, &Path));
+
+impl Global for OpenFolder {}
+
+/// Where notes are saved and listed right now: the `sticky_folder` setting if it is set, else the
+/// standard folder the application installed as [`NotesDir`]. `None` only when neither exists
+/// (no setting, and `documents_dir()` failed at start-up). Read each time a note is written or
+/// listed rather than cached, so changing the setting applies to the next save with nothing to
+/// reload; notes already saved stay where they were written.
+pub(crate) fn notes_folder(cx: &App) -> Option<PathBuf> {
+    let custom = cx.try_global::<crate::Settings>().map(|s| s.sticky_folder.trim()).unwrap_or("");
+    if custom.is_empty() {
+        cx.try_global::<NotesDir>().map(|dir| dir.0.clone())
+    } else {
+        Some(PathBuf::from(custom))
+    }
+}
+
 /// Called (via `Context::defer`, so it never runs inside another window's own update - the same
 /// reason `crates/tachyon/src/app.rs`'s Quit action defers its own work) after a note is named
 /// for the first time, goes back to empty, or its pin toggles: anything the notes state file
@@ -305,12 +329,15 @@ pub(crate) fn write_note_to_disk(dir: &Path, existing: Option<&Path>, text: &str
         }
         return NoteWrite::Empty;
     }
-    if std::fs::create_dir_all(dir).is_err() {
-        return NoteWrite::Failed;
-    }
+    // A note that already has a file keeps writing to it, wherever it lives (`sticky_folder` may
+    // have changed since): only a first save needs `dir`, so a bad folder setting never stops an
+    // existing note from saving.
     let path = match existing {
         Some(path) => path.to_path_buf(),
         None => {
+            if std::fs::create_dir_all(dir).is_err() {
+                return NoteWrite::Failed;
+            }
             let names = existing_note_names(dir);
             let base = base_name(text, chrono::Local::now());
             let name = unique_name(|candidate| names.contains(candidate), &base);
@@ -611,7 +638,7 @@ impl Editor {
         if let Some(note) = self.note.as_mut() {
             note.autosave_task = None;
         }
-        let Some(dir) = cx.try_global::<NotesDir>().map(|dir| dir.0.clone()) else {
+        let Some(dir) = notes_folder(cx) else {
             // Nowhere to save: `documents_dir()` failed at start-up. Not this note's fault, and
             // there is nothing more it can do about it.
             return true;
@@ -643,7 +670,20 @@ impl Editor {
                 }
                 true
             }
-            NoteWrite::Failed => false,
+            NoteWrite::Failed => {
+                // The text stays in this window (nothing is lost); say where it was meant to go.
+                let target = self.file.clone().unwrap_or_else(|| dir.clone());
+                self.set_app_notice(
+                    format!(
+                        "This note could not be saved to {}. Check the sticky notes folder in \
+                         Preferences.",
+                        target.display()
+                    )
+                    .into(),
+                    cx,
+                );
+                false
+            }
         }
     }
 
@@ -696,6 +736,23 @@ impl Editor {
         self.flush_pending_paste(cx);
         self.retag_to(target, cx);
         cx.notify();
+    }
+
+    /// Opens the folder sticky notes are saved in (`notes_folder`) in the system file manager,
+    /// creating it first if nothing has been saved there yet: a folder just set in Preferences
+    /// has nothing to open until it exists, and this is the way to find where new notes go.
+    /// Says so, rather than doing nothing, if there is no folder or it cannot be created.
+    pub fn open_notes_folder(&mut self, cx: &mut Context<Self>) {
+        let Some(dir) = notes_folder(cx) else {
+            return self.set_app_notice("There is no sticky notes folder to open.".into(), cx);
+        };
+        if let Err(error) = std::fs::create_dir_all(&dir) {
+            let notice = format!("Could not open {}: {error}", dir.display());
+            return self.set_app_notice(notice.into(), cx);
+        }
+        if let Some(open) = cx.try_global::<OpenFolder>().copied() {
+            (open.0)(cx, &dir);
+        }
     }
 
     /// `Editor::close_window`'s note branch: never asks (autosave already keeps the file

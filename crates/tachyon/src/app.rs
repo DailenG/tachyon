@@ -203,6 +203,7 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
             cx.set_global(tachyon_editor::NotesDir(dir.join("tachyon").join("notes")));
         }
         cx.set_global(tachyon_editor::NotesChanged(refresh_notes_state));
+        cx.set_global(tachyon_editor::OpenFolder(|cx, dir| cx.open_with_system(dir)));
         // A plain function pointer: nothing of the renderer runs until a diagram is drawn.
         cx.set_global(tachyon_editor::MermaidRenderer(render_mermaid));
         if is_primary && resident {
