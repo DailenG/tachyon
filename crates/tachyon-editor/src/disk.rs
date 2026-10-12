@@ -12,6 +12,7 @@ use std::time::SystemTime;
 
 use gpui::{Context, SharedString, Window};
 use tachyon_doc::{DocMode, Document, MARKDOWN_SIZE_LIMIT, PLAIN_HARD_LIMIT, mode_for_extension};
+use tachyon_md::SoftBreaks;
 use tachyon_text::Buffer;
 
 use crate::editor::Editor;
@@ -64,7 +65,11 @@ pub enum LoadOutcome {
 /// UTF-8 and binary content (a NUL byte in the first 8 KiB, sniffed the same pass) still open,
 /// decoded lossily and forced to plain text rather than parsed as Markdown regardless of
 /// extension, per the "never crash on user input" rule.
-pub fn load_document(path: &Path) -> std::io::Result<LoadOutcome> {
+///
+/// `breaks` is how the document renders a single newline (`Editor::soft_breaks` for the window
+/// it is going to), chosen here so the one parse this does, off the UI thread, is the final one:
+/// `Editor::set_document` would otherwise have to reparse a large note on the UI thread to switch it.
+pub fn load_document(path: &Path, breaks: SoftBreaks) -> std::io::Result<LoadOutcome> {
     let size = std::fs::metadata(path)?.len();
     if size > PLAIN_HARD_LIMIT {
         return Ok(LoadOutcome::Refused(format!(
@@ -87,7 +92,7 @@ pub fn load_document(path: &Path) -> std::io::Result<LoadOutcome> {
         // replacement characters, and could not have been the user's intent.
         mode = DocMode::Plain;
     }
-    let doc = Document::from_buffer(buffer, mode);
+    let doc = Document::from_buffer(buffer, mode).with_soft_breaks(breaks);
     Ok(LoadOutcome::Loaded(Box::new(Loaded { doc, lossy: report.lossy, notice })))
 }
 
@@ -137,6 +142,7 @@ impl Editor {
     /// unsaved changes; otherwise notes the change so Save asks first.
     pub(crate) fn check_disk(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let (Some(path), Some(known)) = (self.file.clone(), self.disk_stamp) else { return };
+        let editor_breaks = self.soft_breaks();
         cx.spawn_in(window, async move |this, cx| {
             let read_path = path.clone();
             let current =
@@ -155,8 +161,11 @@ impl Editor {
                 return;
             }
             let read_path = path.clone();
-            let outcome =
-                cx.background_executor().spawn(async move { load_document(&read_path) }).await;
+            let breaks = editor_breaks;
+            let outcome = cx
+                .background_executor()
+                .spawn(async move { load_document(&read_path, breaks) })
+                .await;
             let _ = this.update(cx, |editor, cx| {
                 let still_current = editor.file.as_deref() == Some(path.as_path())
                     && !editor.is_modified()
