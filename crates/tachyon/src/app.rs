@@ -47,6 +47,9 @@ enum Source {
     /// update (`check_whats_new`).
     WhatsNew {
         version: String,
+        /// The version recorded before this launch, so the window can show every release since
+        /// it. `None` on demand (the palette row), which shows the current release only.
+        from: Option<String>,
     },
 }
 
@@ -81,7 +84,7 @@ impl Source {
                 let name = path.file_name().unwrap_or(path.as_os_str()).to_string_lossy();
                 format!("{name} - Tachyon").into()
             }
-            Source::WhatsNew { version } => format!("What's new in Tachyon {version}").into(),
+            Source::WhatsNew { version, .. } => format!("What's new in Tachyon {version}").into(),
         }
     }
 }
@@ -241,9 +244,12 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
             open_note_window(NoteSource::New, cx);
         });
         cx.on_action(|_: &WhatsNew, cx| {
-            if !whats_new::NOTES.is_empty() {
+            if whats_new::has_notes() {
                 open_window(
-                    Opening::plain(Source::WhatsNew { version: whats_new::current_version() }),
+                    Opening::plain(Source::WhatsNew {
+                        version: whats_new::current_version(),
+                        from: None,
+                    }),
                     cx,
                 );
             }
@@ -704,7 +710,9 @@ fn initial_document(source: &Source, cx: &App) -> Document {
             Document::new(&format!("Loading {name}...\n"))
         }
         Source::Blank | Source::Restored(_) => Document::new(""),
-        Source::WhatsNew { .. } => Document::new(whats_new::NOTES),
+        Source::WhatsNew { version, from } => {
+            Document::new(&whats_new::notes(from.as_deref(), version))
+        }
     }
 }
 
@@ -1511,11 +1519,11 @@ fn check_whats_new(cx: &mut App) {
     let path = state_dir.join(format!("whats-new-{}.txt", crate::instance_id()));
     let current = whats_new::current_version();
     let enabled = cx.try_global::<tachyon_editor::Settings>().is_none_or(|s| s.whats_new);
-    let has_notes = !whats_new::NOTES.is_empty();
+    let has_notes = whats_new::has_notes();
     cx.spawn(async move |cx| {
         let record_version = current.clone();
         let log_path = path.clone();
-        let (check, recorded) = cx
+        let (check, recorded, previous) = cx
             .background_executor()
             .spawn(async move { whats_new::read_and_record(&path, &record_version) })
             .await;
@@ -1525,7 +1533,10 @@ fn check_whats_new(cx: &mut App) {
         }
         if whats_new::should_open_window(check, enabled, has_notes) {
             cx.update(|cx| {
-                open_window(Opening::plain(Source::WhatsNew { version: current }), cx);
+                open_window(
+                    Opening::plain(Source::WhatsNew { version: current, from: previous }),
+                    cx,
+                );
             });
         }
     })

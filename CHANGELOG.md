@@ -6,6 +6,13 @@ All notable user-visible changes are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- The What's new window shows every release since the version you updated from, newest first, with
+  a line saying where the range starts. Updating from 1.3.0 to 1.5.0 used to show only the 1.5.0
+  notes; it now shows 1.4.0, 1.4.1, 1.4.2 and 1.5.0. A fresh install, an unreadable record, or
+  opening it from the command palette still shows the current release only.
+
 ### Added
 
 - `.json`, `.jsonc` and `.json5` files now have syntax colour (strings, numbers, `true`/`false`/
