@@ -113,6 +113,9 @@ Versions follow SemVer (`[workspace.package] version` in `Cargo.toml`), starting
 the editor is incomplete: bump the minor version for a user-visible feature, the patch version
 for a fix only. A release moves the **Unreleased** changelog section under a version heading,
 bumps `version` in the workspace `Cargo.toml` in the same commit, and tags `vX.Y.Z` on `main`.
+Exception, by the owner's decision: 1.4.1 (view mode) and 1.4.2 (sticky notes show each typed
+line, `Shift+Enter` hard breaks) carry user-visible features under patch versions. They are not a
+precedent; the next feature release is a minor bump.
 Pushing that tag runs
 [`.github/workflows/release.yml`](.github/workflows/release.yml), which builds `cargo xtask dist`
 on Windows, Linux and macOS and publishes a GitHub Release with the three archives, the MSIX
