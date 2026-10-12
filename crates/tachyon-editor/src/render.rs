@@ -1116,6 +1116,21 @@ impl Editor {
         ["json", "jsonc", "json5"].into_iter().find(|lang| extension.eq_ignore_ascii_case(lang))
     }
 
+    /// The language to colour the plain-text chunk starting at `start` in, or `None`.
+    ///
+    /// Only a chunk that begins at the start of a line is coloured. Plain chunks are normally cut
+    /// at line ends, but a line longer than [`tachyon_doc::PLAIN_FORCED_CUT_BYTES`] (minified
+    /// JSON, a huge string) is cut inside itself, and a chunk that begins in the middle of a line
+    /// cannot know whether it begins inside a string: lexing it alone would give a string's
+    /// contents keyword, number or comment colours and turn its closing quote into an opening
+    /// one. Leaving such a chunk plain is bounded and never wrong; the first chunk of the line,
+    /// which starts at the line start, is still coloured, up to its end.
+    pub(crate) fn chunk_language(&self, start: usize) -> Option<&'static str> {
+        let lang = self.plain_language()?;
+        let rope = self.doc.buffer().rope();
+        (crate::movement::home(rope, start) == start).then_some(lang)
+    }
+
     /// One piece of the active block's (or, in `DocMode::Plain`, any block's) source: its own
     /// caret, highlights and mouse handling, exactly as [`Editor::render_raw`] drew the whole
     /// block before it could be split into several of these.
@@ -1148,11 +1163,12 @@ impl Editor {
                 }
             }
         }
-        if plain && let Some(lang) = self.plain_language() {
+        if plain && let Some(lang) = self.chunk_language(base) {
             // One lexing pass over this visible chunk only (a few KiB), never the document: the
             // same per-chunk, paint-time cost as the link scan below. A JSON string cannot span
-            // lines and chunks are cut at line ends, so a chunk lexes on its own; only a
-            // `/* */` comment spanning a chunk boundary (JSONC) is coloured wrongly past it.
+            // lines, and `chunk_language` only lets a chunk that starts at a line start through,
+            // so it lexes on its own; the one remaining imperfection is a `/* */` comment that
+            // spans several chunks (JSONC), coloured wrongly past the first.
             for (token, style) in tachyon_md::highlight_code(lang, &text) {
                 highlights = overlay(highlights, token, theme.highlight(style));
             }

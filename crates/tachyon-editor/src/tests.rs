@@ -4294,3 +4294,30 @@ fn a_json_file_in_plain_mode_still_draws_and_edits_as_plain_text(cx: &mut TestAp
     assert!(text(&editor, cx).ends_with("}\n// end"), "typing into coloured text works");
     assert_eq!(note_text_lines(&editor, cx), 0, "plain blocks carry no rendered IR");
 }
+
+#[gpui::test]
+fn only_a_chunk_that_starts_a_line_is_coloured_so_a_forced_cut_inside_a_string_stays_plain(
+    cx: &mut TestAppContext,
+) {
+    // One line far longer than the forced-cut size: plain chunking cuts it inside itself.
+    let long = format!("{{\"k\": \"{}\", \"n\": 1}}\n", "a".repeat(30_000));
+    let (editor, cx) = plain_json_editor("long.json", &long, cx);
+    let starts: Vec<usize> = editor.read_with(cx, |e, _| {
+        (0..e.document().blocks().len()).map(|i| e.document().block_range(i).start).collect()
+    });
+    assert!(starts.len() > 2, "the line was cut into several chunks: {starts:?}");
+    let langs: Vec<_> =
+        starts.iter().map(|&s| editor.read_with(cx, |e, _| e.chunk_language(s))).collect();
+    assert_eq!(langs[0], Some("json"), "the chunk holding the line start is coloured");
+    assert!(langs[1..].iter().all(Option::is_none), "chunks beginning mid-line are not: {langs:?}");
+
+    // Ordinary multi-line JSON: every chunk starts a line, so every chunk is coloured.
+    let lines = "{\"a\": 1}\n".repeat(5_000);
+    let (editor, cx) = plain_json_editor("lines.json", &lines, cx);
+    let all = editor.read_with(cx, |e, _| {
+        (0..e.document().blocks().len())
+            .map(|i| e.chunk_language(e.document().block_range(i).start))
+            .collect::<Vec<_>>()
+    });
+    assert!(all.len() > 1 && all.iter().all(|l| *l == Some("json")), "{all:?}");
+}

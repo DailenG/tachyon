@@ -268,6 +268,10 @@ const JSON: Lang = Lang {
     types: false,
 };
 
+/// JSON5 also writes strings in single quotes (`{'a': 'b // c'}`); JSON and JSONC do not, so they
+/// keep [`JSON`], where an apostrophe is never a string.
+const JSON5: Lang = Lang { quotes: b"\"'", ..JSON };
+
 fn lang(name: &str) -> Option<&'static Lang> {
     Some(match name.to_ascii_lowercase().as_str() {
         "rust" | "rs" => &RUST,
@@ -279,7 +283,8 @@ fn lang(name: &str) -> Option<&'static Lang> {
         "powershell" | "ps1" | "pwsh" | "ps" => &POWERSHELL,
         "sql" => &SQL,
         "toml" | "yaml" | "yml" | "ini" | "conf" | "dockerfile" | "makefile" | "make" => &DATA,
-        "json" | "jsonc" | "json5" => &JSON,
+        "json" | "jsonc" => &JSON,
+        "json5" => &JSON5,
         _ => return None,
     })
 }
@@ -460,6 +465,43 @@ mod json_tests {
     fn a_json_string_ends_at_its_line_so_chunks_can_be_coloured_alone() {
         // An unterminated string must not swallow the rest of the chunk.
         assert_eq!(kinds("\"open\n1"), [("\"open", Style::STRING), ("1", Style::NUMBER)],);
+    }
+
+    fn kinds5(code: &str) -> Vec<(&str, Style)> {
+        highlight("json5", code).into_iter().map(|(r, s)| (&code[r], s)).collect()
+    }
+
+    #[test]
+    fn json5_single_quoted_strings_keep_their_contents_as_one_string() {
+        assert_eq!(
+            kinds5("{'enabled': 'true // disabled'}"),
+            [("'enabled'", Style::STRING), ("'true // disabled'", Style::STRING)],
+            "nothing inside a string is a keyword or a comment"
+        );
+        assert_eq!(
+            kinds5("{'a': 'it\\'s 42', \"b\": \"x\"}"),
+            [
+                ("'a'", Style::STRING),
+                ("'it\\'s 42'", Style::STRING),
+                ("\"b\"", Style::STRING),
+                ("\"x\"", Style::STRING),
+            ],
+            "an escaped apostrophe does not end the string; both quote styles work"
+        );
+        assert_eq!(
+            kinds5("{k: 'https://example.test'}"),
+            [("'https://example.test'", Style::STRING)],
+            "a // inside a single-quoted URL is not a comment"
+        );
+    }
+
+    #[test]
+    fn json_and_jsonc_do_not_treat_an_apostrophe_as_a_string() {
+        for name in ["json", "jsonc"] {
+            let tokens = highlight(name, "{'a': 1}");
+            assert_eq!(tokens.len(), 1, "{name}: only the number: {tokens:?}");
+            assert_eq!(tokens[0].1, Style::NUMBER);
+        }
     }
 
     #[test]
