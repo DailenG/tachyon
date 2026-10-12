@@ -295,9 +295,13 @@ impl Editor {
             return false;
         }
         let (caret, reversed, reveal) = (self.selection.clone(), self.reversed, self.reveal);
+        // A box is the one thing view mode lets through: lifted for this edit only.
+        let locked = std::mem::replace(&mut self.locked, false);
         self.doc.seal_undo_group();
         self.replace(mark_at..mark_at + 1, if checked { " " } else { "x" }, cx);
         self.doc.seal_undo_group();
+        self.locked = locked;
+        self.editing &= !locked;
         // `replace` puts the caret after the edit and asks for it to be scrolled into view; a
         // checkbox click is neither a caret move nor a reason to leave the box that was clicked.
         self.selection = caret;

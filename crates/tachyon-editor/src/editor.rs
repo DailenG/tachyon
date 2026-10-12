@@ -74,6 +74,7 @@ actions!(
         SaveAs,
         ToggleFrameStats,
         ToggleTextMode,
+        ToggleViewMode,
         CloseWindow,
         ToggleNotePin,
     ]
@@ -162,10 +163,14 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("secondary-shift-s", SaveAs, c),
         KeyBinding::new("ctrl-alt-f", ToggleFrameStats, c),
         KeyBinding::new("ctrl-shift-m", ToggleTextMode, c),
+        KeyBinding::new("ctrl-e", ToggleViewMode, c),
         KeyBinding::new("secondary-w", CloseWindow, c),
         KeyBinding::new("ctrl-shift-t", ToggleNotePin, c),
     ]
 }
+
+/// What a refused edit says while in view mode.
+const VIEW_MODE_NOTICE: &str = "View mode \u{2014} Ctrl+E to edit";
 
 /// Typing pauses longer than this start a new undo group.
 const UNDO_GROUP_PAUSE: Duration = Duration::from_millis(1000);
@@ -222,6 +227,12 @@ pub struct Editor {
     /// movement or edit turns it back on (`Editor::move_to`, `Editor::after_edit`),
     /// re-entering at the caret's kept offset.
     pub(crate) editing: bool,
+    /// View mode: the text is read-only. No block turns raw and no caret is drawn (`editing`
+    /// stays off), a click or drag selects rendered text for copying, a plain click follows a
+    /// link, and typing, pasting and undo are refused with a notice (`Editor::refuse_edit`).
+    /// Task boxes still toggle (`Editor::toggle_task_at`). `Ctrl+E` flips it; a sticky note
+    /// remembers it across restarts.
+    pub(crate) locked: bool,
     /// Layout of the active block's raw text as last painted, with the
     /// document offset of its first byte.
     pub(crate) active_layout: Option<(TextLayout, usize)>,
@@ -411,6 +422,7 @@ impl Editor {
                 && hint.is_some_and(|dark| dark != reported),
             active: None,
             editing: true,
+            locked: false,
             active_layout: None,
             parse_task: None,
             pending_paste: None,
@@ -471,7 +483,7 @@ impl Editor {
         self.marked = None;
         self.active = None;
         self.active_layout = None;
-        self.editing = true;
+        self.editing = !self.locked;
         self.parse_task = None;
         self.list.reset(self.doc.blocks().len());
         self.update_active();
@@ -754,7 +766,7 @@ impl Editor {
 
     pub(crate) fn move_to(&mut self, offset: usize, select: bool, cx: &mut Context<Self>) {
         self.flush_pending_paste(cx);
-        self.editing = true;
+        self.editing = !self.locked;
         let offset = offset.min(self.doc.len());
         if select {
             let tail = self.tail();
@@ -1002,6 +1014,9 @@ impl Editor {
         text: Insert,
         cx: &mut Context<Self>,
     ) {
+        if self.refuse_edit(cx) {
+            return;
+        }
         // Undo groups: typing runs group together; navigation, pauses, line
         // breaks and replacing a selection start new ones. An IME
         // composition (replacing its own marked text) stays one group.
@@ -1174,7 +1189,9 @@ impl Editor {
         self.flush_pending_paste(cx);
         window.focus(&self.focus, cx);
         let extend = modifiers.shift;
-        if modifiers.secondary() && !extend && click_count == 1 && self.follow_link(offset, cx) {
+        // View mode follows a link on a plain click: reading is what the window is for.
+        let follows = modifiers.secondary() || self.locked;
+        if follows && !extend && click_count == 1 && self.follow_link(offset, cx) {
             return;
         }
         self.goal_x = None;
@@ -1580,6 +1597,9 @@ impl Editor {
         }
     }
     pub(crate) fn cut(&mut self, _: &Cut, _: &mut Window, cx: &mut Context<Self>) {
+        if self.refuse_edit(cx) {
+            return;
+        }
         self.flush_pending_paste(cx);
         if !self.selection.is_empty() {
             cx.write_to_clipboard(ClipboardItem::new_string(self.selected_text()));
@@ -1587,6 +1607,9 @@ impl Editor {
         }
     }
     pub(crate) fn paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
+        if self.refuse_edit(cx) {
+            return;
+        }
         self.flush_pending_paste(cx);
         if !self.bar_open()
             && let Some(read) = cx.try_global::<ClipboardReader>().map(|reader| reader.0)
@@ -1715,6 +1738,9 @@ impl Editor {
         self.apply_queued(paste.queued, cx);
     }
     pub(crate) fn undo(&mut self, _: &Undo, _: &mut Window, cx: &mut Context<Self>) {
+        if self.refuse_edit(cx) {
+            return;
+        }
         self.flush_pending_paste(cx);
         if let Some(edits) = self.doc.undo() {
             self.caret_after(&edits);
@@ -1723,6 +1749,9 @@ impl Editor {
         }
     }
     pub(crate) fn redo(&mut self, _: &Redo, _: &mut Window, cx: &mut Context<Self>) {
+        if self.refuse_edit(cx) {
+            return;
+        }
         self.flush_pending_paste(cx);
         if let Some(edits) = self.doc.redo() {
             self.caret_after(&edits);
@@ -1758,6 +1787,42 @@ impl Editor {
             Some(_) => None,
             None => Some(Default::default()),
         };
+        cx.notify();
+    }
+
+    /// In view mode, says so and returns `true`: the caller must not touch the text. Otherwise
+    /// `false`. Every way into the document (typing, paste, cut, undo, redo, find and replace,
+    /// the list commands) ends in `replace_at`, which asks this first, so none can slip past.
+    pub(crate) fn refuse_edit(&mut self, cx: &mut Context<Self>) -> bool {
+        if !self.locked {
+            return false;
+        }
+        if self.notice.as_deref() != Some(VIEW_MODE_NOTICE) {
+            self.notice = Some(VIEW_MODE_NOTICE.into());
+            cx.notify();
+        }
+        true
+    }
+
+    /// `Ctrl+E`: flips view mode (see [`Editor::locked`]). Locking leaves no block raw and hides
+    /// the caret, keeping its offset; unlocking brings both back where it is. A sticky note
+    /// records the choice for its next start.
+    pub(crate) fn toggle_view_mode(
+        &mut self,
+        _: &ToggleViewMode,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.flush_pending_paste(cx);
+        self.locked = !self.locked;
+        self.editing = !self.locked;
+        if self.notice.as_deref() == Some(VIEW_MODE_NOTICE) {
+            self.notice = None;
+        }
+        self.update_active();
+        if self.is_note() {
+            crate::notes::notify_notes_changed(cx);
+        }
         cx.notify();
     }
 

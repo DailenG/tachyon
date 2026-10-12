@@ -83,6 +83,7 @@ start as fast as a scratchpad and edit like Typora: one pane, inline WYSIWYG, no
 | Go to heading | `Ctrl+Shift+O` |
 | Copy as HTML | `Ctrl+Shift+C` |
 | Toggle plain-text mode | `Ctrl+Shift+M` (same on every platform) |
+| Toggle view mode (read-only) | `Ctrl+E` (same on every platform) |
 | Zoom in / out / reset | `Ctrl+=` (or `Ctrl++`) / `Ctrl+-` / `Ctrl+0` |
 | Frame-time overlay | `Ctrl+Alt+F` (same on every platform) |
 | Cut / copy / paste | `Ctrl+X` / `Ctrl+C` / `Ctrl+V` |
@@ -140,7 +141,9 @@ or pasting a whole document leaves every block rendered. A click or keystroke st
 the pointer is on the right edge. It hides a second later and does not change the text width.
 Each note has its own compact header instead of the native title bar, with a drag area, a
 `MD`/`TXT` button that switches the note between Markdown and plain text (also `Ctrl+Shift+M`;
-each note remembers its own mode across restarts, and the file stays `.md`), a pin button and a
+each note remembers its own mode across restarts, and the file stays `.md`), an `EDIT`/`VIEW`
+button that locks the note for reading and copying (also `Ctrl+E`: nothing can be typed or pasted,
+links open on a click, task boxes still tick, and the note reopens locked), a pin button and a
 close button. The pin button and `Ctrl+Shift+T` toggle that note's always-on-top
 state on or off individually (Windows: `SetWindowPos(HWND_TOPMOST)`); always-on-top is not
 implemented on Linux yet, so the pin button does not appear there.
