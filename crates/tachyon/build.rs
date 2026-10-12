@@ -2,34 +2,22 @@
 //! taskbar and GPUI's windows (which load icon resource 1) show them. The resources are written
 //! as a `.res` file, which the MSVC linker takes directly, so no resource compiler is needed.
 //!
-//! Also embeds the running version's CHANGELOG section for the What's new window
-//! (`tachyon::whats_new`), on every platform.
-
-// A build script cannot depend on the crate it builds (it runs before that crate exists as a
-// built artifact), so `extract_section` is shared with `src/changelog.rs` - which also declares
-// it as `mod changelog` for the binary itself - by including its source rather than duplicating
-// it. `#[cfg(test)]` there is inert here: this is a plain `fn main`, never built as a test binary.
-// Included before any other item: changelog.rs's own `//!` module doc comment is only valid at
-// the very start of the file it appears in.
-include!("src/changelog.rs");
+//! Also embeds `CHANGELOG.md` for the What's new window (`tachyon::whats_new`), on every platform.
 
 use std::path::PathBuf;
 
-/// Writes `OUT_DIR/whats-new.md`: the running crate version's CHANGELOG section (falling back to
-/// `## [Unreleased]`), with a `# What's new in Tachyon X.Y.Z` heading prepended, or an empty
-/// string if `CHANGELOG.md` cannot be read (a `crates.io`-style build with no repository
-/// checkout) - never a build failure either way.
-fn embed_whats_new(version: &str) {
+/// Writes `OUT_DIR/changelog.md`: the whole of `CHANGELOG.md` (an empty file if it cannot be read:
+/// a `crates.io`-style build with no repository checkout; never a build failure either way). What
+/// the What's new window shows from it - one release, or every release since the one the user
+/// updated from - is decided when it opens (`whats_new::notes`, `changelog::sections_since`), so
+/// the build does not need to know either version.
+fn embed_changelog() {
     let changelog = PathBuf::from("../../CHANGELOG.md");
     println!("cargo:rerun-if-changed={}", changelog.display());
     let text = std::fs::read_to_string(&changelog).unwrap_or_default();
-    let notes = match extract_section(&text, version) {
-        Some(section) => format!("# What's new in Tachyon {version}\n\n{}", section.trim_end()),
-        None => String::new(),
-    };
     let out =
-        PathBuf::from(std::env::var_os("OUT_DIR").expect("set by cargo")).join("whats-new.md");
-    std::fs::write(&out, notes).expect("OUT_DIR is writable");
+        PathBuf::from(std::env::var_os("OUT_DIR").expect("set by cargo")).join("changelog.md");
+    std::fs::write(&out, text).expect("OUT_DIR is writable");
 }
 
 /// Resource types and the ids used here.
@@ -43,7 +31,7 @@ const CODE_PAGE: u16 = 1200;
 
 fn main() {
     let version = std::env::var("CARGO_PKG_VERSION").expect("set by cargo");
-    embed_whats_new(&version);
+    embed_changelog();
 
     let ico = PathBuf::from("../tachyon-platform/assets/tachyon.ico");
     println!("cargo:rerun-if-changed={}", ico.display());

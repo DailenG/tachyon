@@ -4,14 +4,46 @@
 //! version last seen - one line in a file in the state directory, next to hot-exit backups and
 //! recent files (`tachyon_platform::state_dir`) - against this launch's version. The notes
 //! themselves are embedded at build time (`build.rs`, `changelog.rs`): no network code, and
-//! nothing to fail if the machine is offline.
+//! nothing to fail if the machine is offline. An update across several releases shows all of
+//! them (`notes`), not only the newest.
 
-/// This launch's CHANGELOG section, embedded by `build.rs`: the section heading through the next
-/// line starting `## ` (any level-two heading), with a friendly `# What's new in Tachyon X.Y.Z`
-/// heading prepended. Empty for a `crates.io`-style build with no `CHANGELOG.md` to read
-/// (`build.rs` never fails because of it); `should_open_window` never opens a window when this
-/// is empty.
-pub(crate) const NOTES: &str = include_str!(concat!(env!("OUT_DIR"), "/whats-new.md"));
+/// The whole of `CHANGELOG.md`, embedded by `build.rs`. Empty for a `crates.io`-style build with
+/// no `CHANGELOG.md` to read (`build.rs` never fails because of it); [`has_notes`] is then false
+/// and no window opens.
+const CHANGELOG: &str = include_str!(concat!(env!("OUT_DIR"), "/changelog.md"));
+
+/// Whether there is anything embedded to show at all.
+pub(crate) fn has_notes() -> bool {
+    !CHANGELOG.trim().is_empty()
+}
+
+/// The text of the What's new window for `current`, given the version recorded before this launch
+/// (`from`, `None` when unknown or when the window is opened on demand, which shows the current
+/// release only). Under a `# What's new in Tachyon X.Y.Z` heading: one release's section, or, when
+/// the update jumped over releases, each of them newest first, with a line saying where the
+/// range starts. Empty when the changelog has nothing for `current`.
+pub(crate) fn notes(from: Option<&str>, current: &str) -> String {
+    notes_from(CHANGELOG, from, current)
+}
+
+fn notes_from(changelog: &str, from: Option<&str>, current: &str) -> String {
+    let notes = crate::changelog::sections_since(changelog, from, current);
+    if notes.sections.is_empty() {
+        return String::new();
+    }
+    let mut out = format!("# What's new in Tachyon {current}\n\n");
+    // Counts releases, never the `Unreleased` section a development build also shows.
+    if notes.releases > 1
+        && let Some(from) = from.and_then(crate::changelog::parse_version)
+    {
+        out.push_str(&format!(
+            "You updated from {}.{}.{}: this covers all {} releases since.\n\n",
+            from.0, from.1, from.2, notes.releases
+        ));
+    }
+    out.push_str(&notes.sections.join("\n\n"));
+    out
+}
 
 /// The version compared against the one last seen, and shown in the window's title: the
 /// installed MSIX package's version when this runs packaged, so an update through that channel
@@ -60,23 +92,77 @@ pub(crate) fn should_open_window(check: VersionCheck, enabled: bool, has_notes: 
 /// no write was needed, otherwise whether the write actually succeeded - an unwritable state
 /// directory must not be reported as "recorded" (which would suppress the window on every launch
 /// as if it had already been shown) nor as "changed but never written" (which would show it
-/// again on every launch instead).
-pub(crate) fn read_and_record(path: &std::path::Path, current: &str) -> (VersionCheck, bool) {
+/// again on every launch instead). The third value is the version that was on record, for the
+/// window to show everything since it.
+pub(crate) fn read_and_record(
+    path: &std::path::Path,
+    current: &str,
+) -> (VersionCheck, bool, Option<String>) {
     let stored = std::fs::read_to_string(path).ok();
     let check = check_version(stored.as_deref(), current);
+    let previous = stored.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty());
     if !should_write(check) {
-        return (check, true);
+        return (check, true, previous);
     }
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
     let recorded = std::fs::write(path, current).is_ok();
-    (check, recorded)
+    (check, recorded, previous)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const LOG: &str = "# Changelog\n\n## [1.2.0] - d\n\n- b\n\n## [1.1.0] - d\n\n- a\n";
+
+    #[test]
+    fn a_multi_release_update_says_where_the_range_starts_and_lists_every_release() {
+        let text = notes_from(LOG, Some("1.0.0"), "1.2.0");
+        assert!(text.starts_with("# What's new in Tachyon 1.2.0\n\n"), "{text}");
+        assert!(text.contains("You updated from 1.0.0: this covers all 2 releases since."));
+        let (newer, older) = (text.find("## [1.2.0]").unwrap(), text.find("## [1.1.0]").unwrap());
+        assert!(newer < older, "newest first");
+    }
+
+    #[test]
+    fn the_range_line_counts_releases_and_not_the_unreleased_section() {
+        let log = "# Changelog\n\n## [Unreleased]\n\n- pending\n\n## [1.2.0] - d\n\n- c\n\n\
+                   ## [1.1.0] - d\n\n- b\n\n## [1.0.0] - d\n\n- a\n";
+        // A development build (1.2.1, no section yet) updated from 1.0.0: Unreleased plus two.
+        let text = notes_from(log, Some("1.0.0"), "1.2.1");
+        assert!(text.contains("this covers all 2 releases since"), "{text}");
+        assert!(text.contains("## [Unreleased]") && text.contains("- pending"), "{text}");
+        assert!(text.find("## [Unreleased]") < text.find("## [1.2.0]"), "Unreleased first");
+        // One release between: no range line at all, although two sections are shown.
+        let one = notes_from(log, Some("1.1.0"), "1.2.1");
+        assert!(!one.contains("this covers"), "{one}");
+        assert!(one.contains("## [Unreleased]") && one.contains("## [1.2.0]"), "{one}");
+    }
+
+    #[test]
+    fn a_one_release_update_has_no_range_line() {
+        let text = notes_from(LOG, Some("1.1.0"), "1.2.0");
+        assert!(text.contains("## [1.2.0]") && !text.contains("## [1.1.0]"), "{text}");
+        assert!(!text.contains("You updated from"), "{text}");
+        let on_demand = notes_from(LOG, None, "1.2.0");
+        assert_eq!(on_demand, text, "the palette row shows the current release only");
+    }
+
+    #[test]
+    fn nothing_for_the_version_is_an_empty_window_not_a_bare_heading() {
+        assert_eq!(notes_from("# Changelog\n", Some("1.0.0"), "1.2.0"), "");
+    }
+
+    #[test]
+    fn the_real_changelog_is_embedded_and_covers_the_running_release() {
+        assert!(has_notes(), "CHANGELOG.md is read at build time");
+        let current = env!("CARGO_PKG_VERSION");
+        let text = notes(None, current);
+        assert!(text.starts_with(&format!("# What's new in Tachyon {current}")), "{text:.80}");
+        assert!(text.len() > 60, "{text}");
+    }
 
     #[test]
     fn a_fresh_install_shows_nothing_but_the_version_is_recorded() {
@@ -119,12 +205,14 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("temp dir");
         let path = dir.join("version.txt");
 
-        assert_eq!(read_and_record(&path, "1.0.0"), (VersionCheck::Fresh, true));
+        assert_eq!(read_and_record(&path, "1.0.0"), (VersionCheck::Fresh, true, None));
         assert_eq!(std::fs::read_to_string(&path).expect("written"), "1.0.0");
 
-        assert_eq!(read_and_record(&path, "1.0.0"), (VersionCheck::Unchanged, true));
+        let again = (VersionCheck::Unchanged, true, Some("1.0.0".to_owned()));
+        assert_eq!(read_and_record(&path, "1.0.0"), again);
 
-        assert_eq!(read_and_record(&path, "1.1.0"), (VersionCheck::Changed, true));
+        let updated = (VersionCheck::Changed, true, Some("1.0.0".to_owned()));
+        assert_eq!(read_and_record(&path, "1.1.0"), updated);
         assert_eq!(std::fs::read_to_string(&path).expect("written"), "1.1.0");
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -143,7 +231,7 @@ mod tests {
         std::fs::write(&blocker, "not a directory").expect("write blocker");
         let path = blocker.join("subdir").join("version.txt");
 
-        let (check, recorded) = read_and_record(&path, "1.0.0");
+        let (check, recorded, _) = read_and_record(&path, "1.0.0");
         assert_eq!(check, VersionCheck::Fresh);
         assert!(!recorded, "a write that could not happen must not be reported as recorded");
 
