@@ -39,7 +39,7 @@ pub struct NotesChanged(pub fn(&mut App));
 
 impl Global for NotesChanged {}
 
-fn notify_notes_changed(cx: &mut Context<Editor>) {
+pub(crate) fn notify_notes_changed(cx: &mut Context<Editor>) {
     if let Some(hook) = cx.try_global::<NotesChanged>().copied() {
         cx.defer(move |cx| (hook.0)(cx));
     }
@@ -58,6 +58,12 @@ pub(crate) struct NoteState {
     /// the time) - guards against scheduling another write for text already saved, mirroring
     /// `Editor::backed_up_version`.
     saved_version: Option<u64>,
+    /// The user asked for plain text (the header toggle, `Ctrl+Shift+M`, `sticky_default_mode`,
+    /// or a recorded `mode = plain`), as opposed to a note that is plain only because
+    /// `load_document` had to open its file that way (invalid UTF-8, binary, over the Markdown
+    /// size limit). Only a choice is recorded and kept across a reload: a fallback follows the
+    /// file, so a repaired file renders as Markdown again.
+    pub(crate) chose_plain: bool,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -336,21 +342,30 @@ pub const MAX_NOTES: usize = 100;
 /// size, so anything past a generous multiple of `MAX_NOTES` can only be damage).
 const MAX_NOTES_FILE_BYTES: u64 = 1_000_000;
 
-/// One open note: enough to reopen it in the same place, pinned the same way.
+/// One open note: enough to reopen it in the same place, pinned the same way, in the same mode.
 #[derive(Clone, Debug, PartialEq)]
 pub struct NoteWindowState {
     pub path: PathBuf,
     pub bounds: Bounds<Pixels>,
     pub pinned: bool,
+    /// Shown as plain text rather than Markdown (the header toggle, `Ctrl+Shift+M`). The file
+    /// stays `.md` either way; this only records how Tachyon shows it.
+    pub plain: bool,
 }
 
+/// The record's text. A `mode = plain` line sits between `pinned` and `path` for a plain-text
+/// note and is left out for a Markdown one, so a Markdown note's record is exactly what
+/// builds before this field wrote (and still reads) it, and a record with no `mode` line - from
+/// such a build - is a Markdown note.
 fn serialize_note(note: &NoteWindowState) -> String {
+    let mode = if note.plain { "mode = plain\n" } else { "" };
     format!(
         "x = {}\n\
          y = {}\n\
          w = {}\n\
          h = {}\n\
          pinned = {}\n\
+         {mode}\
          path = {}",
         f32::from(note.bounds.origin.x),
         f32::from(note.bounds.origin.y),
@@ -362,15 +377,27 @@ fn serialize_note(note: &NoteWindowState) -> String {
 }
 
 fn parse_note(record: &str) -> Option<NoteWindowState> {
-    // 6 fields; `splitn` keeps any embedded '\n' in the last one (`path`) intact - see the
-    // module doc comment.
+    // The five fixed fields, then the rest: an optional `mode` line and the path, which `splitn`
+    // keeps intact even if it holds a '\n' - see the module doc comment.
     let mut fields = record.splitn(6, '\n');
     let x: f32 = next_field(&mut fields, "x")?.parse().ok()?;
     let y: f32 = next_field(&mut fields, "y")?.parse().ok()?;
     let w: f32 = next_field(&mut fields, "w")?.parse().ok()?;
     let h: f32 = next_field(&mut fields, "h")?.parse().ok()?;
     let pinned: bool = next_field(&mut fields, "pinned")?.parse().ok()?;
-    let path = fields.next()?.strip_prefix("path")?.trim_start().strip_prefix('=')?.trim_start();
+    let mut rest = fields.next()?;
+    let mut plain = false;
+    if let Some((line, after)) = rest.split_once('\n')
+        && let Some(("mode", value)) = line.split_once('=').map(|(k, v)| (k.trim(), v.trim()))
+    {
+        plain = match value {
+            "plain" => true,
+            "markdown" => false,
+            _ => return None,
+        };
+        rest = after;
+    }
+    let path = rest.strip_prefix("path")?.trim_start().strip_prefix('=')?.trim_start();
     if path.is_empty() || !w.is_finite() || !h.is_finite() || w <= 0. || h <= 0. {
         return None;
     }
@@ -378,6 +405,7 @@ fn parse_note(record: &str) -> Option<NoteWindowState> {
         path: PathBuf::from(path),
         bounds: bounds(point(px(x), px(y)), size(px(w), px(h))),
         pinned,
+        plain,
     })
 }
 
@@ -449,6 +477,7 @@ impl Editor {
             pending_file: None,
             autosave_task: None,
             saved_version: None,
+            chose_plain: false,
         });
     }
 
@@ -515,7 +544,8 @@ impl Editor {
         self.note.as_ref()?;
         let path = self.file.clone()?;
         let bounds = self.last_placement.map_or_else(Bounds::default, |(bounds, _)| bounds);
-        Some(NoteWindowState { path, bounds, pinned: self.note_pinned() })
+        let plain = self.note_chose_plain();
+        Some(NoteWindowState { path, bounds, pinned: self.note_pinned(), plain })
     }
 
     /// `Ctrl+Shift+T`: flips this note's always-on-top state - a no-op, like the header's own
@@ -636,6 +666,38 @@ impl Editor {
         self.set_note_file(path, cx);
     }
 
+    /// Whether the user chose plain text for this note (see `NoteState::chose_plain`).
+    pub(crate) fn note_chose_plain(&self) -> bool {
+        self.note.as_ref().is_some_and(|note| note.chose_plain)
+    }
+
+    /// Records the user's choice of plain text or Markdown for this note. The caller changes the
+    /// display mode itself; this is what a reload and the notes state file go by afterwards.
+    pub(crate) fn record_note_choice(&mut self, plain: bool) {
+        if let Some(note) = self.note.as_mut() {
+            note.chose_plain = plain;
+        }
+    }
+
+    /// Shows this note as plain text or Markdown (`plain`) *as the user's choice*, keeping its
+    /// text and undo history: how a restored note comes back in the mode recorded for it, and how
+    /// a new one starts in `sticky_default_mode`. Markdown is refused above
+    /// `MARKDOWN_SIZE_LIMIT`, like the toggle.
+    pub fn set_note_plain(&mut self, plain: bool, cx: &mut Context<Self>) {
+        let target =
+            if plain { tachyon_doc::DocMode::Plain } else { tachyon_doc::DocMode::Markdown };
+        if !plain && self.doc.len() as u64 > tachyon_doc::MARKDOWN_SIZE_LIMIT {
+            return;
+        }
+        self.record_note_choice(plain);
+        if self.doc.mode() == target {
+            return;
+        }
+        self.flush_pending_paste(cx);
+        self.retag_to(target, cx);
+        cx.notify();
+    }
+
     /// `Editor::close_window`'s note branch: never asks (autosave already keeps the file
     /// current; there is nothing a prompt would protect here) - flushing first so text from
     /// inside the last debounce window is not lost.
@@ -736,6 +798,7 @@ mod tests {
             path: PathBuf::from("/home/user/tachyon/notes/Draft.md"),
             bounds: sample_bounds(),
             pinned: true,
+            plain: false,
         }
     }
 
@@ -751,6 +814,54 @@ mod tests {
             out
         };
         assert_eq!(parse_notes_state(&text), notes);
+    }
+
+    #[test]
+    fn a_plain_text_note_round_trips_and_a_markdown_one_writes_no_mode_line() {
+        let plain = NoteWindowState { plain: true, ..sample_note() };
+        let record = serialize_note(&plain);
+        assert!(record.contains("\nmode = plain\npath = "), "{record}");
+        assert_eq!(
+            parse_notes_state(&format!("version = {NOTES_VERSION}\n\0{record}")),
+            vec![plain]
+        );
+
+        let markdown = serialize_note(&sample_note());
+        assert!(!markdown.contains("mode"), "a Markdown note's record is unchanged: {markdown}");
+    }
+
+    #[test]
+    fn a_record_without_a_mode_line_is_a_markdown_note() {
+        // Exactly what a build from before the mode field wrote.
+        let old = "x = 12\ny = 34\nw = 360\nh = 360\npinned = true\npath = /home/u/notes/Old.md";
+        let notes = parse_notes_state(&format!("version = {NOTES_VERSION}\n\0{old}"));
+        assert_eq!(notes.len(), 1);
+        assert!(!notes[0].plain);
+        assert!(notes[0].pinned);
+        assert_eq!(notes[0].path, PathBuf::from("/home/u/notes/Old.md"));
+    }
+
+    #[test]
+    fn a_bad_mode_drops_only_that_record() {
+        let good = serialize_note(&sample_note());
+        let bad = good.replace("pinned = true\n", "pinned = true\nmode = sideways\n");
+        let text = format!("version = {NOTES_VERSION}\n\0{bad}\0{good}");
+        assert_eq!(parse_notes_state(&text), vec![sample_note()]);
+        // `mode = markdown` is also accepted, though this build never writes it.
+        let explicit = good.replace("pinned = true\n", "pinned = true\nmode = markdown\n");
+        assert_eq!(
+            parse_notes_state(&format!("version = {NOTES_VERSION}\n\0{explicit}")),
+            vec![sample_note()]
+        );
+    }
+
+    #[test]
+    fn a_path_starting_with_mode_is_still_a_path() {
+        // The path is the last field and may contain anything: it must not be mistaken for the
+        // optional mode line.
+        let odd = NoteWindowState { path: PathBuf::from("mode = plain"), ..sample_note() };
+        let text = format!("version = {NOTES_VERSION}\n\0{}", serialize_note(&odd));
+        assert_eq!(parse_notes_state(&text), vec![odd]);
     }
 
     #[test]
@@ -807,8 +918,10 @@ mod tests {
         let present = dir.join("present.md");
         std::fs::write(&present, "hi").unwrap();
         let gone = dir.join("gone.md");
-        let kept = NoteWindowState { path: present, bounds: sample_bounds(), pinned: false };
-        let dropped = NoteWindowState { path: gone, bounds: sample_bounds(), pinned: true };
+        let kept =
+            NoteWindowState { path: present, bounds: sample_bounds(), pinned: false, plain: false };
+        let dropped =
+            NoteWindowState { path: gone, bounds: sample_bounds(), pinned: true, plain: false };
         assert_eq!(existing_notes(vec![kept.clone(), dropped]), vec![kept]);
         std::fs::remove_dir_all(&dir).unwrap();
     }

@@ -115,6 +115,10 @@ pub struct Settings {
     /// default) turns translucency off. Focused, a note is always fully opaque. Normal
     /// (non-note) windows are never affected.
     pub sticky_unfocused_opacity: f32,
+    /// Whether a new sticky note starts as plain text rather than Markdown. Only a note's
+    /// creation reads it: a restored note keeps the mode recorded for it, and each note can be
+    /// switched afterwards (`Ctrl+Shift+M`, the header's `MD`/`TXT` toggle).
+    pub sticky_plain: bool,
     /// Whether opening a file, restoring a session, or a whole-document paste starts with no
     /// block raw for editing. Off: today's behavior, the caret's block is raw immediately.
     pub start_without_active_block: bool,
@@ -138,6 +142,7 @@ impl Default for Settings {
             sticky_hotkey: DEFAULT_STICKY_HOTKEY.to_owned(),
             sticky_on_top: true,
             sticky_unfocused_opacity: 1.0,
+            sticky_plain: false,
             start_without_active_block: false,
             scrollbar: ScrollbarMode::Auto,
             mermaid: true,
@@ -190,6 +195,11 @@ sticky_on_top = true
 # a note is always opaque.
 sticky_unfocused_opacity = 1.0
 
+# The mode a new sticky note starts in: \"markdown\" or \"plain\" (literal text, for logs and
+# snippets). Each note can still be switched with Ctrl+Shift+M or its header toggle, and
+# keeps its own mode after that.
+sticky_default_mode = \"markdown\"
+
 # Open a file, restore a session, or paste a whole document with every block rendered. false
 # (the default) starts with the caret's block raw, ready to edit. A click or keystroke edits
 # either way.
@@ -229,6 +239,7 @@ pub(crate) const KEYS: &[(&str, &str, Kind)] = &[
     ("sticky_hotkey", "Sticky note hotkey", Kind::Value),
     ("sticky_on_top", "Sticky notes on top", Kind::Flag),
     ("sticky_unfocused_opacity", "Sticky note opacity when unfocused", Kind::Value),
+    ("sticky_default_mode", "New sticky note mode", Kind::Choice(&["\"markdown\"", "\"plain\""])),
     ("start_without_active_block", "Open with every block rendered", Kind::Flag),
     ("scrollbar", "Scrollbar", Kind::Choice(&["\"auto\"", "\"never\""])),
     ("mermaid", "Mermaid diagrams", Kind::Flag),
@@ -315,6 +326,13 @@ impl Settings {
                 }
                 _ => return Err("sticky_unfocused_opacity is a number from 0.3 to 1.0".into()),
             },
+            "sticky_default_mode" => {
+                self.sticky_plain = match unquoted {
+                    "markdown" => false,
+                    "plain" => true,
+                    _ => return Err("sticky_default_mode is \"markdown\" or \"plain\"".into()),
+                }
+            }
             "start_without_active_block" => self.start_without_active_block = flag(key)?,
             "scrollbar" => {
                 self.scrollbar = match unquoted {
@@ -353,6 +371,7 @@ impl Settings {
             "sticky_hotkey" => quoted(&self.sticky_hotkey),
             "sticky_on_top" => flag(self.sticky_on_top),
             "sticky_unfocused_opacity" => self.sticky_unfocused_opacity.to_string(),
+            "sticky_default_mode" => quoted(if self.sticky_plain { "plain" } else { "markdown" }),
             "start_without_active_block" => flag(self.start_without_active_block),
             "scrollbar" => quoted(match self.scrollbar {
                 ScrollbarMode::Auto => "auto",
@@ -735,5 +754,39 @@ mod tests {
             resolved + gap * 2. <= window_width,
             "the column plus both gaps never exceeds the window: {resolved:?}"
         );
+    }
+
+    #[test]
+    fn sticky_default_mode_parses_both_values_and_defaults_to_markdown() {
+        assert!(!Settings::default().sticky_plain, "an existing user sees no change");
+        for (text, plain) in [
+            ("sticky_default_mode = \"plain\"\n", true),
+            ("sticky_default_mode = \"markdown\"\n", false),
+            ("sticky_default_mode = plain\n", true),
+            ("# nothing about it\nzoom = 1.5\n", false),
+            ("", false),
+        ] {
+            let (settings, problems) = Settings::parse(text);
+            assert_eq!(settings.sticky_plain, plain, "{text:?}");
+            assert!(problems.is_empty(), "{text:?}: {problems:?}");
+        }
+    }
+
+    #[test]
+    fn an_invalid_sticky_default_mode_falls_back_and_is_reported() {
+        for bad in ["\"rich\"", "\"\"", "\"Plain\"", "true", "1"] {
+            let (settings, problems) = Settings::parse(&format!("sticky_default_mode = {bad}\n"));
+            assert!(!settings.sticky_plain, "{bad}: keeps the default");
+            assert_eq!(
+                problems,
+                vec!["1: sticky_default_mode is \"markdown\" or \"plain\"".to_owned()],
+                "{bad}"
+            );
+        }
+        // One bad line does not disturb the others.
+        let (settings, problems) =
+            Settings::parse("sticky_default_mode = \"rich\"\nsticky_on_top = false\n");
+        assert!(!settings.sticky_on_top);
+        assert_eq!(problems.len(), 1);
     }
 }

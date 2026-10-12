@@ -1784,6 +1784,12 @@ impl Editor {
             return;
         }
         self.retag_to(target, cx);
+        // A note's mode is the user's choice, kept across a reload and recorded in its state file
+        // so a restart reopens it the same.
+        if self.is_note() {
+            self.record_note_choice(target == DocMode::Plain);
+            crate::notes::notify_notes_changed(cx);
+        }
         cx.notify();
     }
 

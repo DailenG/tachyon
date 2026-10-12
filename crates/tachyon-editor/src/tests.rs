@@ -3297,3 +3297,200 @@ fn a_task_toggle_follows_its_box_when_a_pending_paste_lands_before_it(cx: &mut T
     let after = text(&editor, cx);
     assert_eq!(after, format!("{paste}- [ ] one\n- [x] two\n"), "the box that was clicked toggled");
 }
+
+#[gpui::test]
+fn the_note_header_toggle_switches_mode_without_moving_the_caret_and_records_it(
+    cx: &mut TestAppContext,
+) {
+    let dir = notes_dir("mode-toggle");
+    let (editor, cx) = open_note(dir.clone(), cx);
+    cx.simulate_resize(gpui::size(gpui::px(360.), gpui::px(360.)));
+    cx.simulate_input("# Title");
+    cx.run_until_parked();
+    let caret = editor.read_with(cx, |e, _| e.selection());
+    assert_eq!(note_mode(&editor, cx), tachyon_doc::DocMode::Markdown);
+
+    let toggle = cx.debug_bounds("note-mode").expect("the header has a mode toggle");
+    cx.simulate_click(toggle.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+
+    assert_eq!(note_mode(&editor, cx), tachyon_doc::DocMode::Plain, "the click switched it");
+    assert_eq!(text(&editor, cx), "# Title", "the text is untouched");
+    assert_eq!(editor.read_with(cx, |e, _| e.selection()), caret, "the caret did not move");
+    assert!(!editor.read_with(cx, |e, _| e.selecting), "no selection drag started");
+
+    // A named note's record carries the mode; an unnamed one has no record.
+    cx.executor().advance_clock(AUTOSAVE_PAUSE);
+    cx.run_until_parked();
+    let record = editor.read_with(cx, |e, _| e.note_window_state()).expect("a named note");
+    assert!(record.plain, "the record says plain text");
+    assert_eq!(
+        crate::read_notes_state(&{
+            let state = dir.join("notes-state.txt");
+            crate::write_notes_state(&state, std::slice::from_ref(&record)).unwrap();
+            state
+        }),
+        vec![record],
+        "and survives a trip through the state file"
+    );
+
+    let toggle = cx.debug_bounds("note-mode").expect("still there");
+    cx.simulate_click(toggle.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    assert_eq!(note_mode(&editor, cx), tachyon_doc::DocMode::Markdown, "and back");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[gpui::test]
+fn the_note_header_toggle_label_names_the_mode(cx: &mut TestAppContext) {
+    // MD / TXT, so the state is not shown by color alone.
+    let dir = notes_dir("mode-label");
+    let (editor, cx) = open_note(dir.clone(), cx);
+    let label = |cx: &mut VisualTestContext| {
+        cx.debug_bounds("note-mode").map(|b| b.size.width).expect("the toggle is drawn")
+    };
+    let md_width = label(cx);
+    editor.update(cx, |e, cx| e.set_note_plain(true, cx));
+    cx.run_until_parked();
+    let txt_width = label(cx);
+    assert_ne!(md_width, txt_width, "the label text changed between MD and TXT");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[gpui::test]
+fn set_note_plain_retags_a_note_and_leaves_big_markdown_alone(cx: &mut TestAppContext) {
+    let dir = notes_dir("set-plain");
+    let (editor, cx) = open_note(dir.clone(), cx);
+    cx.simulate_input("# kept");
+    editor.update(cx, |e, cx| e.set_note_plain(true, cx));
+    assert_eq!(note_mode(&editor, cx), tachyon_doc::DocMode::Plain);
+    assert_eq!(text(&editor, cx), "# kept");
+    editor.update(cx, |e, cx| e.set_note_plain(true, cx));
+    assert_eq!(note_mode(&editor, cx), tachyon_doc::DocMode::Plain, "already plain: a no-op");
+    editor.update(cx, |e, cx| e.set_note_plain(false, cx));
+    assert_eq!(note_mode(&editor, cx), tachyon_doc::DocMode::Markdown);
+    assert_eq!(kinds(&editor, cx), vec![BlockKind::Heading(1)]);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+fn note_mode(editor: &Entity<Editor>, cx: &mut VisualTestContext) -> tachyon_doc::DocMode {
+    editor.read_with(cx, |e, _| e.document().mode())
+}
+
+#[gpui::test]
+fn preferences_step_the_new_note_mode_and_write_it(cx: &mut TestAppContext) {
+    let dir = backup_dir("preferences-note-mode");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let file = dir.join("settings.toml");
+    std::fs::write(&file, "").expect("write");
+    cx.update(|cx| cx.set_global(crate::SettingsFile(file.clone())));
+    let (_editor, cx) = open("text\n", cx);
+
+    cx.simulate_keystrokes("secondary-,");
+    cx.simulate_input("New sticky note mode");
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+
+    let settings = cx.update(|_, cx| cx.global::<crate::Settings>().clone());
+    assert!(settings.sticky_plain, "markdown -> plain");
+    let written = std::fs::read_to_string(&file).expect("read");
+    assert!(written.ends_with("sticky_default_mode = \"plain\"\n"), "{written}");
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert!(!cx.update(|_, cx| cx.global::<crate::Settings>().clone()).sticky_plain, "and back");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[gpui::test]
+fn an_external_edit_keeps_a_plain_text_note_plain(cx: &mut TestAppContext) {
+    let dir = notes_dir("reload-plain");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("Log.md");
+    std::fs::write(&path, "# not a heading\n").unwrap();
+    let (editor, cx) = open_note(dir.clone(), cx);
+    editor.update(cx, |e, cx| {
+        e.set_document(tachyon_doc::Document::new("# not a heading\n"), cx);
+        e.adopt_note_file(path.clone(), cx);
+    });
+    // The user switches the note to plain text with the keyboard, as they would.
+    cx.simulate_keystrokes("ctrl-shift-m");
+    assert_eq!(note_mode(&editor, cx), tachyon_doc::DocMode::Plain);
+
+    // Another program rewrites the file; activating the window reloads it. The note's mode is
+    // the user's choice and the file is still `.md`, so a reload must not turn it back.
+    std::fs::write(&path, "# still not a heading, and longer\n").unwrap();
+    refocus(cx);
+
+    assert_eq!(text(&editor, cx), "# still not a heading, and longer\n", "it did reload");
+    assert_eq!(note_mode(&editor, cx), tachyon_doc::DocMode::Plain, "and stayed plain text");
+    let record = editor.read_with(cx, |e, _| e.note_window_state()).expect("a named note");
+    assert!(record.plain, "so its record still says plain");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[gpui::test]
+fn an_external_edit_keeps_a_markdown_notes_mode_too(cx: &mut TestAppContext) {
+    // The control: nothing about a plain-text note's handling changes a Markdown note's reload.
+    let dir = notes_dir("reload-markdown");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("Doc.md");
+    std::fs::write(&path, "# Title\n").unwrap();
+    let (editor, cx) = open_note(dir.clone(), cx);
+    editor.update(cx, |e, cx| {
+        e.set_document(tachyon_doc::Document::new("# Title\n"), cx);
+        e.adopt_note_file(path.clone(), cx);
+    });
+    std::fs::write(&path, "# Longer title\n").unwrap();
+    refocus(cx);
+    assert_eq!(text(&editor, cx), "# Longer title\n");
+    assert_eq!(note_mode(&editor, cx), tachyon_doc::DocMode::Markdown);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[gpui::test]
+fn a_note_plain_only_by_fallback_becomes_markdown_when_its_file_is_repaired(
+    cx: &mut TestAppContext,
+) {
+    let dir = notes_dir("reload-fallback");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("Garbled.md");
+    // Invalid UTF-8: `load_document` opens it as plain text on its own, not by the user's choice.
+    std::fs::write(&path, b"# broken \xff\xfe bytes\n").unwrap();
+    let (editor, cx) = open_note(dir.clone(), cx);
+    let Ok(crate::LoadOutcome::Loaded(loaded)) = crate::load_document(&path) else {
+        panic!("the file loads");
+    };
+    editor.update(cx, |e, cx| {
+        e.set_loaded(*loaded, cx);
+        e.adopt_note_file(path.clone(), cx);
+    });
+    assert_eq!(note_mode(&editor, cx), tachyon_doc::DocMode::Plain, "fell back to plain");
+    let record = editor.read_with(cx, |e, _| e.note_window_state()).expect("a named note");
+    assert!(!record.plain, "the fallback is not the user's choice, so it is not recorded");
+
+    // The file is repaired elsewhere: it loads as Markdown now, and the note follows it.
+    std::fs::write(&path, "# repaired, and longer\n").unwrap();
+    refocus(cx);
+    assert_eq!(text(&editor, cx), "# repaired, and longer\n", "it did reload");
+    assert_eq!(note_mode(&editor, cx), tachyon_doc::DocMode::Markdown, "and renders as Markdown");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[gpui::test]
+fn a_note_the_user_switched_to_plain_stays_plain_and_is_recorded(cx: &mut TestAppContext) {
+    let dir = notes_dir("chosen-plain");
+    let (editor, cx) = open_note(dir.clone(), cx);
+    cx.simulate_input("# Title");
+    cx.simulate_keystrokes("ctrl-shift-m");
+    cx.executor().advance_clock(AUTOSAVE_PAUSE);
+    cx.run_until_parked();
+    assert_eq!(note_mode(&editor, cx), tachyon_doc::DocMode::Plain);
+    assert!(editor.read_with(cx, |e, _| e.note_window_state()).unwrap().plain, "recorded");
+
+    // Switching back is a choice too: it is no longer recorded as plain.
+    cx.simulate_keystrokes("ctrl-shift-m");
+    cx.run_until_parked();
+    assert_eq!(note_mode(&editor, cx), tachyon_doc::DocMode::Markdown);
+    assert!(!editor.read_with(cx, |e, _| e.note_window_state()).unwrap().plain);
+    let _ = std::fs::remove_dir_all(&dir);
+}

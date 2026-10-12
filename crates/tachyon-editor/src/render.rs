@@ -730,6 +730,34 @@ impl Editor {
                     .text_color(theme.text.muted)
                     .child(SharedString::from(self.title())),
             );
+        // Markdown / plain text: a text label rather than an icon (the editor chrome draws none),
+        // and the label changes with the mode, so the state is never shown by color alone.
+        let plain = self.doc.mode() == tachyon_doc::DocMode::Plain;
+        let mode_editor = editor.clone();
+        header = header.child(
+            div()
+                .id("note-mode")
+                .debug_selector(|| "note-mode".to_owned())
+                .flex_none()
+                .h(theme.scaled(px(20.)))
+                .px_1()
+                .rounded(theme.radius_small)
+                .flex()
+                .items_center()
+                .justify_center()
+                .cursor_pointer()
+                .text_size(theme.scaled(px(11.)))
+                .when(plain, |d| d.bg(theme.accent).text_color(theme.text.on_accent))
+                .when(!plain, |d| d.text_color(theme.text.muted))
+                .child(if plain { "TXT" } else { "MD" })
+                .on_mouse_down(MouseButton::Left, move |_event: &MouseDownEvent, window, cx| {
+                    // Not on to the header's drag or the editor's caret handling.
+                    cx.stop_propagation();
+                    mode_editor.update(cx, |editor, cx| {
+                        editor.toggle_text_mode(&crate::editor::ToggleTextMode, window, cx);
+                    });
+                }),
+        );
         if tachyon_platform::supports_always_on_top() {
             let pin_editor = editor.clone();
             header = header.child(
