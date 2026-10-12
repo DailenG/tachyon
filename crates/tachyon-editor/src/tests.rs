@@ -3876,8 +3876,9 @@ fn a_plain_click_follows_a_link_only_in_view_mode(cx: &mut TestAppContext) {
     let at = editor.read_with(cx, |e, _| e.text().find("site").unwrap());
     let click = |editor: &Entity<Editor>, cx: &mut VisualTestContext| {
         editor.update_in(cx, |e, window, cx| {
+            e.press_position = Some(gpui::point(gpui::px(10.), gpui::px(10.)));
             e.mouse_down(at, gpui::Modifiers::default(), 1, window, cx);
-            e.mouse_released(cx);
+            e.mouse_released(gpui::point(gpui::px(11.), gpui::px(10.)), cx);
         });
         cx.run_until_parked();
     };
@@ -3916,9 +3917,10 @@ fn dragging_across_a_link_in_view_mode_selects_it_instead_of_opening_it(cx: &mut
     cx.simulate_keystrokes("ctrl-e");
     let start = editor.read_with(cx, |e, _| e.text().find("site").unwrap());
     editor.update_in(cx, |e, window, cx| {
+        e.press_position = Some(gpui::point(gpui::px(10.), gpui::px(10.)));
         e.mouse_down(start, gpui::Modifiers::default(), 1, window, cx);
         e.mouse_drag(start + 4, cx);
-        e.mouse_released(cx);
+        e.mouse_released(gpui::point(gpui::px(60.), gpui::px(10.)), cx);
     });
     cx.run_until_parked();
     assert_eq!(cx.opened_url(), None, "a drag is not a click");
@@ -3957,4 +3959,19 @@ fn changing_a_locked_notes_mode_keeps_it_free_of_a_caret_and_raw_blocks(cx: &mut
         assert!(!editor.read_with(cx, |e, _| e.editing), "no caret after the mode change");
         assert_eq!(editor.read_with(cx, |e, _| e.active_block()), None, "and no raw block");
     }
+}
+
+#[gpui::test]
+fn dragging_off_a_link_into_the_margin_does_not_open_it(cx: &mut TestAppContext) {
+    let (editor, cx) = open("see [site](https://example.com/page) now\n", cx);
+    cx.simulate_keystrokes("ctrl-e");
+    let at = editor.read_with(cx, |e, _| e.text().find("site").unwrap());
+    editor.update_in(cx, |e, window, cx| {
+        e.press_position = Some(gpui::point(gpui::px(10.), gpui::px(10.)));
+        e.mouse_down(at, gpui::Modifiers::default(), 1, window, cx);
+        // No text under the pointer on the way out: the selection never grows.
+        e.mouse_released(gpui::point(gpui::px(400.), gpui::px(300.)), cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(cx.opened_url(), None, "the pointer left the link before the release");
 }

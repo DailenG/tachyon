@@ -169,6 +169,9 @@ pub fn key_bindings() -> Vec<KeyBinding> {
     ]
 }
 
+/// How far the pointer may move between press and release and still count as a click.
+const CLICK_SLOP: Pixels = px(4.);
+
 /// What a refused edit says while in view mode.
 const VIEW_MODE_NOTICE: &str = "View mode \u{2014} Ctrl+E to edit";
 
@@ -251,7 +254,10 @@ pub struct Editor {
     pub(crate) selecting: bool,
     /// View mode: the offset of a link the mouse button is held down on, followed when it is
     /// released without having become a drag (`Editor::mouse_released`).
-    pub(crate) press_on_link: Option<usize>,
+    pub(crate) press_on_link: Option<(usize, Point<Pixels>)>,
+    /// Where the press that is being handed to `mouse_down` happened, set by the text's own
+    /// handler just before (`render::with_mouse`); `mouse_down` takes it.
+    pub(crate) press_position: Option<Point<Pixels>>,
     /// The caret should be scrolled into view at the next paint.
     pub(crate) reveal: bool,
     /// Block indices the list drew in the last completed frame, and the
@@ -435,6 +441,7 @@ impl Editor {
             moved_since_edit: false,
             selecting: false,
             press_on_link: None,
+            press_position: None,
             reveal: false,
             rendered: 0..0,
             rendering: None,
@@ -1198,8 +1205,9 @@ impl Editor {
         }
         // View mode follows a link on a plain click, but on the release: a press that starts a
         // drag over linked text must still select it, so the link waits to see if it was a drag.
+        let pressed_at = self.press_position.take();
         self.press_on_link = (self.locked && !extend && click_count == 1)
-            .then(|| self.link_at(offset).map(|_| offset))
+            .then(|| pressed_at.zip(self.link_at(offset)).map(|(at, _)| (offset, at)))
             .flatten();
         self.goal_x = None;
         if click_count >= 2 && !extend {
@@ -1214,12 +1222,15 @@ impl Editor {
         self.selecting = true;
     }
 
-    /// The mouse button went up: in view mode, a press on a link that never turned into a drag
-    /// (no selection grew) follows it.
-    pub(crate) fn mouse_released(&mut self, cx: &mut Context<Self>) {
+    /// The mouse button went up at `position`: in view mode, a press on a link follows it if it
+    /// was a click - the release is within [`CLICK_SLOP`] of the press and no selection grew -
+    /// not a drag that ended elsewhere (over text, in a margin or on an overlay).
+    pub(crate) fn mouse_released(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
         self.selecting = false;
-        if let Some(offset) = self.press_on_link.take()
+        if let Some((offset, pressed)) = self.press_on_link.take()
             && self.selection.is_empty()
+            && (position.x - pressed.x).abs() <= CLICK_SLOP
+            && (position.y - pressed.y).abs() <= CLICK_SLOP
         {
             self.follow_link(offset, cx);
         }

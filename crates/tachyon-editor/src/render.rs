@@ -240,8 +240,8 @@ impl Render for Editor {
             )
             .on_mouse_up(
                 MouseButton::Left,
-                cx.listener(|editor, _, window, cx| {
-                    editor.mouse_released(cx);
+                cx.listener(|editor, event: &gpui::MouseUpEvent, window, cx| {
+                    editor.mouse_released(event.position, cx);
                     editor.scrollbar_drag_ended(window, cx);
                 }),
             )
@@ -1678,6 +1678,7 @@ fn with_mouse(
         let index = index.min(down_layout.len());
         let offset = down_target.offset(index);
         down_editor.update(cx, |editor, cx| {
+            editor.press_position = Some(event.position);
             editor.mouse_down(offset, event.modifiers, event.click_count, window, cx)
         });
         cx.stop_propagation();
