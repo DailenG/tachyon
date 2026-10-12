@@ -3642,12 +3642,14 @@ fn open_sticky_notes_folder_opens_the_folder_that_is_set_and_reports_failure(
     assert!(!standard.exists(), "nothing saved yet, so no folder");
 
     editor.update(cx, |e, cx| e.open_notes_folder(cx));
+    cx.run_until_parked();
     assert!(standard.is_dir(), "the folder exists once there is something to open");
     assert_eq!(*OPENED_FOLDERS.lock().unwrap(), vec![standard.clone()], "the standard folder");
 
     // With `sticky_folder` set, it opens that one, not the standard one.
     with_sticky_folder(&custom, cx);
     editor.update(cx, |e, cx| e.open_notes_folder(cx));
+    cx.run_until_parked();
     assert!(custom.is_dir());
     assert_eq!(OPENED_FOLDERS.lock().unwrap().last(), Some(&custom));
 
@@ -3658,6 +3660,7 @@ fn open_sticky_notes_folder_opens_the_folder_that_is_set_and_reports_failure(
     with_sticky_folder(&blocker.join("sub"), cx);
     let opened = OPENED_FOLDERS.lock().unwrap().len();
     editor.update(cx, |e, cx| e.open_notes_folder(cx));
+    cx.run_until_parked();
     let notice = editor.read_with(cx, |e, _| e.app_notice.clone()).expect("a notice");
     assert!(notice.starts_with("Could not open"), "{notice}");
     assert_eq!(OPENED_FOLDERS.lock().unwrap().len(), opened, "nothing was opened");
@@ -3688,5 +3691,95 @@ fn an_existing_note_still_saves_when_the_new_folder_setting_is_unwritable(cx: &m
     assert_eq!(std::fs::read_to_string(standard.join("Draft.md")).unwrap(), "Draft v2");
     assert!(editor.read_with(cx, |e, _| e.app_notice.is_none()), "no failure was reported");
     let _ = std::fs::remove_file(&blocker);
+    let _ = std::fs::remove_dir_all(&standard);
+}
+
+#[gpui::test]
+fn a_note_that_cannot_be_saved_stays_open_instead_of_losing_its_text(cx: &mut TestAppContext) {
+    let standard = notes_dir("close-bad-standard");
+    let blocker = notes_dir("close-bad-blocker");
+    std::fs::create_dir_all(blocker.parent().unwrap()).unwrap();
+    std::fs::write(&blocker, "not a folder").unwrap();
+    let (editor, cx) = open_note(standard.clone(), cx);
+    with_sticky_folder(&blocker.join("notes"), cx);
+    cx.simulate_input("only copy of this text");
+
+    // Closing flushes the note; the flush fails, so the window must stay with its text.
+    cx.simulate_keystrokes("secondary-w");
+    cx.run_until_parked();
+    assert!(!cx.windows().is_empty(), "the note did not close");
+    assert_eq!(text(&editor, cx), "only copy of this text");
+    let notice = editor.read_with(cx, |e, _| e.app_notice.clone()).expect("it says why");
+    assert!(notice.contains("could not be saved"), "{notice}");
+
+    // The window-frame close (Alt+F4, the taskbar) is refused the same way.
+    assert!(!cx.simulate_close(), "the frame close is refused too");
+    assert_eq!(text(&editor, cx), "only copy of this text");
+
+    // Once the folder works, the same note saves and closes normally.
+    with_sticky_folder(&standard, cx);
+    cx.simulate_keystrokes("secondary-w");
+    cx.run_until_parked();
+    assert!(cx.windows().is_empty(), "closed once it could be saved");
+    assert_eq!(md_files(&standard), vec!["only copy of this text.md".to_owned()]);
+    let _ = std::fs::remove_file(&blocker);
+    let _ = std::fs::remove_dir_all(&standard);
+}
+
+#[gpui::test]
+fn a_save_warning_goes_away_once_the_note_saves(cx: &mut TestAppContext) {
+    let standard = notes_dir("stale-standard");
+    let blocker = notes_dir("stale-blocker");
+    std::fs::create_dir_all(blocker.parent().unwrap()).unwrap();
+    std::fs::write(&blocker, "not a folder").unwrap();
+    let (editor, cx) = open_note(standard.clone(), cx);
+    with_sticky_folder(&blocker.join("notes"), cx);
+    cx.simulate_input("draft");
+    cx.executor().advance_clock(AUTOSAVE_PAUSE);
+    cx.run_until_parked();
+    assert!(editor.read_with(cx, |e, _| e.app_notice.is_some()), "the failure is shown");
+
+    with_sticky_folder(&standard, cx);
+    cx.simulate_input(" two");
+    cx.executor().advance_clock(AUTOSAVE_PAUSE);
+    cx.run_until_parked();
+    assert_eq!(md_files(&standard), vec!["draft two.md".to_owned()], "it saved");
+    assert!(editor.read_with(cx, |e, _| e.app_notice.is_none()), "so the warning is gone");
+    let _ = std::fs::remove_file(&blocker);
+    let _ = std::fs::remove_dir_all(&standard);
+}
+
+#[gpui::test]
+fn a_relative_sticky_folder_is_made_absolute_so_the_record_survives_a_restart(
+    cx: &mut TestAppContext,
+) {
+    let standard = notes_dir("relative-standard");
+    cx.update(|cx| {
+        cx.set_global(crate::Settings {
+            sticky_folder: "some/relative/notes".to_owned(),
+            ..Default::default()
+        })
+    });
+    cx.update(|cx| cx.set_global(crate::NotesDir(standard)));
+    let folder = cx.update(|cx| crate::notes::notes_folder(cx)).expect("a folder");
+    assert!(folder.is_absolute(), "{folder:?} must not depend on the working directory");
+    assert!(folder.ends_with("some/relative/notes"), "{folder:?}");
+}
+
+#[gpui::test]
+fn open_sticky_notes_folder_does_not_create_the_folder_on_the_ui_thread(cx: &mut TestAppContext) {
+    let standard = notes_dir("async-open");
+    cx.update(|cx| cx.set_global(crate::OpenFolder(record_opened_folder)));
+    let (editor, cx) = open_note(standard.clone(), cx);
+    OPENED_FOLDERS.lock().unwrap().clear();
+
+    editor.update(cx, |e, cx| e.open_notes_folder(cx));
+    // Nothing happens synchronously: creating the folder is left to the background executor.
+    assert!(!standard.exists(), "no filesystem work on the UI thread");
+    assert!(OPENED_FOLDERS.lock().unwrap().is_empty());
+
+    cx.run_until_parked();
+    assert!(standard.is_dir(), "created in the background");
+    assert_eq!(*OPENED_FOLDERS.lock().unwrap(), vec![standard.clone()], "then opened");
     let _ = std::fs::remove_dir_all(&standard);
 }
