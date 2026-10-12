@@ -260,11 +260,17 @@ const DATA: Lang = Lang {
 const JSON: Lang = Lang {
     keywords: &["true", "false", "null"],
     line_comments: C_COMMENTS,
-    block_comment: None,
+    // JSONC and JSON5 allow `/* */`; plain JSON never has one, so reading it as a comment costs
+    // nothing there.
+    block_comment: Some(("/*", "*/")),
     quotes: b"\"",
     triple: false,
     types: false,
 };
+
+/// JSON5 also writes strings in single quotes (`{'a': 'b // c'}`); JSON and JSONC do not, so they
+/// keep [`JSON`], where an apostrophe is never a string.
+const JSON5: Lang = Lang { quotes: b"\"'", ..JSON };
 
 fn lang(name: &str) -> Option<&'static Lang> {
     Some(match name.to_ascii_lowercase().as_str() {
@@ -277,14 +283,17 @@ fn lang(name: &str) -> Option<&'static Lang> {
         "powershell" | "ps1" | "pwsh" | "ps" => &POWERSHELL,
         "sql" => &SQL,
         "toml" | "yaml" | "yml" | "ini" | "conf" | "dockerfile" | "makefile" | "make" => &DATA,
-        "json" | "jsonc" | "json5" => &JSON,
+        "json" | "jsonc" => &JSON,
+        "json5" => &JSON5,
         _ => return None,
     })
 }
 
-/// Token styles for `code` written in `lang` (a fence's info string word), as byte ranges into
-/// `code` in order. Empty for languages it does not know.
-pub(crate) fn highlight(lang_name: &str, code: &str) -> Vec<(Range<usize>, Style)> {
+/// Token styles for `code` written in `lang` (a fence's info string word, or a file extension
+/// such as `json`), as byte ranges into `code` in order. Empty for languages it does not know.
+/// One pass over `code`, no allocation beyond the result: cheap enough to run per visible chunk
+/// at paint time.
+pub fn highlight(lang_name: &str, code: &str) -> Vec<(Range<usize>, Style)> {
     let Some(lang) = lang(lang_name) else { return Vec::new() };
     let bytes = code.as_bytes();
     let mut tokens = Vec::new();
@@ -423,5 +432,83 @@ mod tests {
     fn unknown_languages_are_plain() {
         assert!(tokens("brainfuck", "fn main() {}").is_empty());
         assert!(tokens("", "fn main() {}").is_empty());
+    }
+}
+
+#[cfg(test)]
+mod json_tests {
+    use super::*;
+
+    fn kinds(code: &str) -> Vec<(&str, Style)> {
+        highlight("json", code).into_iter().map(|(r, s)| (&code[r], s)).collect()
+    }
+
+    #[test]
+    fn json_colours_strings_numbers_keywords_and_both_comment_forms() {
+        assert_eq!(
+            kinds("{\"a\": [1, -2.5e3, true, null], /* c */ \"b\": \"x\\\"y\"} // t"),
+            [
+                ("\"a\"", Style::STRING),
+                ("1", Style::NUMBER),
+                ("2.5e3", Style::NUMBER),
+                ("true", Style::KEYWORD),
+                ("null", Style::KEYWORD),
+                ("/* c */", Style::COMMENT),
+                ("\"b\"", Style::STRING),
+                ("\"x\\\"y\"", Style::STRING),
+                ("// t", Style::COMMENT),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_json_string_ends_at_its_line_so_chunks_can_be_coloured_alone() {
+        // An unterminated string must not swallow the rest of the chunk.
+        assert_eq!(kinds("\"open\n1"), [("\"open", Style::STRING), ("1", Style::NUMBER)],);
+    }
+
+    fn kinds5(code: &str) -> Vec<(&str, Style)> {
+        highlight("json5", code).into_iter().map(|(r, s)| (&code[r], s)).collect()
+    }
+
+    #[test]
+    fn json5_single_quoted_strings_keep_their_contents_as_one_string() {
+        assert_eq!(
+            kinds5("{'enabled': 'true // disabled'}"),
+            [("'enabled'", Style::STRING), ("'true // disabled'", Style::STRING)],
+            "nothing inside a string is a keyword or a comment"
+        );
+        assert_eq!(
+            kinds5("{'a': 'it\\'s 42', \"b\": \"x\"}"),
+            [
+                ("'a'", Style::STRING),
+                ("'it\\'s 42'", Style::STRING),
+                ("\"b\"", Style::STRING),
+                ("\"x\"", Style::STRING),
+            ],
+            "an escaped apostrophe does not end the string; both quote styles work"
+        );
+        assert_eq!(
+            kinds5("{k: 'https://example.test'}"),
+            [("'https://example.test'", Style::STRING)],
+            "a // inside a single-quoted URL is not a comment"
+        );
+    }
+
+    #[test]
+    fn json_and_jsonc_do_not_treat_an_apostrophe_as_a_string() {
+        for name in ["json", "jsonc"] {
+            let tokens = highlight(name, "{'a': 1}");
+            assert_eq!(tokens.len(), 1, "{name}: only the number: {tokens:?}");
+            assert_eq!(tokens[0].1, Style::NUMBER);
+        }
+    }
+
+    #[test]
+    fn the_extension_aliases_resolve_and_unknown_names_colour_nothing() {
+        for name in ["json", "JSON", "jsonc", "json5"] {
+            assert!(!highlight(name, "{\"a\":1}").is_empty(), "{name}");
+        }
+        assert!(highlight("nonsense", "{\"a\":1}").is_empty());
     }
 }
