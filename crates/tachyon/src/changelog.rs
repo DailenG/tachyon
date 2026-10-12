@@ -59,15 +59,30 @@ pub(crate) fn extract_section<'a>(changelog: &'a str, version: &str) -> Option<&
 /// unparseable (a fresh install, a corrupt record), equal to or newer than `to` (a nightly of the
 /// same release, a rollback), or no release in the changelog falls inside it - this is just
 /// [`extract_section`] for `to`, as before.
+///
+/// A development build, whose version has no section of its own yet (its changes are under
+/// `## [Unreleased]`), gets that section first, then the releases it jumped over: leaving it out
+/// would show the history but not the running build's own newest changes.
 pub(crate) fn sections_since(changelog: &str, from: Option<&str>, to: &str) -> Vec<String> {
     let range = from.and_then(parse_version).zip(parse_version(to));
-    if let Some((from, to)) = range.filter(|(from, to)| from < to) {
-        let inside: Vec<String> = sections(changelog)
-            .into_iter()
-            .filter(|(label, _)| parse_version(label).is_some_and(|v| v > from && v <= to))
-            .map(|(_, text)| text.trim_end().to_owned())
-            .collect();
-        if !inside.is_empty() {
+    if let Some((from, to_version)) = range.filter(|(from, to)| from < to) {
+        let all = sections(changelog);
+        let mut inside: Vec<String> = Vec::new();
+        let has_own_section = all.iter().any(|(label, _)| parse_version(label) == Some(to_version));
+        if !has_own_section
+            && let Some((_, text)) = all.iter().find(|(label, _)| *label == "Unreleased")
+        {
+            inside.push(text.trim_end().to_owned());
+        }
+        inside.extend(
+            all.iter()
+                .filter(|(label, _)| {
+                    parse_version(label).is_some_and(|v| v > from && v <= to_version)
+                })
+                .map(|(_, text)| text.trim_end().to_owned()),
+        );
+        // Only the Unreleased fallback and nothing between: the single-section answer below.
+        if inside.len() > 1 || (inside.len() == 1 && has_own_section) {
             return inside;
         }
     }
@@ -176,15 +191,39 @@ mod tests {
             assert_eq!(got.len(), 1, "{from:?}");
             assert!(got[0].starts_with("## [1.4.2]"), "{from:?}: {:?}", got[0]);
         }
-        // A build ahead of the last release, updated from an older one, shows every release in
-        // between: those are the changes the user did not have.
+        // A build ahead of the last release, updated from an older one, shows its own
+        // Unreleased changes first, then every release in between.
         let ahead = sections_since(MANY, Some("1.3.0"), "9.9.9");
-        assert_eq!(ahead.len(), 3, "1.4.0 to 1.4.2");
+        assert_eq!(ahead.len(), 4, "Unreleased, then 1.4.2 to 1.4.0");
+        assert!(ahead[0].starts_with("## [Unreleased]"), "{:?}", ahead[0]);
+        assert!(ahead[1].starts_with("## [1.4.2]"));
         // With no `from`, a build with no section of its own shows Unreleased, as before.
         let dev = sections_since(MANY, None, "9.9.9");
         assert_eq!(dev.len(), 1);
         assert!(dev[0].starts_with("## [Unreleased]"));
         assert!(sections_since("# Changelog\n", Some("1.0.0"), "1.1.0").is_empty());
+    }
+
+    #[test]
+    fn a_development_build_shows_unreleased_ahead_of_the_releases_it_jumped_over() {
+        // The build reports 1.4.3, whose section is not cut yet; the record says 1.3.0.
+        let got = sections_since(MANY, Some("1.3.0"), "1.4.3");
+        let heads: Vec<_> = got.iter().map(|s| s.lines().next().unwrap().to_owned()).collect();
+        assert_eq!(
+            heads,
+            [
+                "## [Unreleased]",
+                "## [1.4.2] - 2026-10-12",
+                "## [1.4.1] - 2026-10-12",
+                "## [1.4.0] - 2026-10-12"
+            ]
+        );
+        // A release with its own section never also pulls in Unreleased.
+        let released = sections_since(MANY, Some("1.3.0"), "1.4.2");
+        assert!(released.iter().all(|s| !s.contains("pending")), "{released:?}");
+        // No jump, no changelog Unreleased: unchanged single-section behaviour.
+        let one = sections_since("## [1.4.2]\n\n- a\n", Some("1.4.1"), "1.4.2");
+        assert_eq!(one.len(), 1);
     }
 
     #[test]
