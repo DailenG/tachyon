@@ -3975,3 +3975,18 @@ fn dragging_off_a_link_into_the_margin_does_not_open_it(cx: &mut TestAppContext)
     cx.run_until_parked();
     assert_eq!(cx.opened_url(), None, "the pointer left the link before the release");
 }
+
+#[gpui::test]
+fn a_margin_click_near_a_link_in_view_mode_does_not_open_it(cx: &mut TestAppContext) {
+    let (editor, cx) = open("see [site](https://example.com/page) now\n", cx);
+    cx.simulate_keystrokes("ctrl-e");
+    let at = editor.read_with(cx, |e, _| e.text().find("site").unwrap());
+    // `mouse_down_in_margin` maps a click beside the text to a nearby offset and never sets
+    // `press_position`: only a press on the text itself can follow a link.
+    editor.update_in(cx, |e, window, cx| {
+        e.mouse_down(at, gpui::Modifiers::default(), 1, window, cx);
+        e.mouse_released(gpui::point(gpui::px(10.), gpui::px(10.)), cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(cx.opened_url(), None);
+}
