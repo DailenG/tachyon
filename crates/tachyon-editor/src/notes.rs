@@ -58,6 +58,12 @@ pub(crate) struct NoteState {
     /// the time) - guards against scheduling another write for text already saved, mirroring
     /// `Editor::backed_up_version`.
     saved_version: Option<u64>,
+    /// The user asked for plain text (the header toggle, `Ctrl+Shift+M`, `sticky_default_mode`,
+    /// or a recorded `mode = plain`), as opposed to a note that is plain only because
+    /// `load_document` had to open its file that way (invalid UTF-8, binary, over the Markdown
+    /// size limit). Only a choice is recorded and kept across a reload: a fallback follows the
+    /// file, so a repaired file renders as Markdown again.
+    pub(crate) chose_plain: bool,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -471,6 +477,7 @@ impl Editor {
             pending_file: None,
             autosave_task: None,
             saved_version: None,
+            chose_plain: false,
         });
     }
 
@@ -537,7 +544,7 @@ impl Editor {
         self.note.as_ref()?;
         let path = self.file.clone()?;
         let bounds = self.last_placement.map_or_else(Bounds::default, |(bounds, _)| bounds);
-        let plain = self.doc.mode() == tachyon_doc::DocMode::Plain;
+        let plain = self.note_chose_plain();
         Some(NoteWindowState { path, bounds, pinned: self.note_pinned(), plain })
     }
 
@@ -659,15 +666,31 @@ impl Editor {
         self.set_note_file(path, cx);
     }
 
-    /// Shows this note as plain text or Markdown (`plain`), keeping its text and undo history:
-    /// how a restored note comes back in the mode recorded for it, and how a new one starts in
-    /// `sticky_default_mode`. Markdown is refused above `MARKDOWN_SIZE_LIMIT`, like the toggle.
+    /// Whether the user chose plain text for this note (see `NoteState::chose_plain`).
+    pub(crate) fn note_chose_plain(&self) -> bool {
+        self.note.as_ref().is_some_and(|note| note.chose_plain)
+    }
+
+    /// Records the user's choice of plain text or Markdown for this note. The caller changes the
+    /// display mode itself; this is what a reload and the notes state file go by afterwards.
+    pub(crate) fn record_note_choice(&mut self, plain: bool) {
+        if let Some(note) = self.note.as_mut() {
+            note.chose_plain = plain;
+        }
+    }
+
+    /// Shows this note as plain text or Markdown (`plain`) *as the user's choice*, keeping its
+    /// text and undo history: how a restored note comes back in the mode recorded for it, and how
+    /// a new one starts in `sticky_default_mode`. Markdown is refused above
+    /// `MARKDOWN_SIZE_LIMIT`, like the toggle.
     pub fn set_note_plain(&mut self, plain: bool, cx: &mut Context<Self>) {
         let target =
             if plain { tachyon_doc::DocMode::Plain } else { tachyon_doc::DocMode::Markdown };
-        if self.doc.mode() == target
-            || (!plain && self.doc.len() as u64 > tachyon_doc::MARKDOWN_SIZE_LIMIT)
-        {
+        if !plain && self.doc.len() as u64 > tachyon_doc::MARKDOWN_SIZE_LIMIT {
+            return;
+        }
+        self.record_note_choice(plain);
+        if self.doc.mode() == target {
             return;
         }
         self.flush_pending_paste(cx);
