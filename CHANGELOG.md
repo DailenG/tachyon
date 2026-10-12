@@ -6,6 +6,8 @@ All notable user-visible changes are recorded here. The format follows
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-10-12
+
 ### Added
 
 - View mode, for reading and copying rather than editing (#129). `Ctrl+E`, the "Toggle view mode"
