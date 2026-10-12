@@ -6,6 +6,8 @@ All notable user-visible changes are recorded here. The format follows
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-10-12
+
 ### Changed
 
 - The What's new window shows every release since the version you updated from, newest first, with
