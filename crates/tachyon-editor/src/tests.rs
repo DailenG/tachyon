@@ -4031,3 +4031,115 @@ fn a_modifier_click_on_a_link_leaves_no_press_behind_for_a_margin_click(cx: &mut
         "and the press position is not left behind for the next click to find"
     );
 }
+
+fn note_text_lines(editor: &Entity<Editor>, cx: &mut VisualTestContext) -> usize {
+    editor
+        .read_with(cx, |e, _| e.document().blocks().iter().map(|b| b.parsed().ir.lines.len()).sum())
+}
+
+#[gpui::test]
+fn a_sticky_note_shows_each_typed_line_but_a_document_joins_them(cx: &mut TestAppContext) {
+    // The same text, two windows.
+    let (document, cx) = open("ABC\nBCC\nEAI\n", cx);
+    assert_eq!(note_text_lines(&document, cx), 1, "a document reflows a single newline");
+
+    let dir = notes_dir("soft-breaks");
+    let (note, cx) = open_note(dir.clone(), cx);
+    cx.simulate_input("ABC");
+    cx.simulate_keystrokes("enter");
+    cx.simulate_input("BCC");
+    cx.simulate_keystrokes("enter");
+    cx.simulate_input("EAI");
+    assert_eq!(text(&note, cx), "ABC\nBCC\nEAI");
+    assert_eq!(note_text_lines(&note, cx), 3, "a note shows the lines as typed");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[gpui::test]
+fn a_notes_line_breaks_survive_a_reload_a_mode_toggle_and_a_restart(cx: &mut TestAppContext) {
+    let dir = notes_dir("soft-breaks-reload");
+    let (note, cx) = open_note(dir.clone(), cx);
+    cx.simulate_input("one");
+    cx.simulate_keystrokes("enter");
+    cx.simulate_input("two");
+    // Plain and back (retag_to rebuilds the document).
+    cx.simulate_keystrokes("ctrl-shift-m ctrl-shift-m");
+    assert_eq!(note_text_lines(&note, cx), 2, "still two lines after a mode round trip");
+
+    // A document loaded into the note (a restore reading its file) gets the same treatment.
+    let loaded = tachyon_doc::Document::new("alpha\nbeta\ngamma\n");
+    note.update(cx, |e, cx| e.set_document(loaded, cx));
+    cx.run_until_parked();
+    assert_eq!(note_text_lines(&note, cx), 3, "set_document applies it to a loaded file");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[gpui::test]
+fn shift_enter_inserts_a_backslash_hard_break_that_renders_as_a_new_line(cx: &mut TestAppContext) {
+    let (editor, cx) = open("", cx);
+    cx.simulate_input("first");
+    cx.simulate_keystrokes("shift-enter");
+    cx.simulate_input("second");
+    assert_eq!(text(&editor, cx), "first\\\nsecond", "the source shows the break");
+    assert_eq!(note_text_lines(&editor, cx), 2, "a document breaks the line, unlike Enter");
+
+    cx.simulate_keystrokes("enter");
+    cx.simulate_input("third");
+    assert_eq!(text(&editor, cx), "first\\\nsecond\nthird");
+    assert_eq!(note_text_lines(&editor, cx), 2, "Enter in a document still joins");
+}
+
+#[gpui::test]
+fn shift_enter_is_a_plain_newline_where_a_backslash_would_be_text(cx: &mut TestAppContext) {
+    // Plain-text mode.
+    let (editor, cx) = open("", cx);
+    cx.simulate_keystrokes("ctrl-shift-m");
+    cx.simulate_input("a");
+    cx.simulate_keystrokes("shift-enter");
+    cx.simulate_input("b");
+    assert_eq!(text(&editor, cx), "a\nb", "no backslash in plain text");
+
+    // A code block, and a line with nothing before the caret.
+    let (editor, cx) = open("```\ncode", cx);
+    cx.simulate_keystrokes("ctrl-end shift-enter");
+    assert_eq!(text(&editor, cx), "```\ncode\n", "no backslash inside a fence");
+    let (editor, cx) = open("text\n", cx);
+    cx.simulate_keystrokes("ctrl-end shift-enter");
+    assert_eq!(text(&editor, cx), "text\n\n", "nothing before the caret to break");
+}
+
+#[gpui::test]
+fn shift_enter_in_a_list_item_continues_the_item_instead_of_starting_one(cx: &mut TestAppContext) {
+    let (editor, cx) = open("- one", cx);
+    cx.simulate_keystrokes("ctrl-end shift-enter");
+    cx.simulate_input("more");
+    assert_eq!(text(&editor, cx), "- one\\\n  more", "indented to the item's text, no new bullet");
+    let kinds = editor.read_with(cx, |e, _| e.document().blocks().len());
+    assert_eq!(kinds, 1, "still one list block");
+
+    let (editor, cx) = open("1. one", cx);
+    cx.simulate_keystrokes("ctrl-end shift-enter");
+    cx.simulate_input("more");
+    assert_eq!(text(&editor, cx), "1. one\\\n   more", "aligned past `1. `");
+
+    let (editor, cx) = open("- [ ] task", cx);
+    cx.simulate_keystrokes("ctrl-end shift-enter");
+    cx.simulate_input("more");
+    assert_eq!(text(&editor, cx), "- [ ] task\\\n      more", "aligned past the box");
+}
+
+#[gpui::test]
+fn copy_as_html_from_a_note_follows_the_spec_even_though_the_note_shows_each_line(
+    cx: &mut TestAppContext,
+) {
+    let dir = notes_dir("soft-breaks-html");
+    let (note, cx) = open_note(dir.clone(), cx);
+    cx.simulate_input("ABC");
+    cx.simulate_keystrokes("enter");
+    cx.simulate_input("BCC");
+    assert_eq!(note_text_lines(&note, cx), 2, "shown as two lines");
+    cx.simulate_keystrokes("secondary-shift-c");
+    let copied = cx.read_from_clipboard().and_then(|item| item.text());
+    assert_eq!(copied.as_deref(), Some("<p>ABC\nBCC</p>\n"), "exported as CommonMark");
+    let _ = std::fs::remove_dir_all(&dir);
+}

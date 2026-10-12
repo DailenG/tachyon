@@ -126,9 +126,22 @@ pub struct LinkLookup {
     pub target: Option<LinkTarget>,
 }
 
+/// What a single newline inside a paragraph (a "soft break") renders as.
+///
+/// A property of the whole document, not of a block: every block must parse the same alone and
+/// inside the document (ADR 0005), so the same value goes to every parse of one document.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SoftBreaks {
+    /// A space, as CommonMark specifies: hard-wrapped prose reflows to the window.
+    #[default]
+    Space,
+    /// A line break, as typed: for a scratchpad where each line is deliberate.
+    Line,
+}
+
 /// Splits `src` into blocks whose `len`s sum to `src.len()` and builds their
 /// IR, resolving reference links through `defs`. Empty input yields no blocks.
-pub fn parse(src: &str, defs: &DefTable) -> Vec<ParsedBlock> {
+pub fn parse(src: &str, defs: &DefTable, breaks: SoftBreaks) -> Vec<ParsedBlock> {
     if src.is_empty() {
         return Vec::new();
     }
@@ -189,7 +202,7 @@ pub fn parse(src: &str, defs: &DefTable) -> Vec<ParsedBlock> {
         match event {
             Event::Start(tag) => {
                 if depth == 0 {
-                    let mut b = Builder::new(src, range.start, kind_of(&tag), defs);
+                    let mut b = Builder::new(src, range.start, kind_of(&tag), defs, breaks);
                     if !container {
                         b.extent_end = range.end;
                     }
@@ -218,7 +231,7 @@ pub fn parse(src: &str, defs: &DefTable) -> Vec<ParsedBlock> {
                 // pulldown emits outside a container).
                 let kind =
                     if matches!(event, Event::Rule) { BlockKind::Rule } else { BlockKind::Html };
-                let mut b = Builder::new(src, range.start, kind, defs);
+                let mut b = Builder::new(src, range.start, kind, defs, breaks);
                 b.extent_end = range.end;
                 b.last_offset = range.start;
                 b.event(event, range.clone());
@@ -291,7 +304,7 @@ pub fn parse(src: &str, defs: &DefTable) -> Vec<ParsedBlock> {
 /// it so the blocks are exactly what windowed reparses would produce.
 pub fn parse_document(src: &str) -> (Vec<ParsedBlock>, DefTable) {
     let initial = DefTable::from_source(src, options());
-    let mut blocks = parse(src, &initial);
+    let mut blocks = parse(src, &initial, SoftBreaks::Space);
     let table = DefTable::from_blocks(&blocks);
     if table.links_equal(&initial) {
         // The whole document resolves its own footnotes, so the blocks
@@ -304,7 +317,7 @@ pub fn parse_document(src: &str) -> (Vec<ParsedBlock>, DefTable) {
         }
         return (blocks, table);
     }
-    let blocks = parse(src, &table);
+    let blocks = parse(src, &table, SoftBreaks::Space);
     let table = DefTable::from_blocks(&blocks);
     (blocks, table)
 }
@@ -710,10 +723,17 @@ struct Builder<'a> {
     /// The open fenced code block's start in `ir.text` and its language, for highlighting.
     code: Option<(usize, String)>,
     table_cell: usize,
+    breaks: SoftBreaks,
 }
 
 impl<'a> Builder<'a> {
-    fn new(src: &'a str, origin: usize, kind: BlockKind, defs: &'a DefTable) -> Self {
+    fn new(
+        src: &'a str,
+        origin: usize,
+        kind: BlockKind,
+        defs: &'a DefTable,
+        breaks: SoftBreaks,
+    ) -> Self {
         Builder {
             src,
             origin,
@@ -736,6 +756,7 @@ impl<'a> Builder<'a> {
             in_verbatim_block: false,
             code: None,
             table_cell: 0,
+            breaks,
         }
     }
 
@@ -1108,8 +1129,10 @@ impl<'a> Builder<'a> {
             Event::FootnoteReference(label) => {
                 self.push_synthetic(&format!("[{label}]"), Style::FOOTNOTE_REF)
             }
-            Event::SoftBreak => self.push_synthetic(" ", Style::PLAIN),
-            Event::HardBreak => {
+            Event::SoftBreak if self.breaks == SoftBreaks::Space => {
+                self.push_synthetic(" ", Style::PLAIN)
+            }
+            Event::SoftBreak | Event::HardBreak => {
                 let kind = self.line_kind;
                 self.open_line(kind);
             }

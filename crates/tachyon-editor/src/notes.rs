@@ -523,6 +523,10 @@ impl Editor {
             saved_version: None,
             chose_plain: false,
         });
+        // The blank document the window started with: its lines are shown as typed from the
+        // first keystroke. (Later documents get this in `Editor::set_document`.)
+        let placeholder = std::mem::replace(&mut self.doc, tachyon_doc::Document::new_plain(""));
+        self.doc = placeholder.with_soft_breaks(self.soft_breaks());
     }
 
     /// Reserves this file identity while the background read runs, without assigning a save path.

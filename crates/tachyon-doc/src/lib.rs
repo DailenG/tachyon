@@ -19,7 +19,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use ropey::Rope;
-use tachyon_md::{self as md, DefTable, ParsedBlock};
+use tachyon_md::{self as md, DefTable, ParsedBlock, SoftBreaks};
 use tachyon_text::{Buffer, Edit, EditError, PreparedText};
 
 #[cfg(test)]
@@ -343,6 +343,9 @@ pub struct Document {
     next_block: u64,
     next_job: u64,
     mode: DocMode,
+    /// How a single newline in a paragraph renders. One value for the whole document, so every
+    /// block parses the same alone and inside it (ADR 0005); see [`Document::with_soft_breaks`].
+    breaks: SoftBreaks,
 }
 
 impl Document {
@@ -363,6 +366,10 @@ impl Document {
     /// Builds a document from an already-loaded buffer (its text, undo history and version are
     /// kept as is), tiling it into blocks for `mode`.
     pub fn from_buffer(buffer: Buffer, mode: DocMode) -> Self {
+        Self::from_buffer_with(buffer, mode, SoftBreaks::default())
+    }
+
+    fn from_buffer_with(buffer: Buffer, mode: DocMode, breaks: SoftBreaks) -> Self {
         let mut doc = Document {
             buffer,
             blocks: Arc::new(Vec::new()),
@@ -375,6 +382,7 @@ impl Document {
             next_block: 0,
             next_job: 0,
             mode,
+            breaks,
         };
         match mode {
             DocMode::Markdown => doc.load_markdown(),
@@ -491,7 +499,23 @@ impl Document {
     /// `mode` (Markdown, whose parse cost is why [`MARKDOWN_SIZE_LIMIT`] exists) may want to run
     /// this off the UI thread for a large document.
     pub fn retagged(self, mode: DocMode) -> Self {
-        Self::from_buffer(self.buffer, mode)
+        let breaks = self.breaks;
+        Self::from_buffer_with(self.buffer, mode, breaks)
+    }
+
+    /// This document with single newlines rendered as `breaks`, reparsed under it. A fresh
+    /// document starts as [`SoftBreaks::Space`] (CommonMark). Meant for a document just built:
+    /// it re-tiles the whole text, so call it before the first edit, not on a large file already
+    /// in use.
+    pub fn with_soft_breaks(self, breaks: SoftBreaks) -> Self {
+        if breaks == self.breaks {
+            return self;
+        }
+        Self::from_buffer_with(self.buffer, self.mode, breaks)
+    }
+
+    pub fn soft_breaks(&self) -> SoftBreaks {
+        self.breaks
     }
 
     pub fn buffer(&self) -> &Buffer {
@@ -607,7 +631,7 @@ impl Document {
         }
         let range = self.block_range(index);
         let src = self.buffer.rope().byte_slice(range).to_string();
-        let mut fresh = md::parse(&src, &self.defs);
+        let mut fresh = md::parse(&src, &self.defs, self.breaks);
         debug_assert_eq!(
             fresh.len(),
             1,
@@ -774,6 +798,7 @@ impl Document {
             converge,
             will_clear_dirty,
             defs_dirty_before: self.defs_dirty,
+            breaks: self.breaks,
         })
     }
 
@@ -1346,6 +1371,7 @@ pub struct ParseJob {
     /// Whether the document already owed a definitions rebuild before this
     /// job started (an earlier edit removed a block that made one).
     defs_dirty_before: bool,
+    breaks: SoftBreaks,
 }
 
 impl ParseJob {
@@ -1370,7 +1396,7 @@ impl ParseJob {
         let mut end = self.window.end;
         loop {
             let text = self.rope.byte_slice(self.window.start..end).to_string();
-            let parsed = md::parse(&text, &self.defs);
+            let parsed = md::parse(&text, &self.defs, self.breaks);
             let converged = !self.converge
                 || end == text_len
                 || parsed.last().is_some_and(|p| {
@@ -1430,7 +1456,7 @@ impl ParseJob {
         );
         let key = table.footnote_key();
         let parsed = if defs_changed && parsed.iter().any(|p| renders_stale(p, &table, key)) {
-            md::parse(text, &table)
+            md::parse(text, &table, self.breaks)
         } else {
             parsed
         };

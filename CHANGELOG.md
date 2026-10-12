@@ -6,6 +6,20 @@ All notable user-visible changes are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- A sticky note shows each line as you typed it. A single Enter used to join the lines into one
+  paragraph (`ABC BCC EAI`), as CommonMark says; in a note, where every line is deliberate, each
+  line now stays on its own line. Documents are unchanged, so hard-wrapped Markdown files still
+  reflow to the window. Copy as HTML still follows CommonMark.
+
+### Added
+
+- `Shift+Enter` inserts a hard line break (a backslash then a newline) inside a paragraph, in
+  documents and notes, the way Typora and Obsidian do. In a list item the new line stays inside
+  the item; in plain-text mode, a code block, or on an empty line it is an ordinary newline. In the
+  find bar it still steps to the previous match.
+
 ## [1.4.1] - 2026-10-12
 
 ### Added

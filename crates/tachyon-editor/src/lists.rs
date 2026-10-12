@@ -144,6 +144,37 @@ impl Editor {
         )
     }
 
+    /// The text Shift+Enter inserts at `at`: a backslash then a newline, which CommonMark reads
+    /// as a hard break inside a paragraph (visible in the source, unlike two trailing spaces,
+    /// which editors strip). Inside a list item the new line is indented to the item's text so it
+    /// stays part of that item. Where a backslash would be literal text - a code or HTML block,
+    /// plain-text mode, or a line that has nothing before the caret to break - it is a plain
+    /// newline.
+    pub(crate) fn hard_break(&self, at: usize) -> String {
+        if self.doc.mode() == tachyon_doc::DocMode::Plain || !self.in_list_context(at) {
+            return "\n".to_owned();
+        }
+        let rope = self.doc.buffer().rope();
+        let start = movement::home(rope, at);
+        let before = rope.byte_slice(start..at).to_string();
+        if before.trim().is_empty() {
+            return "\n".to_owned();
+        }
+        match parse(&before) {
+            // The caret is inside the item's marker, not its text.
+            Some(item) if before.len() < item.content => "\n".to_owned(),
+            Some(item) => {
+                format!("\\\n{}{}", item.quote, " ".repeat(item.content - item.quote.len()))
+            }
+            None => {
+                // A continuation line of an item or quote keeps its own leading prefix.
+                let prefix: String =
+                    before.chars().take_while(|c| matches!(c, ' ' | '>' | '\t')).collect();
+                format!("\\\n{prefix}")
+            }
+        }
+    }
+
     /// Enter in a list item: continues the list. On an empty item it moves the item up a level,
     /// or ends the list at the top level. Returns whether it handled the key.
     pub(crate) fn list_newline(&mut self, cx: &mut Context<Self>) -> bool {
