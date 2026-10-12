@@ -324,6 +324,10 @@ impl Editor {
             return self.picker_pick(None, window, cx);
         }
         let replacing = self.find.as_ref().is_some_and(|f| f.editing_replacement);
+        if replacing && self.locked {
+            self.refuse_edit(cx);
+            return;
+        }
         if replacing && !self.replace_current(cx) {
             return; // deferred: queued as `ReplaceCurrentThenStep`
         }
@@ -331,6 +335,11 @@ impl Editor {
     }
 
     pub(crate) fn replace_all(&mut self, _: &ReplaceAll, _: &mut Window, cx: &mut Context<Self>) {
+        // Refused before the scan: it would otherwise report a count of replacements that
+        // never happened.
+        if self.refuse_edit(cx) {
+            return;
+        }
         let Some(find) = &self.find else { return };
         if find.replacing {
             return; // already running; Ctrl+Enter again while it is in flight is a no-op

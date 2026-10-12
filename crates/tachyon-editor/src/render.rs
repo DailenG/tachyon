@@ -241,7 +241,7 @@ impl Render for Editor {
             .on_mouse_up(
                 MouseButton::Left,
                 cx.listener(|editor, _, window, cx| {
-                    editor.selecting = false;
+                    editor.mouse_released(cx);
                     editor.scrollbar_drag_ended(window, cx);
                 }),
             )
@@ -249,6 +249,7 @@ impl Render for Editor {
                 MouseButton::Left,
                 cx.listener(|editor, _, window, cx| {
                     editor.selecting = false;
+                    editor.press_on_link = None;
                     editor.scrollbar_drag_ended(window, cx);
                 }),
             )

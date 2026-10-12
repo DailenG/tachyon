@@ -3876,7 +3876,8 @@ fn a_plain_click_follows_a_link_only_in_view_mode(cx: &mut TestAppContext) {
     let at = editor.read_with(cx, |e, _| e.text().find("site").unwrap());
     let click = |editor: &Entity<Editor>, cx: &mut VisualTestContext| {
         editor.update_in(cx, |e, window, cx| {
-            e.mouse_down(at, gpui::Modifiers::default(), 1, window, cx)
+            e.mouse_down(at, gpui::Modifiers::default(), 1, window, cx);
+            e.mouse_released(cx);
         });
         cx.run_until_parked();
     };
@@ -3907,4 +3908,53 @@ fn a_note_in_view_mode_is_recorded_restored_and_toggled_from_the_header(cx: &mut
     cx.simulate_click(button.center(), gpui::Modifiers::default());
     assert!(!editor.read_with(cx, |e, _| e.locked), "a second click unlocks");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[gpui::test]
+fn dragging_across_a_link_in_view_mode_selects_it_instead_of_opening_it(cx: &mut TestAppContext) {
+    let (editor, cx) = open("see [site](https://example.com/page) now\n", cx);
+    cx.simulate_keystrokes("ctrl-e");
+    let start = editor.read_with(cx, |e, _| e.text().find("site").unwrap());
+    editor.update_in(cx, |e, window, cx| {
+        e.mouse_down(start, gpui::Modifiers::default(), 1, window, cx);
+        e.mouse_drag(start + 4, cx);
+        e.mouse_released(cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(cx.opened_url(), None, "a drag is not a click");
+    assert_eq!(editor.read_with(cx, |e, _| e.selection()), start..start + 4, "it selected");
+}
+
+#[gpui::test]
+fn view_mode_lets_a_query_be_pasted_into_the_find_bar_and_never_replaces(cx: &mut TestAppContext) {
+    let (editor, cx) = open("one two one\n", cx);
+    cx.simulate_keystrokes("ctrl-e ctrl-h");
+    cx.write_to_clipboard(gpui::ClipboardItem::new_string("one".to_owned()));
+    cx.simulate_keystrokes("secondary-v");
+    cx.run_until_parked();
+    assert!(
+        editor.read_with(cx, |e, _| e.find.as_ref().is_some_and(|f| f.query == "one")),
+        "the query was pasted into the find bar"
+    );
+    cx.simulate_keystrokes("tab");
+    cx.simulate_input("1");
+    cx.simulate_keystrokes("secondary-enter enter");
+    cx.run_until_parked();
+    assert_eq!(text(&editor, cx), "one two one\n", "nothing was replaced");
+    assert!(
+        editor.read_with(cx, |e, _| e.find.as_ref().is_some_and(|f| f.replaced.is_none())),
+        "and the bar does not claim it replaced anything"
+    );
+}
+
+#[gpui::test]
+fn changing_a_locked_notes_mode_keeps_it_free_of_a_caret_and_raw_blocks(cx: &mut TestAppContext) {
+    let (editor, cx) = open("# Title\n\ntext\n", cx);
+    cx.simulate_keystrokes("ctrl-e");
+    for _ in 0..2 {
+        cx.simulate_keystrokes("ctrl-shift-m");
+        assert!(editor.read_with(cx, |e, _| e.locked));
+        assert!(!editor.read_with(cx, |e, _| e.editing), "no caret after the mode change");
+        assert_eq!(editor.read_with(cx, |e, _| e.active_block()), None, "and no raw block");
+    }
 }

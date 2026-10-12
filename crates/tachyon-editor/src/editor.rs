@@ -249,6 +249,9 @@ pub struct Editor {
     /// The cursor moved without typing since the last edit.
     moved_since_edit: bool,
     pub(crate) selecting: bool,
+    /// View mode: the offset of a link the mouse button is held down on, followed when it is
+    /// released without having become a drag (`Editor::mouse_released`).
+    pub(crate) press_on_link: Option<usize>,
     /// The caret should be scrolled into view at the next paint.
     pub(crate) reveal: bool,
     /// Block indices the list drew in the last completed frame, and the
@@ -431,6 +434,7 @@ impl Editor {
             last_edit: None,
             moved_since_edit: false,
             selecting: false,
+            press_on_link: None,
             reveal: false,
             rendered: 0..0,
             rendering: None,
@@ -1189,11 +1193,14 @@ impl Editor {
         self.flush_pending_paste(cx);
         window.focus(&self.focus, cx);
         let extend = modifiers.shift;
-        // View mode follows a link on a plain click: reading is what the window is for.
-        let follows = modifiers.secondary() || self.locked;
-        if follows && !extend && click_count == 1 && self.follow_link(offset, cx) {
+        if modifiers.secondary() && !extend && click_count == 1 && self.follow_link(offset, cx) {
             return;
         }
+        // View mode follows a link on a plain click, but on the release: a press that starts a
+        // drag over linked text must still select it, so the link waits to see if it was a drag.
+        self.press_on_link = (self.locked && !extend && click_count == 1)
+            .then(|| self.link_at(offset).map(|_| offset))
+            .flatten();
         self.goal_x = None;
         if click_count >= 2 && !extend {
             let rope = self.doc.buffer().rope();
@@ -1205,6 +1212,17 @@ impl Editor {
             self.move_to(offset, extend, cx);
         }
         self.selecting = true;
+    }
+
+    /// The mouse button went up: in view mode, a press on a link that never turned into a drag
+    /// (no selection grew) follows it.
+    pub(crate) fn mouse_released(&mut self, cx: &mut Context<Self>) {
+        self.selecting = false;
+        if let Some(offset) = self.press_on_link.take()
+            && self.selection.is_empty()
+        {
+            self.follow_link(offset, cx);
+        }
     }
 
     pub(crate) fn mouse_drag(&mut self, offset: usize, cx: &mut Context<Self>) {
@@ -1607,7 +1625,8 @@ impl Editor {
         }
     }
     pub(crate) fn paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
-        if self.refuse_edit(cx) {
+        // Pasting a query into the find bar edits no text, so view mode lets it through.
+        if !self.bar_open() && self.refuse_edit(cx) {
             return;
         }
         self.flush_pending_paste(cx);
@@ -1875,7 +1894,7 @@ impl Editor {
         self.marked = None;
         self.active = None;
         self.active_layout = None;
-        self.editing = true;
+        self.editing = !self.locked;
         self.notice = None;
         self.list.reset(self.doc.blocks().len());
         self.update_active();
