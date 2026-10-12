@@ -3400,3 +3400,48 @@ fn preferences_step_the_new_note_mode_and_write_it(cx: &mut TestAppContext) {
     assert!(!cx.update(|_, cx| cx.global::<crate::Settings>().clone()).sticky_plain, "and back");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[gpui::test]
+fn an_external_edit_keeps_a_plain_text_note_plain(cx: &mut TestAppContext) {
+    let dir = notes_dir("reload-plain");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("Log.md");
+    std::fs::write(&path, "# not a heading\n").unwrap();
+    let (editor, cx) = open_note(dir.clone(), cx);
+    editor.update(cx, |e, cx| {
+        let loaded = tachyon_doc::Document::new_plain("# not a heading\n");
+        e.set_document(loaded, cx);
+        e.adopt_note_file(path.clone(), cx);
+    });
+    assert_eq!(note_mode(&editor, cx), tachyon_doc::DocMode::Plain);
+
+    // Another program rewrites the file; activating the window reloads it. The note's mode is
+    // the user's choice and the file is still `.md`, so a reload must not turn it back.
+    std::fs::write(&path, "# still not a heading, and longer\n").unwrap();
+    refocus(cx);
+
+    assert_eq!(text(&editor, cx), "# still not a heading, and longer\n", "it did reload");
+    assert_eq!(note_mode(&editor, cx), tachyon_doc::DocMode::Plain, "and stayed plain text");
+    let record = editor.read_with(cx, |e, _| e.note_window_state()).expect("a named note");
+    assert!(record.plain, "so its record still says plain");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[gpui::test]
+fn an_external_edit_keeps_a_markdown_notes_mode_too(cx: &mut TestAppContext) {
+    // The control: nothing about a plain-text note's handling changes a Markdown note's reload.
+    let dir = notes_dir("reload-markdown");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("Doc.md");
+    std::fs::write(&path, "# Title\n").unwrap();
+    let (editor, cx) = open_note(dir.clone(), cx);
+    editor.update(cx, |e, cx| {
+        e.set_document(tachyon_doc::Document::new("# Title\n"), cx);
+        e.adopt_note_file(path.clone(), cx);
+    });
+    std::fs::write(&path, "# Longer title\n").unwrap();
+    refocus(cx);
+    assert_eq!(text(&editor, cx), "# Longer title\n");
+    assert_eq!(note_mode(&editor, cx), tachyon_doc::DocMode::Markdown);
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -169,7 +169,13 @@ impl Editor {
                 // rather than replacing it with a refusal or losing the file association.
                 let Ok(LoadOutcome::Loaded(loaded)) = outcome else { return };
                 let caret = editor.head();
+                // The reloaded document was parsed by the file's extension. A sticky note's mode
+                // is the user's own choice (its file stays `.md` either way), so it is kept.
+                let note_was_plain = editor.is_note() && editor.document().mode() == DocMode::Plain;
                 editor.set_loaded(*loaded, cx);
+                if note_was_plain {
+                    editor.set_note_plain(true, cx);
+                }
                 editor.disk_stamp = Some(current);
                 editor.file = Some(path);
                 editor.move_to(caret, false, cx);
