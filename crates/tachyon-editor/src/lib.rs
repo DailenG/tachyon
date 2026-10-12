@@ -45,6 +45,7 @@ pub use crate::settings::{
     StickyHotkeyRegistration, ThemeChoice, sync_restart_registration, sync_sticky_hotkey,
 };
 pub use crate::theme::{AppearanceHint, Theme};
+pub use tachyon_md::SoftBreaks;
 
 /// Registers the editor's key bindings, and applies a large paste still being prepared before
 /// any keystroke that cannot simply be queued after it, so edits keep their order (a key typed

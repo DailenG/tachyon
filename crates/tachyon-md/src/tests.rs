@@ -1,7 +1,7 @@
 use super::*;
 
 fn blocks(src: &str) -> Vec<ParsedBlock> {
-    parse(src, &DefTable::from_source(src, options()))
+    parse(src, &DefTable::from_source(src, options()), SoftBreaks::Space)
 }
 
 fn kinds(src: &str) -> Vec<BlockKind> {
@@ -140,7 +140,7 @@ fn reference_links_resolve_through_the_document_table() {
     let target = LinkTarget { dest: "/elsewhere".into(), title: String::new() };
     let table = DefTable::new(&[("Ref".to_owned(), target)], &[]);
 
-    let with = &parse("See [ref] and [text][REF].\n", &table)[0];
+    let with = &parse("See [ref] and [text][REF].\n", &table, SoftBreaks::Space)[0];
     assert_eq!(with.ir.text, "See ref and text.");
     assert_eq!(with.ir.links.len(), 2);
     assert!(with.ir.links.iter().all(|l| l.dest == "/elsewhere"));
@@ -148,7 +148,7 @@ fn reference_links_resolve_through_the_document_table() {
         |label: &str| LinkLookup { label: label.to_owned(), target: table.get(label).cloned() };
     assert_eq!(with.refs, vec![found("REF"), found("ref")]);
 
-    let without = &parse("See [ref].\n", &DefTable::default())[0];
+    let without = &parse("See [ref].\n", &DefTable::default(), SoftBreaks::Space)[0];
     assert_eq!(without.ir.text, "See [ref].");
     let missing = LinkLookup { label: "ref".to_owned(), target: None };
     assert_eq!(without.refs, vec![missing], "failed lookups are dependencies too");
@@ -160,7 +160,7 @@ fn document_table_overrides_a_later_local_definition() {
     // sees the second one must still render the first.
     let first = LinkTarget { dest: "/first".into(), title: String::new() };
     let table = DefTable::new(&[("x".to_owned(), first)], &[]);
-    let window = parse("[x]\n\n[x]: /second\n", &table);
+    let window = parse("[x]\n\n[x]: /second\n", &table, SoftBreaks::Space);
     assert_eq!(window[0].ir.links[0].dest, "/first");
     assert_eq!(window[1].kind, BlockKind::LinkDefinition);
     assert_eq!(window[1].defs[0].1.dest, "/second");
@@ -229,11 +229,11 @@ fn link_definition_blocks_show_their_source_lines() {
 #[test]
 fn footnote_references_resolve_through_the_document_table() {
     let with = DefTable::new(&[], &["1".to_owned()]);
-    let b = &parse("Claim[^1].\n", &with)[0];
+    let b = &parse("Claim[^1].\n", &with, SoftBreaks::Space)[0];
     assert_eq!(b.ir.text, "Claim[1].");
     assert!(b.footnotes_seen.is_some());
 
-    let without = &parse("Claim[^1].\n", &DefTable::default())[0];
+    let without = &parse("Claim[^1].\n", &DefTable::default(), SoftBreaks::Space)[0];
     assert_eq!(without.ir.text, "Claim[^1].");
 }
 
@@ -241,7 +241,7 @@ fn footnote_references_resolve_through_the_document_table() {
 fn footnote_prefix_resolves_even_when_the_window_ends_in_an_open_fence() {
     let table = DefTable::new(&[], &["n".to_owned()]);
     let src = "    indented\n\ntext[^n]\n\n```\nunclosed fence\n";
-    let blocks = parse(src, &table);
+    let blocks = parse(src, &table, SoftBreaks::Space);
     assert_eq!(blocks.iter().map(|b| b.len).sum::<usize>(), src.len());
     assert!(matches!(blocks[0].kind, BlockKind::CodeBlock { fenced: false, .. }));
     assert_eq!(blocks[1].ir.text, "text[n]");
@@ -340,4 +340,48 @@ fn html_uses_the_editor_dialect() {
         to_html("# Hi\n\n**bold** ~~gone~~\n\n- [x] done\n"),
         "<h1>Hi</h1>\n<p><strong>bold</strong> <del>gone</del></p>\n<ul>\n<li><input disabled=\"\" type=\"checkbox\" checked=\"\"/>\ndone</li>\n</ul>\n"
     );
+}
+
+#[test]
+fn a_soft_break_is_a_space_or_a_line_depending_on_the_option() {
+    let src = "ABC\nBCC\nEAI\n";
+    let space = &parse(src, &DefTable::default(), SoftBreaks::Space)[0];
+    assert_eq!(space.ir.text, "ABC BCC EAI");
+    assert_eq!(space.ir.lines.len(), 1, "one rendered line, reflowed to the window");
+
+    let line = &parse(src, &DefTable::default(), SoftBreaks::Line)[0];
+    assert_eq!(line.ir.text, "ABC\nBCC\nEAI");
+    assert_eq!(line.ir.lines.len(), 3, "each typed line is its own rendered line");
+}
+
+#[test]
+fn preserved_soft_breaks_keep_a_list_items_continuation_in_the_item() {
+    let blocks = parse("- one\n  still one\n- two\n", &DefTable::default(), SoftBreaks::Line);
+    assert_eq!(blocks.len(), 1);
+    assert_eq!(blocks[0].ir.text, "one\nstill one\ntwo");
+    let indents: Vec<_> = blocks[0].ir.lines.iter().map(|l| l.indent).collect();
+    assert_eq!(indents, vec![1, 1, 1], "the continuation stays inside its item");
+}
+
+#[test]
+fn a_hard_break_is_unchanged_by_the_option() {
+    let src = "a\\\nb  \nc\n";
+    let space = &parse(src, &DefTable::default(), SoftBreaks::Space)[0];
+    let line = &parse(src, &DefTable::default(), SoftBreaks::Line)[0];
+    assert_eq!(space.ir.text, "a\nb\nc");
+    assert_eq!(line.ir.text, "a\nb\nc");
+}
+
+#[test]
+fn preserved_soft_breaks_do_not_change_block_boundaries() {
+    // ADR 0005: every block parses the same alone and inside the document, and the option only
+    // changes how a line break inside a block renders, never where blocks start and end.
+    let src = "one\ntwo\n\n# Head\n\n- a\n  b\n- c\n\n> q\n> r\n\n```\ncode\nlines\n```\n";
+    let key = |breaks| {
+        parse(src, &DefTable::from_source(src, options()), breaks)
+            .iter()
+            .map(|b| (b.len, std::mem::discriminant(&b.kind)))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(key(SoftBreaks::Space), key(SoftBreaks::Line));
 }

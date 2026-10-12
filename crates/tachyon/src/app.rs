@@ -838,7 +838,9 @@ fn load_file(
         let read_path = path.clone();
         let outcome = cx
             .background_executor()
-            .spawn(async move { tachyon_editor::load_document(&read_path) })
+            .spawn(async move {
+                tachyon_editor::load_document(&read_path, tachyon_editor::SoftBreaks::Space)
+            })
             .await;
         let updated = editor.update(cx, |editor, cx| match outcome {
             Ok(tachyon_editor::LoadOutcome::Loaded(loaded)) => {
@@ -1238,7 +1240,11 @@ fn load_note_file(path: PathBuf, plain: bool, cx: &mut Context<Editor>) {
         let read_path = path.clone();
         let outcome = cx
             .background_executor()
-            .spawn(async move { tachyon_editor::load_document(&read_path) })
+            .spawn(async move {
+                // A note shows its lines as typed; parsed that way here, off the UI thread, so
+                // installing the document does not reparse it.
+                tachyon_editor::load_document(&read_path, tachyon_editor::SoftBreaks::Line)
+            })
             .await;
         let _ = editor.update(cx, |editor, cx| {
             if let Ok(tachyon_editor::LoadOutcome::Loaded(loaded)) = outcome {

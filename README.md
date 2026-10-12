@@ -111,6 +111,7 @@ start as fast as a scratchpad and edit like Typora: one pane, inline WYSIWYG, no
 | Document start / end | `Ctrl+Home` / `Ctrl+End` (`Cmd+Up` / `Cmd+Down` on macOS) |
 | Page up / down | `Page Up` / `Page Down`; add `Shift` to select |
 | Previous match, in the find bar | `Shift+Enter` |
+| Hard line break within a paragraph | `Shift+Enter` (inserts `\` and a newline) |
 | Indent / outdent a list item | `Tab` / `Shift+Tab` |
 | Toggle a note's always-on-top pin | `Ctrl+Shift+T` (sticky notes only) |
 | New sticky note from anywhere | `Win+Shift+N` (Windows; the `sticky_hotkey` setting changes it) |

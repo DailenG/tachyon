@@ -1,5 +1,5 @@
 use proptest::prelude::*;
-use tachyon_md::{DefTable, options, parse};
+use tachyon_md::{DefTable, SoftBreaks, options, parse};
 
 /// Lines that exercise block structure boundaries: fences, lists, quotes,
 /// tables, setext underlines, definitions, HTML, math and escapes.
@@ -53,7 +53,7 @@ proptest! {
     /// the source exactly.
     #[test]
     fn parse_output_is_well_formed(src in prop_oneof![document(), "\\PC{0,200}"]) {
-        let blocks = parse(&src, &DefTable::from_source(&src, options()));
+        let blocks = parse(&src, &DefTable::from_source(&src, options()), SoftBreaks::Space);
         prop_assert_eq!(blocks.iter().map(|b| b.len).sum::<usize>(), src.len());
         prop_assert!(blocks.iter().all(|b| b.len > 0), "empty block");
 

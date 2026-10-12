@@ -482,10 +482,19 @@ impl Editor {
         editor
     }
 
+    /// How this window renders a single newline in a paragraph: as typed in a sticky note (a
+    /// scratchpad where each line is deliberate), as a space everywhere else, so hard-wrapped
+    /// Markdown files reflow to the window as the spec says.
+    pub(crate) fn soft_breaks(&self) -> tachyon_md::SoftBreaks {
+        if self.is_note() { tachyon_md::SoftBreaks::Line } else { tachyon_md::SoftBreaks::Space }
+    }
+
     /// Replaces the whole document (file load finished, new paste).
     pub fn set_document(&mut self, doc: Document, cx: &mut Context<Self>) {
         self.saved_history_position = doc.buffer().history_position();
-        self.doc = doc;
+        // A sticky note shows its lines as typed; everything else follows CommonMark. Decided
+        // here, where every document that reaches a window passes, so no load path forgets it.
+        self.doc = doc.with_soft_breaks(self.soft_breaks());
         self.doc.take_splices();
         self.lossy = false;
         self.notice = None;
@@ -1574,7 +1583,9 @@ impl Editor {
         }
         self.replace(self.selection.clone(), "\n", cx);
     }
-    /// Shift+Enter: the previous match while finding, else a line break like Enter.
+    /// Shift+Enter: the previous match while finding, else a hard line break within the
+    /// paragraph (see [`Editor::hard_break`]), where Enter starts the next line as Markdown
+    /// reads it (a space in a document).
     pub(crate) fn shift_newline(
         &mut self,
         _: &ShiftNewline,
@@ -1585,7 +1596,8 @@ impl Editor {
         if self.bar_open() {
             return self.find_previous(&FindPrevious, window, cx);
         }
-        self.replace(self.selection.clone(), "\n", cx);
+        let text = self.hard_break(self.selection.start);
+        self.replace(self.selection.clone(), &text, cx);
     }
     pub(crate) fn tab(&mut self, _: &Tab, _: &mut Window, cx: &mut Context<Self>) {
         // Tab has no key_char an editor keystroke could ever queue as text (`lib::init`'s

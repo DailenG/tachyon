@@ -2108,7 +2108,9 @@ fn a_log_file_opens_as_plain_text_and_hashes_stay_literal(cx: &mut TestAppContex
     let path = dir.join("app.log");
     std::fs::write(&path, "# not a heading\nplain text\n").expect("write");
     let (editor, cx) = open("", cx);
-    let crate::LoadOutcome::Loaded(loaded) = crate::load_document(&path).expect("readable") else {
+    let crate::LoadOutcome::Loaded(loaded) =
+        crate::load_document(&path, tachyon_md::SoftBreaks::Space).expect("readable")
+    else {
         panic!("not refused")
     };
     editor.update(cx, |e, cx| {
@@ -2190,7 +2192,9 @@ fn lossy_load_then_save_shows_the_prompt_and_cancel_leaves_the_file_untouched(
     // replaces it with one U+FFFD and reports `lossy`.
     std::fs::write(&path, b"before\xff after\n").expect("write");
     let (editor, cx) = open("", cx);
-    let crate::LoadOutcome::Loaded(loaded) = crate::load_document(&path).expect("readable") else {
+    let crate::LoadOutcome::Loaded(loaded) =
+        crate::load_document(&path, tachyon_md::SoftBreaks::Space).expect("readable")
+    else {
         panic!("not refused")
     };
     editor.update(cx, |e, cx| {
@@ -3457,7 +3461,9 @@ fn a_note_plain_only_by_fallback_becomes_markdown_when_its_file_is_repaired(
     // Invalid UTF-8: `load_document` opens it as plain text on its own, not by the user's choice.
     std::fs::write(&path, b"# broken \xff\xfe bytes\n").unwrap();
     let (editor, cx) = open_note(dir.clone(), cx);
-    let Ok(crate::LoadOutcome::Loaded(loaded)) = crate::load_document(&path) else {
+    let Ok(crate::LoadOutcome::Loaded(loaded)) =
+        crate::load_document(&path, tachyon_md::SoftBreaks::Space)
+    else {
         panic!("the file loads");
     };
     editor.update(cx, |e, cx| {
@@ -4029,5 +4035,211 @@ fn a_modifier_click_on_a_link_leaves_no_press_behind_for_a_margin_click(cx: &mut
         editor.read_with(cx, |e, _| e.press_position),
         None,
         "and the press position is not left behind for the next click to find"
+    );
+}
+
+fn note_text_lines(editor: &Entity<Editor>, cx: &mut VisualTestContext) -> usize {
+    editor
+        .read_with(cx, |e, _| e.document().blocks().iter().map(|b| b.parsed().ir.lines.len()).sum())
+}
+
+#[gpui::test]
+fn a_sticky_note_shows_each_typed_line_but_a_document_joins_them(cx: &mut TestAppContext) {
+    // The same text, two windows.
+    let (document, cx) = open("ABC\nBCC\nEAI\n", cx);
+    assert_eq!(note_text_lines(&document, cx), 1, "a document reflows a single newline");
+
+    let dir = notes_dir("soft-breaks");
+    let (note, cx) = open_note(dir.clone(), cx);
+    cx.simulate_input("ABC");
+    cx.simulate_keystrokes("enter");
+    cx.simulate_input("BCC");
+    cx.simulate_keystrokes("enter");
+    cx.simulate_input("EAI");
+    assert_eq!(text(&note, cx), "ABC\nBCC\nEAI");
+    assert_eq!(note_text_lines(&note, cx), 3, "a note shows the lines as typed");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[gpui::test]
+fn a_notes_line_breaks_survive_a_reload_a_mode_toggle_and_a_restart(cx: &mut TestAppContext) {
+    let dir = notes_dir("soft-breaks-reload");
+    let (note, cx) = open_note(dir.clone(), cx);
+    cx.simulate_input("one");
+    cx.simulate_keystrokes("enter");
+    cx.simulate_input("two");
+    // Plain and back (retag_to rebuilds the document).
+    cx.simulate_keystrokes("ctrl-shift-m ctrl-shift-m");
+    assert_eq!(note_text_lines(&note, cx), 2, "still two lines after a mode round trip");
+
+    // A document loaded into the note (a restore reading its file) gets the same treatment.
+    let loaded = tachyon_doc::Document::new("alpha\nbeta\ngamma\n");
+    note.update(cx, |e, cx| e.set_document(loaded, cx));
+    cx.run_until_parked();
+    assert_eq!(note_text_lines(&note, cx), 3, "set_document applies it to a loaded file");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[gpui::test]
+fn shift_enter_inserts_a_backslash_hard_break_that_renders_as_a_new_line(cx: &mut TestAppContext) {
+    let (editor, cx) = open("", cx);
+    cx.simulate_input("first");
+    cx.simulate_keystrokes("shift-enter");
+    cx.simulate_input("second");
+    assert_eq!(text(&editor, cx), "first\\\nsecond", "the source shows the break");
+    assert_eq!(note_text_lines(&editor, cx), 2, "a document breaks the line, unlike Enter");
+
+    cx.simulate_keystrokes("enter");
+    cx.simulate_input("third");
+    assert_eq!(text(&editor, cx), "first\\\nsecond\nthird");
+    assert_eq!(note_text_lines(&editor, cx), 2, "Enter in a document still joins");
+}
+
+#[gpui::test]
+fn shift_enter_is_a_plain_newline_where_a_backslash_would_be_text(cx: &mut TestAppContext) {
+    // Plain-text mode.
+    let (editor, cx) = open("", cx);
+    cx.simulate_keystrokes("ctrl-shift-m");
+    cx.simulate_input("a");
+    cx.simulate_keystrokes("shift-enter");
+    cx.simulate_input("b");
+    assert_eq!(text(&editor, cx), "a\nb", "no backslash in plain text");
+
+    // A code block, and a line with nothing before the caret.
+    let (editor, cx) = open("```\ncode", cx);
+    cx.simulate_keystrokes("ctrl-end shift-enter");
+    assert_eq!(text(&editor, cx), "```\ncode\n", "no backslash inside a fence");
+    let (editor, cx) = open("text\n", cx);
+    cx.simulate_keystrokes("ctrl-end shift-enter");
+    assert_eq!(text(&editor, cx), "text\n\n", "nothing before the caret to break");
+}
+
+#[gpui::test]
+fn shift_enter_in_a_list_item_continues_the_item_instead_of_starting_one(cx: &mut TestAppContext) {
+    let (editor, cx) = open("- one", cx);
+    cx.simulate_keystrokes("ctrl-end shift-enter");
+    cx.simulate_input("more");
+    assert_eq!(text(&editor, cx), "- one\\\n  more", "indented to the item's text, no new bullet");
+    let kinds = editor.read_with(cx, |e, _| e.document().blocks().len());
+    assert_eq!(kinds, 1, "still one list block");
+
+    let (editor, cx) = open("1. one", cx);
+    cx.simulate_keystrokes("ctrl-end shift-enter");
+    cx.simulate_input("more");
+    assert_eq!(text(&editor, cx), "1. one\\\n   more", "aligned past `1. `");
+
+    let (editor, cx) = open("- [ ] task", cx);
+    cx.simulate_keystrokes("ctrl-end shift-enter");
+    cx.simulate_input("more");
+    assert_eq!(text(&editor, cx), "- [ ] task\\\n      more", "aligned past the box");
+}
+
+#[gpui::test]
+fn copy_as_html_from_a_note_follows_the_spec_even_though_the_note_shows_each_line(
+    cx: &mut TestAppContext,
+) {
+    let dir = notes_dir("soft-breaks-html");
+    let (note, cx) = open_note(dir.clone(), cx);
+    cx.simulate_input("ABC");
+    cx.simulate_keystrokes("enter");
+    cx.simulate_input("BCC");
+    assert_eq!(note_text_lines(&note, cx), 2, "shown as two lines");
+    cx.simulate_keystrokes("secondary-shift-c");
+    let copied = cx.read_from_clipboard().and_then(|item| item.text());
+    assert_eq!(copied.as_deref(), Some("<p>ABC\nBCC</p>\n"), "exported as CommonMark");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_document_loaded_under_the_notes_policy_needs_no_conversion_on_the_ui_thread() {
+    // `with_soft_breaks` rebuilds the document when the policy differs and is a no-op when it
+    // already matches, so a note loaded off the UI thread under `Line` installs without a
+    // second parse. Compared by identity of the block list, which a rebuild replaces.
+    let doc =
+        tachyon_doc::Document::new("one\ntwo\n").with_soft_breaks(tachyon_md::SoftBreaks::Line);
+    let before = doc.blocks().as_ptr();
+    let doc = doc.with_soft_breaks(tachyon_md::SoftBreaks::Line);
+    assert_eq!(doc.blocks().as_ptr(), before, "same policy: no rebuild");
+    let doc = doc.with_soft_breaks(tachyon_md::SoftBreaks::Space);
+    assert_ne!(doc.blocks().as_ptr(), before, "a different policy does rebuild");
+}
+
+#[gpui::test]
+fn load_document_builds_a_note_file_under_the_policy_it_is_given(cx: &mut TestAppContext) {
+    let dir = notes_dir("load-policy");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("n.md");
+    std::fs::write(&path, "ABC\nBCC\nEAI\n").unwrap();
+    for (breaks, lines) in [(tachyon_md::SoftBreaks::Line, 3), (tachyon_md::SoftBreaks::Space, 1)] {
+        let crate::LoadOutcome::Loaded(loaded) = crate::load_document(&path, breaks).unwrap()
+        else {
+            panic!("loads");
+        };
+        assert_eq!(loaded.doc.soft_breaks(), breaks);
+        let rendered: usize = loaded.doc.blocks().iter().map(|b| b.parsed().ir.lines.len()).sum();
+        assert_eq!(rendered, lines, "{breaks:?}");
+    }
+    // The note window then keeps that document as is.
+    let (note, cx) = open_note(dir.clone(), cx);
+    let crate::LoadOutcome::Loaded(loaded) =
+        crate::load_document(&path, tachyon_md::SoftBreaks::Line).unwrap()
+    else {
+        panic!("loads");
+    };
+    note.update(cx, |e, cx| e.set_loaded(*loaded, cx));
+    assert_eq!(note_text_lines(&note, cx), 3);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[gpui::test]
+fn shift_enter_after_a_backslash_uses_trailing_spaces_so_the_break_still_counts(
+    cx: &mut TestAppContext,
+) {
+    // One backslash already there: another would make an escaped pair, not a break.
+    let (editor, cx) = open("path\\", cx);
+    cx.simulate_keystrokes("ctrl-end shift-enter");
+    cx.simulate_input("next");
+    assert_eq!(text(&editor, cx), "path\\  \nnext");
+    assert_eq!(note_text_lines(&editor, cx), 2, "rendered as a hard break");
+
+    // Two backslashes (an escaped backslash): a third is a real break marker.
+    let (editor, cx) = open("a\\\\", cx);
+    cx.simulate_keystrokes("ctrl-end shift-enter");
+    cx.simulate_input("b");
+    assert_eq!(text(&editor, cx), "a\\\\\\\nb");
+    assert_eq!(note_text_lines(&editor, cx), 2);
+
+    // The same inside a list item.
+    let (editor, cx) = open("- item\\", cx);
+    cx.simulate_keystrokes("ctrl-end shift-enter");
+    cx.simulate_input("more");
+    assert_eq!(text(&editor, cx), "- item\\  \n  more");
+    assert_eq!(note_text_lines(&editor, cx), 2);
+}
+
+#[gpui::test]
+fn shift_enter_in_a_block_awaiting_its_parse_still_inserts_a_hard_break(cx: &mut TestAppContext) {
+    let (editor, cx) = open("", cx);
+    // A paste big enough to leave an `Unparsed` placeholder until its background parse lands.
+    let big = format!("hello {}\n", "word ".repeat(tachyon_doc::UNPARSED_SPLIT_THRESHOLD / 5 + 10));
+    editor.update(cx, |e, cx| {
+        e.replace_selection_with(0..0, &big, cx);
+    });
+    let at = editor.read_with(cx, |e, _| e.text().find("hello").unwrap() + "hello".len());
+    let pending = editor.read_with(cx, |e, _| {
+        matches!(
+            e.document().blocks()[e.document().block_at(at).unwrap()].parsed().kind,
+            BlockKind::Unparsed
+        )
+    });
+    editor.update(cx, |e, cx| {
+        e.move_to(at, false, cx);
+    });
+    cx.simulate_keystrokes("shift-enter");
+    cx.run_until_parked();
+    let source = text(&editor, cx);
+    assert!(
+        source.starts_with("hello\\\n"),
+        "a hard break, not a plain newline (pending={pending})"
     );
 }
