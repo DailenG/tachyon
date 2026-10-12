@@ -769,17 +769,21 @@ impl Editor {
                 .background_executor()
                 .spawn(async move { std::fs::create_dir_all(&target) })
                 .await;
-            let _ = editor.update(cx, |editor, cx| match created {
+            match created {
+                // Opened even if the window that asked has closed meanwhile.
                 Ok(()) => {
-                    if let Some(open) = cx.try_global::<OpenFolder>().copied() {
-                        (open.0)(cx, &dir);
-                    }
+                    cx.update(|cx| {
+                        if let Some(open) = cx.try_global::<OpenFolder>().copied() {
+                            (open.0)(cx, &dir);
+                        }
+                    });
                 }
                 Err(error) => {
                     let notice = format!("Could not open {}: {error}", dir.display());
-                    editor.set_app_notice(notice.into(), cx);
+                    let _ =
+                        editor.update(cx, |editor, cx| editor.set_app_notice(notice.into(), cx));
                 }
-            });
+            }
         })
         .detach();
     }

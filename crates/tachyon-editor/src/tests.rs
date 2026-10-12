@@ -3609,10 +3609,11 @@ fn the_notes_folder_is_the_setting_when_set_and_the_standard_one_otherwise(
             "{blank:?}"
         );
     }
-    let custom = std::path::PathBuf::from("/somewhere/else");
+    // Absolute on every platform (a bare `/x` gains a drive letter on Windows).
+    let custom = std::env::temp_dir().join("somewhere").join("else");
     cx.update(|cx| {
         cx.set_global(crate::Settings {
-            sticky_folder: " /somewhere/else ".to_owned(),
+            sticky_folder: format!(" {} ", custom.display()),
             ..Default::default()
         })
     });
@@ -3784,5 +3785,19 @@ fn open_sticky_notes_folder_does_not_create_the_folder_on_the_ui_thread(cx: &mut
     cx.run_until_parked();
     assert!(standard.is_dir(), "created in the background");
     assert_eq!(opened_count(&standard), 1, "then opened");
+    let _ = std::fs::remove_dir_all(&standard);
+}
+
+#[gpui::test]
+fn the_notes_folder_still_opens_when_the_window_that_asked_has_closed(cx: &mut TestAppContext) {
+    let standard = notes_dir("open-after-close");
+    cx.update(|cx| cx.set_global(crate::OpenFolder(record_opened_folder)));
+    let (editor, cx) = open_note(standard.clone(), cx);
+    editor.update(cx, |e, cx| e.open_notes_folder(cx));
+    // The note is empty, so closing it is accepted at once, before the folder is created.
+    cx.simulate_keystrokes("secondary-w");
+    cx.run_until_parked();
+    assert!(cx.windows().is_empty());
+    assert_eq!(opened_count(&standard), 1, "opened although its window is gone");
     let _ = std::fs::remove_dir_all(&standard);
 }
