@@ -27,23 +27,21 @@ pub(crate) fn notes(from: Option<&str>, current: &str) -> String {
 }
 
 fn notes_from(changelog: &str, from: Option<&str>, current: &str) -> String {
-    let sections = crate::changelog::sections_since(changelog, from, current);
-    if sections.is_empty() {
+    let notes = crate::changelog::sections_since(changelog, from, current);
+    if notes.sections.is_empty() {
         return String::new();
     }
     let mut out = format!("# What's new in Tachyon {current}\n\n");
-    if sections.len() > 1
+    // Counts releases, never the `Unreleased` section a development build also shows.
+    if notes.releases > 1
         && let Some(from) = from.and_then(crate::changelog::parse_version)
     {
         out.push_str(&format!(
             "You updated from {}.{}.{}: this covers all {} releases since.\n\n",
-            from.0,
-            from.1,
-            from.2,
-            sections.len()
+            from.0, from.1, from.2, notes.releases
         ));
     }
-    out.push_str(&sections.join("\n\n"));
+    out.push_str(&notes.sections.join("\n\n"));
     out
 }
 
@@ -126,6 +124,21 @@ mod tests {
         assert!(text.contains("You updated from 1.0.0: this covers all 2 releases since."));
         let (newer, older) = (text.find("## [1.2.0]").unwrap(), text.find("## [1.1.0]").unwrap());
         assert!(newer < older, "newest first");
+    }
+
+    #[test]
+    fn the_range_line_counts_releases_and_not_the_unreleased_section() {
+        let log = "# Changelog\n\n## [Unreleased]\n\n- pending\n\n## [1.2.0] - d\n\n- c\n\n\
+                   ## [1.1.0] - d\n\n- b\n\n## [1.0.0] - d\n\n- a\n";
+        // A development build (1.2.1, no section yet) updated from 1.0.0: Unreleased plus two.
+        let text = notes_from(log, Some("1.0.0"), "1.2.1");
+        assert!(text.contains("this covers all 2 releases since"), "{text}");
+        assert!(text.contains("## [Unreleased]") && text.contains("- pending"), "{text}");
+        assert!(text.find("## [Unreleased]") < text.find("## [1.2.0]"), "Unreleased first");
+        // One release between: no range line at all, although two sections are shown.
+        let one = notes_from(log, Some("1.1.0"), "1.2.1");
+        assert!(!one.contains("this covers"), "{one}");
+        assert!(one.contains("## [Unreleased]") && one.contains("## [1.2.0]"), "{one}");
     }
 
     #[test]
