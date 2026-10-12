@@ -7,8 +7,24 @@
 
 <p align="center"><strong>Write faster. Think further.</strong><br>A markdown editor that gets there before you do.</p>
 
-[![CI](https://github.com/DailenG/tachyon/actions/workflows/ci.yml/badge.svg)](https://github.com/DailenG/tachyon/actions/workflows/ci.yml)
-[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
+<p align="center">
+  <a href="https://github.com/DailenG/tachyon/actions/workflows/ci.yml"><img src="https://github.com/DailenG/tachyon/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/DailenG/tachyon/releases/latest"><img src="https://img.shields.io/github/v/release/DailenG/tachyon" alt="Latest release"></a>
+  <a href="https://github.com/DailenG/tachyon/releases"><img src="https://img.shields.io/github/downloads/DailenG/tachyon/total" alt="Downloads"></a>
+  <a href="#install"><img src="https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20macOS-informational" alt="Platforms: Windows, Linux, macOS"></a>
+  <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License: MIT OR Apache-2.0"></a>
+  <a href="https://deepwiki.com/DailenG/tachyon"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
+  <a href="https://devin.ai"><img src="https://img.shields.io/badge/supported%20by-Devin-1F2937" alt="Supported by Devin"></a>
+</p>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="site/assets/screenshots/hero-dark@2x.webp">
+    <img src="site/assets/screenshots/hero-light@2x.webp" alt="Tachyon editing a Markdown document: rendered blocks with the block under the caret shown as raw Markdown" width="860">
+  </picture>
+</p>
+
+<p align="center"><a href="https://github.com/DailenG/tachyon/releases/latest"><strong>Download the latest release</strong></a> (Windows, Linux, macOS) &middot; <a href="https://daileng.github.io/tachyon/">Website</a> &middot; <a href="#install">Install notes</a></p>
 
 A GPU-accelerated native Markdown editor, built for reading and editing pasted LLM output. It aims to
 start as fast as a scratchpad and edit like Typora: one pane, inline WYSIWYG, no WebView.
@@ -302,3 +318,9 @@ at your option.
 Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in
 this project shall be dual licensed as above, without any
 additional terms or conditions.
+
+## Acknowledgements
+
+Development was supported by a free month of Devin MAX from [Cognition](https://devin.ai). The
+[DeepWiki](https://deepwiki.com/DailenG/tachyon) for this repository is AI-generated; the
+documents in [`docs/`](docs/) and [`AGENTS.md`](AGENTS.md) are authoritative where they differ.

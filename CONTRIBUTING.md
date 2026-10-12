@@ -99,6 +99,14 @@ Changes to architecture, invariants, budgets or platform strategy get an ADR in
 [`docs/adr/`](docs/adr/) (copy `0000-template.md`, next free number). Superseded ADRs are kept and
 marked, never deleted.
 
+## Exploring the code with AI tools
+
+[DeepWiki](https://deepwiki.com/DailenG/tachyon) has an AI-generated wiki of this repository, steered
+by [`.devin/wiki.json`](.devin/wiki.json). It can be wrong; [`AGENTS.md`](AGENTS.md),
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and the ADRs are authoritative. AI coding tools can
+query it through DeepWiki's free MCP server, `https://mcp.deepwiki.com/mcp` (tools
+`read_wiki_structure`, `read_wiki_contents`, `ask_question`).
+
 ## Releases
 
 Versions follow SemVer (`[workspace.package] version` in `Cargo.toml`), starting at `0.x` while
