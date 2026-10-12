@@ -1200,12 +1200,14 @@ impl Editor {
         self.flush_pending_paste(cx);
         window.focus(&self.focus, cx);
         let extend = modifiers.shift;
+        // Taken first, on every path: a position left behind would let a later margin click
+        // (which never sets one) borrow this press's.
+        let pressed_at = self.press_position.take();
         if modifiers.secondary() && !extend && click_count == 1 && self.follow_link(offset, cx) {
             return;
         }
         // View mode follows a link on a plain click, but on the release: a press that starts a
         // drag over linked text must still select it, so the link waits to see if it was a drag.
-        let pressed_at = self.press_position.take();
         self.press_on_link = (self.locked && !extend && click_count == 1)
             .then(|| pressed_at.zip(self.link_at(offset)).map(|(at, _)| (offset, at)))
             .flatten();

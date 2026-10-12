@@ -3990,3 +3990,44 @@ fn a_margin_click_near_a_link_in_view_mode_does_not_open_it(cx: &mut TestAppCont
     cx.run_until_parked();
     assert_eq!(cx.opened_url(), None);
 }
+
+#[gpui::test]
+fn a_replace_all_that_finishes_after_locking_is_dropped_and_not_reported(cx: &mut TestAppContext) {
+    let line = "127.0.0.1 - - [10/Oct] \"GET /x\" status=200 1234\n";
+    let doc = line.repeat(150_000);
+    assert!(doc.len() as u64 >= tachyon_doc::FIND_BACKGROUND_THRESHOLD, "scans in the background");
+    let (editor, cx) = open(&doc, cx);
+    cx.simulate_keystrokes("ctrl-h");
+    cx.simulate_input("status=200");
+    cx.simulate_keystrokes("tab");
+    cx.simulate_input("status=500");
+    // Dispatched directly: `simulate_keystrokes` would run until parked, past the scan.
+    let window = cx.window_handle();
+    cx.dispatch_keystroke(window, gpui::Keystroke::parse("secondary-enter").unwrap());
+    // The scan is in flight; the user locks before it lands.
+    editor.update(cx, |e, _| e.locked = true);
+    cx.run_until_parked();
+    assert!(editor.read_with(cx, |e, _| e.text() == doc), "the text is untouched");
+    assert!(
+        editor.read_with(cx, |e, _| e.find.as_ref().is_some_and(|f| f.replaced.is_none())),
+        "and nothing is reported as replaced"
+    );
+}
+
+#[gpui::test]
+fn a_modifier_click_on_a_link_leaves_no_press_behind_for_a_margin_click(cx: &mut TestAppContext) {
+    let (editor, cx) = open("see [site](https://example.com/page) now\n", cx);
+    cx.simulate_keystrokes("ctrl-e");
+    let at = editor.read_with(cx, |e, _| e.text().find("site").unwrap());
+    // A Ctrl+click on the text follows the link at once, from the press itself.
+    editor.update_in(cx, |e, window, cx| {
+        e.press_position = Some(gpui::point(gpui::px(10.), gpui::px(10.)));
+        e.mouse_down(at, gpui::Modifiers::secondary_key(), 1, window, cx);
+    });
+    assert_eq!(cx.opened_url().as_deref(), Some("https://example.com/page"), "Ctrl+click opens");
+    assert_eq!(
+        editor.read_with(cx, |e, _| e.press_position),
+        None,
+        "and the press position is not left behind for the next click to find"
+    );
+}

@@ -409,6 +409,11 @@ impl Editor {
             cx.notify();
             return;
         };
+        // The scan may have started while the text was editable and finished after the user
+        // locked it: the result is dropped, and the bar must not claim it replaced anything.
+        if self.refuse_edit(cx) {
+            return;
+        }
         let start = span.start;
         match text {
             ReplaceAllText::Plain(text) => self.replace_selection_with(span, &text, cx),

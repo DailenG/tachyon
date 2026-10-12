@@ -102,7 +102,7 @@ start as fast as a scratchpad and edit like Typora: one pane, inline WYSIWYG, no
 
 ## Sticky notes
 
-A sticky note is a small, always-editable scratch window meant to stay open and out of the way.
+A sticky note is a small scratch window meant to stay open and out of the way. It starts editable and can be locked for reading (view mode).
 Open one with `tachyon --note` on the command line, the global hotkey in the `sticky_hotkey`
 setting (default `win+shift+n`, Windows only - see below), the command palette's "New sticky
 note" row (which shows that hotkey), or, on Windows, the tray icon's "New sticky note" item.
