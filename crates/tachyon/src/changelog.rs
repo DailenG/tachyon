@@ -1,44 +1,77 @@
-// Cuts one version's section out of `CHANGELOG.md`'s text: its own `## [X.Y.Z]` heading line up
-// to, but not including, the next line starting `## ` (any level-two heading, not only a
-// bracketed version - a following `## Migration notes` or the like ends the section too), or the
-// end of the file. `build.rs` embeds the
-// running version's section into the binary (see `whats_new::NOTES`) by `include!`-ing this
-// file's source rather than depending on this crate: a build script runs before the crate it
-// belongs to exists as a built artifact, so it cannot simply `use` it. The function lives here,
-// not inline in `build.rs`, so it has its own unit tests, run the ordinary way
-// (`cargo test -p tachyon`). A plain comment, not `//!`: `include!`'s expansion point in
-// `build.rs` is never the very start of that file, where an inner doc comment would have to be.
+// Cuts release sections out of `CHANGELOG.md`'s text. `build.rs` embeds the whole file
+// (`whats_new::CHANGELOG`); what the What's new window shows is decided here, at the moment it
+// opens, from the version the user updated from and the one now running.
 
-/// The section for `version` - the module comment above says exactly what that means - or the
-/// `## [Unreleased]` section if `version` has no heading of its own (the common case for a
-/// development build between releases). `None` if neither is present.
-///
-/// Unused outside tests in the linked `tachyon` binary itself: `build.rs`, the only production
-/// caller, is a separate compilation (see the module comment), so the compiler cannot see that
-/// use from here.
-#[allow(dead_code, reason = "called by build.rs's separate compilation via include!, and tests")]
-pub(crate) fn extract_section<'a>(changelog: &'a str, version: &str) -> Option<&'a str> {
-    let heading = format!("## [{version}]");
-    find_section(changelog, &heading).or_else(|| find_section(changelog, "## [Unreleased]"))
+/// A numeric `major.minor.patch`, from `1.4.2`, `v1.4.2` or a four-part MSIX package version such
+/// as `1.4.2.0` (the fourth part separates nightlies of one release from each other and from the
+/// stable build, not releases, so it is dropped). `None` for anything else.
+pub(crate) fn parse_version(text: &str) -> Option<(u64, u64, u64)> {
+    let mut parts = text.trim().trim_start_matches('v').split('.');
+    let mut next = || parts.next()?.parse::<u64>().ok();
+    let version = (next()?, next()?, next()?);
+    match parts.next() {
+        None => Some(version),
+        Some(build) if build.parse::<u64>().is_ok() && parts.next().is_none() => Some(version),
+        Some(_) => None,
+    }
 }
 
-/// Finds `heading` as a line prefix (so `## [1.0.0] - 2026-09-28` matches `## [1.0.0]`), then
-/// returns the text from that line up to the next line starting with `## ` (any level-two
-/// heading), or the end of the text if there is none.
-fn find_section<'a>(changelog: &'a str, heading: &str) -> Option<&'a str> {
+/// Every `## [label]` section in order, as `(label, text)`: the text runs from its heading line
+/// up to, but not including, the next line starting `## ` (any level-two heading, not only a
+/// bracketed version - a following `## Migration notes` ends the section too), or the end of the
+/// file. Level-two headings that are not `## [..]` end a section but are not returned.
+fn sections(changelog: &str) -> Vec<(&str, &str)> {
+    let mut found = Vec::new();
+    let mut open: Option<(&str, usize)> = None;
     let mut offset = 0;
-    let mut start = None;
     for line in changelog.split_inclusive('\n') {
-        match start {
-            None if line.starts_with(heading) => start = Some(offset),
-            Some(section_start) if line.starts_with("## ") => {
-                return Some(&changelog[section_start..offset]);
+        if line.starts_with("## ") {
+            if let Some((label, start)) = open.take() {
+                found.push((label, &changelog[start..offset]));
             }
-            _ => {}
+            if let Some(label) = line.strip_prefix("## [").and_then(|rest| rest.split_once(']')) {
+                open = Some((label.0, offset));
+            }
         }
         offset += line.len();
     }
-    start.map(|section_start| &changelog[section_start..])
+    if let Some((label, start)) = open {
+        found.push((label, &changelog[start..]));
+    }
+    found
+}
+
+/// The notes for `version`: its own section, or the `## [Unreleased]` one if it has none (a
+/// development build between releases). `None` if neither is present.
+pub(crate) fn extract_section<'a>(changelog: &'a str, version: &str) -> Option<&'a str> {
+    let sections = sections(changelog);
+    let wanted = parse_version(version);
+    sections
+        .iter()
+        .find(|(label, _)| wanted.is_some() && parse_version(label) == wanted)
+        .or_else(|| sections.iter().find(|(label, _)| *label == "Unreleased"))
+        .map(|&(_, text)| text)
+}
+
+/// Every release newer than `from` up to and including `to`, newest first, with how many there
+/// are. Used when someone updates across several releases (1.3.0 to 1.4.2 should show 1.4.0,
+/// 1.4.1 and 1.4.2, not only the last). When there is no range to show - `from` is unknown or
+/// unparseable (a fresh install, a corrupt record), equal to or newer than `to` (a nightly of the
+/// same release, a rollback), or no release in the changelog falls inside it - this is just
+/// [`extract_section`] for `to`, as before.
+pub(crate) fn sections_since(changelog: &str, from: Option<&str>, to: &str) -> Vec<String> {
+    let range = from.and_then(parse_version).zip(parse_version(to));
+    if let Some((from, to)) = range.filter(|(from, to)| from < to) {
+        let inside: Vec<String> = sections(changelog)
+            .into_iter()
+            .filter(|(label, _)| parse_version(label).is_some_and(|v| v > from && v <= to))
+            .map(|(_, text)| text.trim_end().to_owned())
+            .collect();
+        if !inside.is_empty() {
+            return inside;
+        }
+    }
+    extract_section(changelog, to).map(|s| vec![s.trim_end().to_owned()]).unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -66,6 +99,109 @@ mod tests {
 
 - old thing
 ";
+
+    const MANY: &str = "\
+# Changelog
+
+## [Unreleased]
+
+- pending
+
+## [1.4.2] - 2026-10-12
+
+- four two
+
+## [1.4.1] - 2026-10-12
+
+- four one
+
+## [1.4.0] - 2026-10-12
+
+- four zero
+
+## [1.3.0] - 2026-10-04
+
+- three zero
+
+## [1.2.0] - 2026-09-30
+
+- two zero
+";
+
+    #[test]
+    fn versions_parse_with_or_without_the_msix_build_part() {
+        assert_eq!(parse_version("1.4.2"), Some((1, 4, 2)));
+        assert_eq!(parse_version("v1.4.2"), Some((1, 4, 2)));
+        assert_eq!(parse_version(" 1.4.2\n"), Some((1, 4, 2)));
+        assert_eq!(parse_version("1.4.2.0"), Some((1, 4, 2)), "a packaged install's version");
+        assert_eq!(parse_version("1.4.2.37"), Some((1, 4, 2)), "a nightly's build part");
+        for bad in ["", "1.4", "1.4.x", "Unreleased", "1.4.2.0.1", "1.4.2-rc1", "a.b.c"] {
+            assert_eq!(parse_version(bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn an_update_across_releases_shows_each_one_newest_first() {
+        let got = sections_since(MANY, Some("1.3.0"), "1.4.2");
+        let heads: Vec<_> = got.iter().map(|s| s.lines().next().unwrap().to_owned()).collect();
+        assert_eq!(
+            heads,
+            ["## [1.4.2] - 2026-10-12", "## [1.4.1] - 2026-10-12", "## [1.4.0] - 2026-10-12"],
+            "1.3.0 itself is not new"
+        );
+        assert!(got.iter().all(|s| !s.contains("pending")), "never Unreleased");
+    }
+
+    #[test]
+    fn a_four_part_package_version_compares_by_its_release() {
+        let got = sections_since(MANY, Some("1.3.0.0"), "1.4.2.0");
+        assert_eq!(got.len(), 3);
+        // The same release on a different build is not an update across releases.
+        let same = sections_since(MANY, Some("1.4.2.7"), "1.4.2.0");
+        assert_eq!(same.len(), 1);
+        assert!(same[0].starts_with("## [1.4.2]"));
+    }
+
+    #[test]
+    fn a_single_step_update_shows_one_release() {
+        let got = sections_since(MANY, Some("1.4.1"), "1.4.2");
+        assert_eq!(got.len(), 1);
+        assert!(got[0].starts_with("## [1.4.2]"));
+    }
+
+    #[test]
+    fn anything_without_a_usable_range_falls_back_to_the_current_release() {
+        for from in [None, Some(""), Some("garbage"), Some("1.4.2"), Some("2.0.0"), Some("1.4.3")] {
+            let got = sections_since(MANY, from, "1.4.2");
+            assert_eq!(got.len(), 1, "{from:?}");
+            assert!(got[0].starts_with("## [1.4.2]"), "{from:?}: {:?}", got[0]);
+        }
+        // A build ahead of the last release, updated from an older one, shows every release in
+        // between: those are the changes the user did not have.
+        let ahead = sections_since(MANY, Some("1.3.0"), "9.9.9");
+        assert_eq!(ahead.len(), 3, "1.4.0 to 1.4.2");
+        // With no `from`, a build with no section of its own shows Unreleased, as before.
+        let dev = sections_since(MANY, None, "9.9.9");
+        assert_eq!(dev.len(), 1);
+        assert!(dev[0].starts_with("## [Unreleased]"));
+        assert!(sections_since("# Changelog\n", Some("1.0.0"), "1.1.0").is_empty());
+    }
+
+    #[test]
+    fn a_range_with_no_release_inside_it_still_shows_the_current_one() {
+        // 1.4.5 has no section and nothing between 1.4.2 and it: the Unreleased fallback.
+        let got = sections_since(MANY, Some("1.4.2"), "1.4.5");
+        assert_eq!(got.len(), 1);
+        assert!(got[0].starts_with("## [Unreleased]"));
+    }
+
+    #[test]
+    fn a_non_version_heading_ends_a_section_and_is_not_one() {
+        let changelog = "## [1.1.0]\n\n- b\n\n## Migration notes\n\nprose\n\n## [1.0.0]\n\n- a\n";
+        let got = sections_since(changelog, Some("0.9.0"), "1.1.0");
+        assert_eq!(got.len(), 2);
+        assert!(got.iter().all(|s| !s.contains("prose")), "{got:?}");
+    }
 
     #[test]
     fn a_version_with_its_own_section() {
