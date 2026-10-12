@@ -6,6 +6,18 @@ All notable user-visible changes are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- View mode, for reading and copying rather than editing (#129). `Ctrl+E`, the "Toggle view mode"
+  row in the command palette, and an `EDIT`/`VIEW` button in a sticky note's header (next to
+  `MD`/`TXT`) lock the text: no block turns into raw Markdown, no caret is drawn, and typing,
+  pasting, cutting, undo and find-and-replace change nothing (a one-line notice says "View mode
+  - Ctrl+E to edit"). Dragging or double-clicking still selects rendered text and `Ctrl+C` copies
+  it, a click on a link opens it, and task boxes still toggle. A sticky note remembers the
+  setting across restarts, so a checklist note can reopen locked.
+- Windows: "Open Default apps settings" in the command palette opens the page where Tachyon can
+  be chosen as the default app for a file type (#123).
+
 ## [1.4.0] - 2026-10-12
 
 ### Added

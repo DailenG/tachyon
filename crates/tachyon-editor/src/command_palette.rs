@@ -37,6 +37,9 @@ pub(crate) enum CommandEffect {
     ReopenNote,
     /// Opens the folder sticky notes are saved in, in the system file manager.
     OpenNotesFolder,
+    /// Opens Windows' Default apps settings, where Tachyon can be chosen for a file type. Listed
+    /// on Windows only: an app cannot make itself the default there, the user chooses.
+    OpenDefaultApps,
     /// Flips the overlay scrollbar between auto and never.
     ToggleScrollbar,
     /// Flips drawing Mermaid code blocks as diagrams.
@@ -74,6 +77,7 @@ const COMMANDS: &[Command] = &[
         name: "Toggle plain-text mode",
         effect: CommandEffect::Action("editor::ToggleTextMode"),
     },
+    Command { name: "Toggle view mode", effect: CommandEffect::Action("editor::ToggleViewMode") },
     Command { name: "Zoom in", effect: CommandEffect::Action("editor::ZoomIn") },
     Command { name: "Zoom out", effect: CommandEffect::Action("editor::ZoomOut") },
     Command { name: "Zoom reset", effect: CommandEffect::Action("editor::ZoomReset") },
@@ -89,6 +93,7 @@ const COMMANDS: &[Command] = &[
     Command { name: "Preferences", effect: CommandEffect::Action("editor::OpenPreferences") },
     Command { name: "Open settings file", effect: CommandEffect::Action("tachyon::OpenSettings") },
     Command { name: "Reset settings to defaults...", effect: CommandEffect::ResetSettings },
+    Command { name: "Open Default apps settings", effect: CommandEffect::OpenDefaultApps },
     Command { name: "About Tachyon", effect: CommandEffect::Action("about::About") },
     Command { name: "What's new", effect: CommandEffect::Action("tachyon::WhatsNew") },
     Command { name: "Theme: System", effect: CommandEffect::Theme(ThemeChoice::System) },
@@ -198,6 +203,9 @@ fn command_items(cx: &App) -> Vec<Item> {
     let settings = cx.try_global::<Settings>().cloned().unwrap_or_default();
     COMMANDS
         .iter()
+        .filter(|command| {
+            cfg!(windows) || !matches!(command.effect, CommandEffect::OpenDefaultApps)
+        })
         .map(|command| {
             let (label, marked, shortcut) = match command.effect {
                 CommandEffect::Action("tachyon::NewNote") => (
@@ -250,6 +258,7 @@ fn command_items(cx: &App) -> Vec<Item> {
                 ),
                 CommandEffect::ReopenNote
                 | CommandEffect::OpenNotesFolder
+                | CommandEffect::OpenDefaultApps
                 | CommandEffect::ResetSettings => (command.name.to_owned(), false, None),
                 CommandEffect::ContentWidth(width) => {
                     (command.name.to_owned(), settings.content_width == width, None)
@@ -327,6 +336,7 @@ impl Editor {
             }
             CommandEffect::ReopenNote => self.open_note_picker(cx),
             CommandEffect::OpenNotesFolder => self.open_notes_folder(cx),
+            CommandEffect::OpenDefaultApps => cx.open_url("ms-settings:defaultapps"),
             CommandEffect::ToggleScrollbar => {
                 let current = cx
                     .try_global::<Settings>()

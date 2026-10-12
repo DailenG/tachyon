@@ -3801,3 +3801,233 @@ fn the_notes_folder_still_opens_when_the_window_that_asked_has_closed(cx: &mut T
     assert_eq!(opened_count(&standard), 1, "opened although its window is gone");
     let _ = std::fs::remove_dir_all(&standard);
 }
+
+#[gpui::test]
+fn view_mode_refuses_every_route_into_the_text_and_says_why(cx: &mut TestAppContext) {
+    let (editor, cx) = open("alpha beta\n\nsecond block\n", cx);
+    cx.simulate_keystrokes("ctrl-e");
+    assert!(editor.read_with(cx, |e, _| e.locked));
+    let original = text(&editor, cx);
+
+    cx.simulate_input("typed");
+    cx.simulate_keystrokes("backspace delete enter tab");
+    cx.simulate_keystrokes("secondary-a secondary-x");
+    cx.write_to_clipboard(gpui::ClipboardItem::new_string("pasted".to_owned()));
+    cx.simulate_keystrokes("secondary-v");
+    cx.run_until_parked();
+    assert_eq!(text(&editor, cx), original, "no keystroke changed the text");
+    assert!(!editor.read_with(cx, |e, _| e.is_modified()), "nothing is unsaved");
+    let notice = editor.read_with(cx, |e, _| e.notice.clone()).expect("it explains itself");
+    assert!(notice.contains("Ctrl+E"), "{notice}");
+
+    // Find and replace goes through the same gate.
+    editor.update(cx, |e, cx| e.replace_selection_with(0..5, "ALPHA", cx));
+    assert_eq!(text(&editor, cx), original, "replace is refused too");
+}
+
+#[gpui::test]
+fn view_mode_leaves_no_block_raw_and_no_caret_even_after_clicks_and_movement(
+    cx: &mut TestAppContext,
+) {
+    let (editor, cx) = open("# Title\n\nsome *emphasis* here\n", cx);
+    assert!(editor.read_with(cx, |e, _| e.active_block()).is_some(), "editing before");
+    cx.simulate_keystrokes("ctrl-e");
+    assert_eq!(editor.read_with(cx, |e, _| e.active_block()), None, "locking un-raws the block");
+
+    // Moving the caret and selecting (for copy) must not bring a raw block back.
+    editor.update(cx, |e, cx| {
+        e.move_to(12, false, cx);
+        e.move_to(20, true, cx);
+    });
+    cx.simulate_keystrokes("ctrl-end left");
+    assert_eq!(editor.read_with(cx, |e, _| e.active_block()), None);
+
+    // Copy still works on a selection.
+    editor.update(cx, |e, cx| {
+        e.move_to(0, false, cx);
+        e.move_to(7, true, cx);
+    });
+    cx.simulate_keystrokes("secondary-c");
+    assert_eq!(cx.read_from_clipboard().and_then(|c| c.text()), Some("# Title".to_owned()));
+
+    // Leaving view mode brings editing back at the same caret.
+    cx.simulate_keystrokes("ctrl-e");
+    assert!(editor.read_with(cx, |e, _| e.active_block()).is_some());
+    cx.simulate_input("!");
+    assert!(text(&editor, cx).contains('!'), "typing works again");
+}
+
+#[gpui::test]
+fn view_mode_still_toggles_task_boxes_and_keeps_the_view_locked(cx: &mut TestAppContext) {
+    let (editor, cx) = open("intro\n\n- [ ] one\n- [x] two\n", cx);
+    cx.simulate_keystrokes("ctrl-e");
+    let one = task_offset(&editor, "- [ ] one", cx);
+    assert!(editor.update(cx, |e, cx| e.toggle_task_at(one, cx)));
+    assert_eq!(text(&editor, cx), "intro\n\n- [x] one\n- [x] two\n");
+    assert!(editor.read_with(cx, |e, _| e.locked), "still in view mode");
+    assert_eq!(editor.read_with(cx, |e, _| e.active_block()), None, "and still no raw block");
+    cx.simulate_input("x");
+    assert_eq!(text(&editor, cx), "intro\n\n- [x] one\n- [x] two\n", "typing is still refused");
+}
+
+#[gpui::test]
+fn a_plain_click_follows_a_link_only_in_view_mode(cx: &mut TestAppContext) {
+    let (editor, cx) = open("see [site](https://example.com/page) now\n", cx);
+    let at = editor.read_with(cx, |e, _| e.text().find("site").unwrap());
+    let click = |editor: &Entity<Editor>, cx: &mut VisualTestContext| {
+        editor.update_in(cx, |e, window, cx| {
+            e.press_position = Some(gpui::point(gpui::px(10.), gpui::px(10.)));
+            e.mouse_down(at, gpui::Modifiers::default(), 1, window, cx);
+            e.mouse_released(gpui::point(gpui::px(11.), gpui::px(10.)), cx);
+        });
+        cx.run_until_parked();
+    };
+    click(&editor, cx);
+    assert_eq!(cx.opened_url(), None, "a plain click in edit mode only places the caret");
+    cx.simulate_keystrokes("ctrl-e");
+    click(&editor, cx);
+    assert_eq!(cx.opened_url().as_deref(), Some("https://example.com/page"));
+}
+
+#[gpui::test]
+fn a_note_in_view_mode_is_recorded_restored_and_toggled_from_the_header(cx: &mut TestAppContext) {
+    let dir = notes_dir("view-mode");
+    let (editor, cx) = open_note(dir.clone(), cx);
+    cx.simulate_input("checklist");
+    editor.update(cx, |e, cx| {
+        e.flush_note(cx);
+    });
+    let label = |cx: &mut VisualTestContext| cx.debug_bounds("note-view").is_some();
+    assert!(label(cx), "the header has the view button");
+
+    let button = cx.debug_bounds("note-view").unwrap();
+    cx.simulate_click(button.center(), gpui::Modifiers::default());
+    assert!(editor.read_with(cx, |e, _| e.locked), "the header button locks");
+    let state = editor.read_with(cx, |e, _| e.note_window_state()).expect("the note has a file");
+    assert!(state.locked, "and the record says so");
+
+    cx.simulate_click(button.center(), gpui::Modifiers::default());
+    assert!(!editor.read_with(cx, |e, _| e.locked), "a second click unlocks");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[gpui::test]
+fn dragging_across_a_link_in_view_mode_selects_it_instead_of_opening_it(cx: &mut TestAppContext) {
+    let (editor, cx) = open("see [site](https://example.com/page) now\n", cx);
+    cx.simulate_keystrokes("ctrl-e");
+    let start = editor.read_with(cx, |e, _| e.text().find("site").unwrap());
+    editor.update_in(cx, |e, window, cx| {
+        e.press_position = Some(gpui::point(gpui::px(10.), gpui::px(10.)));
+        e.mouse_down(start, gpui::Modifiers::default(), 1, window, cx);
+        e.mouse_drag(start + 4, cx);
+        e.mouse_released(gpui::point(gpui::px(60.), gpui::px(10.)), cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(cx.opened_url(), None, "a drag is not a click");
+    assert_eq!(editor.read_with(cx, |e, _| e.selection()), start..start + 4, "it selected");
+}
+
+#[gpui::test]
+fn view_mode_lets_a_query_be_pasted_into_the_find_bar_and_never_replaces(cx: &mut TestAppContext) {
+    let (editor, cx) = open("one two one\n", cx);
+    cx.simulate_keystrokes("ctrl-e ctrl-h");
+    cx.write_to_clipboard(gpui::ClipboardItem::new_string("one".to_owned()));
+    cx.simulate_keystrokes("secondary-v");
+    cx.run_until_parked();
+    assert!(
+        editor.read_with(cx, |e, _| e.find.as_ref().is_some_and(|f| f.query == "one")),
+        "the query was pasted into the find bar"
+    );
+    cx.simulate_keystrokes("tab");
+    cx.simulate_input("1");
+    cx.simulate_keystrokes("secondary-enter enter");
+    cx.run_until_parked();
+    assert_eq!(text(&editor, cx), "one two one\n", "nothing was replaced");
+    assert!(
+        editor.read_with(cx, |e, _| e.find.as_ref().is_some_and(|f| f.replaced.is_none())),
+        "and the bar does not claim it replaced anything"
+    );
+}
+
+#[gpui::test]
+fn changing_a_locked_notes_mode_keeps_it_free_of_a_caret_and_raw_blocks(cx: &mut TestAppContext) {
+    let (editor, cx) = open("# Title\n\ntext\n", cx);
+    cx.simulate_keystrokes("ctrl-e");
+    for _ in 0..2 {
+        cx.simulate_keystrokes("ctrl-shift-m");
+        assert!(editor.read_with(cx, |e, _| e.locked));
+        assert!(!editor.read_with(cx, |e, _| e.editing), "no caret after the mode change");
+        assert_eq!(editor.read_with(cx, |e, _| e.active_block()), None, "and no raw block");
+    }
+}
+
+#[gpui::test]
+fn dragging_off_a_link_into_the_margin_does_not_open_it(cx: &mut TestAppContext) {
+    let (editor, cx) = open("see [site](https://example.com/page) now\n", cx);
+    cx.simulate_keystrokes("ctrl-e");
+    let at = editor.read_with(cx, |e, _| e.text().find("site").unwrap());
+    editor.update_in(cx, |e, window, cx| {
+        e.press_position = Some(gpui::point(gpui::px(10.), gpui::px(10.)));
+        e.mouse_down(at, gpui::Modifiers::default(), 1, window, cx);
+        // No text under the pointer on the way out: the selection never grows.
+        e.mouse_released(gpui::point(gpui::px(400.), gpui::px(300.)), cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(cx.opened_url(), None, "the pointer left the link before the release");
+}
+
+#[gpui::test]
+fn a_margin_click_near_a_link_in_view_mode_does_not_open_it(cx: &mut TestAppContext) {
+    let (editor, cx) = open("see [site](https://example.com/page) now\n", cx);
+    cx.simulate_keystrokes("ctrl-e");
+    let at = editor.read_with(cx, |e, _| e.text().find("site").unwrap());
+    // `mouse_down_in_margin` maps a click beside the text to a nearby offset and never sets
+    // `press_position`: only a press on the text itself can follow a link.
+    editor.update_in(cx, |e, window, cx| {
+        e.mouse_down(at, gpui::Modifiers::default(), 1, window, cx);
+        e.mouse_released(gpui::point(gpui::px(10.), gpui::px(10.)), cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(cx.opened_url(), None);
+}
+
+#[gpui::test]
+fn a_replace_all_that_finishes_after_locking_is_dropped_and_not_reported(cx: &mut TestAppContext) {
+    let line = "127.0.0.1 - - [10/Oct] \"GET /x\" status=200 1234\n";
+    let doc = line.repeat(150_000);
+    assert!(doc.len() as u64 >= tachyon_doc::FIND_BACKGROUND_THRESHOLD, "scans in the background");
+    let (editor, cx) = open(&doc, cx);
+    cx.simulate_keystrokes("ctrl-h");
+    cx.simulate_input("status=200");
+    cx.simulate_keystrokes("tab");
+    cx.simulate_input("status=500");
+    // Dispatched directly: `simulate_keystrokes` would run until parked, past the scan.
+    let window = cx.window_handle();
+    cx.dispatch_keystroke(window, gpui::Keystroke::parse("secondary-enter").unwrap());
+    // The scan is in flight; the user locks before it lands.
+    editor.update(cx, |e, _| e.locked = true);
+    cx.run_until_parked();
+    assert!(editor.read_with(cx, |e, _| e.text() == doc), "the text is untouched");
+    assert!(
+        editor.read_with(cx, |e, _| e.find.as_ref().is_some_and(|f| f.replaced.is_none())),
+        "and nothing is reported as replaced"
+    );
+}
+
+#[gpui::test]
+fn a_modifier_click_on_a_link_leaves_no_press_behind_for_a_margin_click(cx: &mut TestAppContext) {
+    let (editor, cx) = open("see [site](https://example.com/page) now\n", cx);
+    cx.simulate_keystrokes("ctrl-e");
+    let at = editor.read_with(cx, |e, _| e.text().find("site").unwrap());
+    // A Ctrl+click on the text follows the link at once, from the press itself.
+    editor.update_in(cx, |e, window, cx| {
+        e.press_position = Some(gpui::point(gpui::px(10.), gpui::px(10.)));
+        e.mouse_down(at, gpui::Modifiers::secondary_key(), 1, window, cx);
+    });
+    assert_eq!(cx.opened_url().as_deref(), Some("https://example.com/page"), "Ctrl+click opens");
+    assert_eq!(
+        editor.read_with(cx, |e, _| e.press_position),
+        None,
+        "and the press position is not left behind for the next click to find"
+    );
+}

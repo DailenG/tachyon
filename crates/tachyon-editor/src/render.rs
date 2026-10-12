@@ -214,6 +214,7 @@ impl Render for Editor {
             .on_action(cx.listener(Self::toggle_note_pin))
             .on_action(cx.listener(Self::toggle_frame_stats))
             .on_action(cx.listener(Self::toggle_text_mode))
+            .on_action(cx.listener(Self::toggle_view_mode))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|editor, event: &MouseDownEvent, window, cx| {
@@ -239,8 +240,8 @@ impl Render for Editor {
             )
             .on_mouse_up(
                 MouseButton::Left,
-                cx.listener(|editor, _, window, cx| {
-                    editor.selecting = false;
+                cx.listener(|editor, event: &gpui::MouseUpEvent, window, cx| {
+                    editor.mouse_released(event.position, cx);
                     editor.scrollbar_drag_ended(window, cx);
                 }),
             )
@@ -248,6 +249,7 @@ impl Render for Editor {
                 MouseButton::Left,
                 cx.listener(|editor, _, window, cx| {
                     editor.selecting = false;
+                    editor.press_on_link = None;
                     editor.scrollbar_drag_ended(window, cx);
                 }),
             )
@@ -755,6 +757,33 @@ impl Editor {
                     cx.stop_propagation();
                     mode_editor.update(cx, |editor, cx| {
                         editor.toggle_text_mode(&crate::editor::ToggleTextMode, window, cx);
+                    });
+                }),
+        );
+        // View mode: read-only, links open on a click. Labelled with the current state, like
+        // `MD`/`TXT` beside it.
+        let locked = self.locked;
+        let view_editor = editor.clone();
+        header = header.child(
+            div()
+                .id("note-view")
+                .debug_selector(|| "note-view".to_owned())
+                .flex_none()
+                .h(theme.scaled(px(20.)))
+                .px_1()
+                .rounded(theme.radius_small)
+                .flex()
+                .items_center()
+                .justify_center()
+                .cursor_pointer()
+                .text_size(theme.scaled(px(11.)))
+                .when(locked, |d| d.bg(theme.accent).text_color(theme.text.on_accent))
+                .when(!locked, |d| d.text_color(theme.text.muted))
+                .child(if locked { "VIEW" } else { "EDIT" })
+                .on_mouse_down(MouseButton::Left, move |_event: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    view_editor.update(cx, |editor, cx| {
+                        editor.toggle_view_mode(&crate::editor::ToggleViewMode, window, cx);
                     });
                 }),
         );
@@ -1649,6 +1678,7 @@ fn with_mouse(
         let index = index.min(down_layout.len());
         let offset = down_target.offset(index);
         down_editor.update(cx, |editor, cx| {
+            editor.press_position = Some(event.position);
             editor.mouse_down(offset, event.modifiers, event.click_count, window, cx)
         });
         cx.stop_propagation();

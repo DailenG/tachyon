@@ -407,6 +407,7 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
                 bounds: note.bounds,
                 pinned: note.pinned,
                 plain: note.plain,
+                locked: note.locked,
             })
             .collect();
         let primary_backups = primary_backups.filter(|_| settings.hot_exit);
@@ -1083,6 +1084,8 @@ enum NoteSource {
         pinned: bool,
         /// The mode recorded for the note: plain text rather than Markdown.
         plain: bool,
+        /// Recorded as in view mode (read-only).
+        locked: bool,
     },
 }
 
@@ -1126,15 +1129,15 @@ fn open_note_window(source: NoteSource, cx: &mut App) -> Option<WindowHandle<Edi
     let activate = matches!(source, NoteSource::New | NoteSource::Reopen { .. });
     // New notes start in `sticky_default_mode`; a restored one in the mode recorded for it; a
     // reopened one is a file picked from the list, with no record, so Markdown as it always was.
-    let (bounds, pinned, path, plain) = match source {
+    let (bounds, pinned, path, plain, locked) = match source {
         NoteSource::New => {
-            (initial_note_bounds(cx), settings.sticky_on_top, None, settings.sticky_plain)
+            (initial_note_bounds(cx), settings.sticky_on_top, None, settings.sticky_plain, false)
         }
         NoteSource::Reopen { path } => {
-            (initial_note_bounds(cx), settings.sticky_on_top, Some(path), false)
+            (initial_note_bounds(cx), settings.sticky_on_top, Some(path), false, false)
         }
-        NoteSource::Restore { path, bounds, pinned, plain } => {
-            (clamp_note_to_work_area(bounds, cx), pinned, Some(path), plain)
+        NoteSource::Restore { path, bounds, pinned, plain, locked } => {
+            (clamp_note_to_work_area(bounds, cx), pinned, Some(path), plain, locked)
         }
     };
     let translucent = settings.sticky_unfocused_opacity < 1.0;
@@ -1148,6 +1151,8 @@ fn open_note_window(source: NoteSource, cx: &mut App) -> Option<WindowHandle<Edi
         cx.new(|cx| {
             let mut editor = Editor::with_document(Document::new(""), window, cx);
             editor.make_note(pinned);
+            // Before the file loads, so its first frame already shows no raw block.
+            editor.set_note_locked(locked);
             if let Some(notice) = notice.clone() {
                 editor.set_app_notice(notice, cx);
             }

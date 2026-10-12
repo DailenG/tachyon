@@ -384,6 +384,8 @@ pub struct NoteWindowState {
     /// Shown as plain text rather than Markdown (the header toggle, `Ctrl+Shift+M`). The file
     /// stays `.md` either way; this only records how Tachyon shows it.
     pub plain: bool,
+    /// In view mode (read-only; `Ctrl+E`, the header's `VIEW`/`EDIT` button).
+    pub locked: bool,
 }
 
 /// The record's text. A `mode = plain` line sits between `pinned` and `path` for a plain-text
@@ -392,6 +394,7 @@ pub struct NoteWindowState {
 /// such a build - is a Markdown note.
 fn serialize_note(note: &NoteWindowState) -> String {
     let mode = if note.plain { "mode = plain\n" } else { "" };
+    let view = if note.locked { "view = locked\n" } else { "" };
     format!(
         "x = {}\n\
          y = {}\n\
@@ -399,6 +402,7 @@ fn serialize_note(note: &NoteWindowState) -> String {
          h = {}\n\
          pinned = {}\n\
          {mode}\
+         {view}\
          path = {}",
         f32::from(note.bounds.origin.x),
         f32::from(note.bounds.origin.y),
@@ -420,14 +424,20 @@ fn parse_note(record: &str) -> Option<NoteWindowState> {
     let pinned: bool = next_field(&mut fields, "pinned")?.parse().ok()?;
     let mut rest = fields.next()?;
     let mut plain = false;
-    if let Some((line, after)) = rest.split_once('\n')
-        && let Some(("mode", value)) = line.split_once('=').map(|(k, v)| (k.trim(), v.trim()))
+    let mut locked = false;
+    // Optional `mode` and `view` lines, in that order, before the path. Absent means Markdown
+    // and editable, which is also what a record from an older build says.
+    while let Some((line, after)) = rest.split_once('\n')
+        && let Some((key @ ("mode" | "view"), value)) =
+            line.split_once('=').map(|(k, v)| (k.trim(), v.trim()))
     {
-        plain = match value {
-            "plain" => true,
-            "markdown" => false,
+        match (key, value) {
+            ("mode", "plain") => plain = true,
+            ("mode", "markdown") => plain = false,
+            ("view", "locked") => locked = true,
+            ("view", "editable") => locked = false,
             _ => return None,
-        };
+        }
         rest = after;
     }
     let path = rest.strip_prefix("path")?.trim_start().strip_prefix('=')?.trim_start();
@@ -439,6 +449,7 @@ fn parse_note(record: &str) -> Option<NoteWindowState> {
         bounds: bounds(point(px(x), px(y)), size(px(w), px(h))),
         pinned,
         plain,
+        locked,
     })
 }
 
@@ -566,6 +577,13 @@ impl Editor {
         })
     }
 
+    /// Opens this note in view mode (read-only), as recorded for a restored note. Called before
+    /// its file loads so the first frame already shows no raw block and no caret.
+    pub fn set_note_locked(&mut self, locked: bool) {
+        self.locked = locked;
+        self.editing = !locked;
+    }
+
     pub fn note_pinned(&self) -> bool {
         self.note.as_ref().is_some_and(|note| note.pinned)
     }
@@ -578,7 +596,13 @@ impl Editor {
         let path = self.file.clone()?;
         let bounds = self.last_placement.map_or_else(Bounds::default, |(bounds, _)| bounds);
         let plain = self.note_chose_plain();
-        Some(NoteWindowState { path, bounds, pinned: self.note_pinned(), plain })
+        Some(NoteWindowState {
+            path,
+            bounds,
+            pinned: self.note_pinned(),
+            plain,
+            locked: self.locked,
+        })
     }
 
     /// `Ctrl+Shift+T`: flips this note's always-on-top state - a no-op, like the header's own
@@ -896,6 +920,7 @@ mod tests {
             bounds: sample_bounds(),
             pinned: true,
             plain: false,
+            locked: false,
         }
     }
 
@@ -911,6 +936,23 @@ mod tests {
             out
         };
         assert_eq!(parse_notes_state(&text), notes);
+    }
+
+    #[test]
+    fn a_locked_note_round_trips_with_or_without_a_mode_line_and_old_records_are_editable() {
+        for plain in [false, true] {
+            let locked = NoteWindowState { plain, locked: true, ..sample_note() };
+            let record = serialize_note(&locked);
+            assert!(record.contains("view = locked\npath = "), "{record}");
+            assert_eq!(parse_note(&record), Some(locked));
+        }
+        let editable = serialize_note(&sample_note());
+        assert!(!editable.contains("view"), "an editable note writes no view line: {editable}");
+        assert_eq!(parse_note(&editable), Some(sample_note()));
+
+        let odd = serialize_note(&NoteWindowState { locked: true, ..sample_note() })
+            .replace("view = locked", "view = sideways");
+        assert_eq!(parse_note(&odd), None, "an unknown view value is damage, not a default");
     }
 
     #[test]
@@ -1015,10 +1057,20 @@ mod tests {
         let present = dir.join("present.md");
         std::fs::write(&present, "hi").unwrap();
         let gone = dir.join("gone.md");
-        let kept =
-            NoteWindowState { path: present, bounds: sample_bounds(), pinned: false, plain: false };
-        let dropped =
-            NoteWindowState { path: gone, bounds: sample_bounds(), pinned: true, plain: false };
+        let kept = NoteWindowState {
+            path: present,
+            bounds: sample_bounds(),
+            pinned: false,
+            plain: false,
+            locked: false,
+        };
+        let dropped = NoteWindowState {
+            path: gone,
+            bounds: sample_bounds(),
+            pinned: true,
+            plain: false,
+            locked: false,
+        };
         assert_eq!(existing_notes(vec![kept.clone(), dropped]), vec![kept]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
