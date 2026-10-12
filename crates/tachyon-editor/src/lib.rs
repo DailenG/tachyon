@@ -34,7 +34,8 @@ pub use crate::editor::{
 };
 pub use crate::mermaid::MermaidRenderer;
 pub use crate::notes::{
-    NoteWindowState, NotesChanged, NotesDir, existing_notes, read_notes_state, write_notes_state,
+    NoteWindowState, NotesChanged, NotesDir, OpenFolder, existing_notes, read_notes_state,
+    write_notes_state,
 };
 pub use crate::picker::{RecentFiles, RecentFilesOs};
 pub use crate::prompt::keyboard_prompt;

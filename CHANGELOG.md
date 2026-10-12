@@ -8,6 +8,13 @@ All notable user-visible changes are recorded here. The format follows
 
 ### Added
 
+- A `sticky_folder` setting chooses where sticky notes are saved (a plain path; empty, the
+  default, keeps `<Documents>/tachyon/notes`). It applies to notes saved from then on: nothing is
+  moved, an existing note keeps its file, and "Reopen sticky note" lists the folder that is set.
+  A folder that cannot be written keeps the text in the note and says so. The new command
+  palette row "Open sticky notes folder" opens the folder in use, so a changed path never hides
+  your notes. A `#` inside a quoted setting value (a folder named `C#`) is no longer taken for a
+  comment (#109).
 - Sticky notes can be plain text: a `MD`/`TXT` button in the note header (next to the pin) switches
   the note between Markdown and plain text, the same switch as `Ctrl+Shift+M`. Each note
   remembers its mode across restarts; its file stays `.md` (#115).

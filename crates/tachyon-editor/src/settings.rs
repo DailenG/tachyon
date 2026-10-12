@@ -119,6 +119,11 @@ pub struct Settings {
     /// creation reads it: a restored note keeps the mode recorded for it, and each note can be
     /// switched afterwards (`Ctrl+Shift+M`, the header's `MD`/`TXT` toggle).
     pub sticky_plain: bool,
+    /// The folder sticky notes are saved in; empty (the default) means the standard one,
+    /// `<Documents>/tachyon/notes` (`notes::notes_folder`). A plain path: no `~` or environment
+    /// variable expansion, like every other path in this file. Changing it affects notes saved
+    /// from then on: nothing is moved, and the reopen picker lists whichever folder is set.
+    pub sticky_folder: String,
     /// Whether opening a file, restoring a session, or a whole-document paste starts with no
     /// block raw for editing. Off: today's behavior, the caret's block is raw immediately.
     pub start_without_active_block: bool,
@@ -143,6 +148,7 @@ impl Default for Settings {
             sticky_on_top: true,
             sticky_unfocused_opacity: 1.0,
             sticky_plain: false,
+            sticky_folder: String::new(),
             start_without_active_block: false,
             scrollbar: ScrollbarMode::Auto,
             mermaid: true,
@@ -200,6 +206,11 @@ sticky_unfocused_opacity = 1.0
 # keeps its own mode after that.
 sticky_default_mode = \"markdown\"
 
+# The folder sticky notes are saved in, as a plain path (no ~ or variables). Empty uses
+# <Documents>/tachyon/notes. Changing it applies to notes saved from then on; existing notes
+# stay where they are, and the \"Reopen sticky note\" list shows the folder set here.
+sticky_folder = \"\"
+
 # Open a file, restore a session, or paste a whole document with every block rendered. false
 # (the default) starts with the caret's block raw, ready to edit. A click or keystroke edits
 # either way.
@@ -240,6 +251,7 @@ pub(crate) const KEYS: &[(&str, &str, Kind)] = &[
     ("sticky_on_top", "Sticky notes on top", Kind::Flag),
     ("sticky_unfocused_opacity", "Sticky note opacity when unfocused", Kind::Value),
     ("sticky_default_mode", "New sticky note mode", Kind::Choice(&["\"markdown\"", "\"plain\""])),
+    ("sticky_folder", "Sticky notes folder", Kind::Value),
     ("start_without_active_block", "Open with every block rendered", Kind::Flag),
     ("scrollbar", "Scrollbar", Kind::Choice(&["\"auto\"", "\"never\""])),
     ("mermaid", "Mermaid diagrams", Kind::Flag),
@@ -252,6 +264,20 @@ pub(crate) fn description(key: &str) -> String {
     lines.join(" ").replace("\\\"", "\"")
 }
 
+/// The part of a settings line before its `#` comment: the first `#` that is not inside a
+/// double-quoted value, so a quoted path or name may contain one (`"/home/me/C#/notes"`).
+fn code_part(line: &str) -> &str {
+    let mut quoted = false;
+    for (i, c) in line.char_indices() {
+        match c {
+            '"' => quoted = !quoted,
+            '#' if !quoted => return &line[..i],
+            _ => {}
+        }
+    }
+    line
+}
+
 impl Settings {
     /// Parses a settings file. Unknown keys and invalid values are skipped (reported in the
     /// second result, `line: problem`); missing keys keep their defaults.
@@ -259,7 +285,7 @@ impl Settings {
         let mut settings = Settings::default();
         let mut problems = Vec::new();
         for (index, line) in text.lines().enumerate() {
-            let line = line.split('#').next().unwrap_or("").trim();
+            let line = code_part(line).trim();
             if line.is_empty() {
                 continue;
             }
@@ -333,6 +359,15 @@ impl Settings {
                     _ => return Err("sticky_default_mode is \"markdown\" or \"plain\"".into()),
                 }
             }
+            "sticky_folder" => {
+                // Taken as typed, between the quotes: a Windows path has backslashes that are
+                // not escapes here, and a path may hold `#` or `=` (`value` is whole, so a
+                // trailing comment is only ever cut by the file parser, before this).
+                if unquoted.contains('\0') || unquoted.contains('\n') {
+                    return Err("sticky_folder is a path (empty for the default folder)".into());
+                }
+                self.sticky_folder = unquoted.to_owned();
+            }
             "start_without_active_block" => self.start_without_active_block = flag(key)?,
             "scrollbar" => {
                 self.scrollbar = match unquoted {
@@ -372,6 +407,7 @@ impl Settings {
             "sticky_on_top" => flag(self.sticky_on_top),
             "sticky_unfocused_opacity" => self.sticky_unfocused_opacity.to_string(),
             "sticky_default_mode" => quoted(if self.sticky_plain { "plain" } else { "markdown" }),
+            "sticky_folder" => quoted(&self.sticky_folder),
             "start_without_active_block" => flag(self.start_without_active_block),
             "scrollbar" => quoted(match self.scrollbar {
                 ScrollbarMode::Auto => "auto",
@@ -559,7 +595,7 @@ fn set_setting_line(text: &str, key: &str, value: &str) -> String {
     let mut found = false;
     for line in text.split_inclusive('\n') {
         let (content, newline) = line.strip_suffix('\n').map_or((line, ""), |c| (c, "\n"));
-        let code = content.split('#').next().unwrap_or("");
+        let code = code_part(content);
         let matches_key = !found && code.split_once('=').is_some_and(|(k, _)| k.trim() == key);
         if matches_key {
             found = true;
@@ -788,5 +824,55 @@ mod tests {
             Settings::parse("sticky_default_mode = \"rich\"\nsticky_on_top = false\n");
         assert!(!settings.sticky_on_top);
         assert_eq!(problems.len(), 1);
+    }
+
+    #[test]
+    fn a_hash_inside_a_quoted_path_is_not_a_comment() {
+        // `#` starts a comment, except inside a quoted value: a folder may be named `C#`.
+        let (settings, problems) =
+            Settings::parse("sticky_folder = \"/home/me/C#/notes\"  # mine\n");
+        assert_eq!(settings.sticky_folder, "/home/me/C#/notes");
+        assert!(problems.is_empty(), "{problems:?}");
+        // An unquoted value still ends at the first `#`.
+        let (settings, _) = Settings::parse("zoom = 1.5 # bigger\n");
+        assert_eq!(settings.zoom, 1.5);
+    }
+
+    #[test]
+    fn rewriting_a_line_keeps_a_hash_in_its_value_and_its_trailing_comment() {
+        let text = "sticky_folder = \"/a/C#/b\"  # where\nzoom = 1\n";
+        let updated = set_setting_line(text, "sticky_folder", "\"/x/F#/y\"");
+        assert_eq!(updated, "sticky_folder = \"/x/F#/y\" # where\nzoom = 1\n");
+        let (settings, problems) = Settings::parse(&updated);
+        assert_eq!(settings.sticky_folder, "/x/F#/y");
+        assert!(problems.is_empty());
+    }
+
+    #[test]
+    fn sticky_folder_is_a_plain_path_that_defaults_to_empty() {
+        assert_eq!(Settings::default().sticky_folder, "", "empty means the standard folder");
+        for (text, expected) in [
+            ("sticky_folder = \"D:\\Notes\\Sticky\"\n", "D:\\Notes\\Sticky"),
+            ("sticky_folder = \"/home/me/notes\"\n", "/home/me/notes"),
+            ("sticky_folder = \"~/notes\"\n", "~/notes"), // not expanded, like every path here
+            ("sticky_folder = \"$HOME/notes\"\n", "$HOME/notes"), // nor are variables
+            ("sticky_folder = \"\"\n", ""),
+            ("zoom = 1\n", ""),
+        ] {
+            let (settings, problems) = Settings::parse(text);
+            assert_eq!(settings.sticky_folder, expected, "{text:?}");
+            assert!(problems.is_empty(), "{text:?}: {problems:?}");
+        }
+    }
+
+    #[test]
+    fn sticky_folder_round_trips_through_value_and_set() {
+        let mut settings = Settings::default();
+        settings.set("sticky_folder", "\"/a b/c#d\"").unwrap();
+        assert_eq!(settings.value("sticky_folder").as_deref(), Some("\"/a b/c#d\""));
+        let mut again = Settings::default();
+        again.set("sticky_folder", &settings.value("sticky_folder").unwrap()).unwrap();
+        assert_eq!(again.sticky_folder, "/a b/c#d");
+        assert!(settings.set("sticky_folder", "\"bad\nname\"").is_err(), "a line break is no path");
     }
 }

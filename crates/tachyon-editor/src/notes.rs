@@ -27,6 +27,32 @@ pub struct NotesDir(pub PathBuf);
 
 impl Global for NotesDir {}
 
+/// What "Open sticky notes folder" does with the folder once it exists: show it in the system file
+/// manager. Set by the application (to `App::open_with_system`); without it - every test, since
+/// GPUI's test platform has no file manager - the command creates the folder and stops there. The
+/// same function-pointer-global bridge `picker::RecentFilesOs` uses to keep OS effects out of this
+/// crate's tests.
+#[derive(Clone, Copy)]
+pub struct OpenFolder(pub fn(&mut App, &Path));
+
+impl Global for OpenFolder {}
+
+/// Where notes are saved and listed right now: the `sticky_folder` setting if it is set, else the
+/// standard folder the application installed as [`NotesDir`]. `None` only when neither exists
+/// (no setting, and `documents_dir()` failed at start-up). Read each time a note is written or
+/// listed rather than cached, so changing the setting applies to the next save with nothing to
+/// reload; notes already saved stay where they were written.
+pub(crate) fn notes_folder(cx: &App) -> Option<PathBuf> {
+    let custom = cx.try_global::<crate::Settings>().map(|s| s.sticky_folder.trim()).unwrap_or("");
+    if custom.is_empty() {
+        return cx.try_global::<NotesDir>().map(|dir| dir.0.clone());
+    }
+    // Made absolute now: the notes state file records each note's full path, and a relative one
+    // would point somewhere else (and be skipped) when Tachyon is started from another folder.
+    let path = PathBuf::from(custom);
+    Some(std::path::absolute(&path).unwrap_or(path))
+}
+
 /// Called (via `Context::defer`, so it never runs inside another window's own update - the same
 /// reason `crates/tachyon/src/app.rs`'s Quit action defers its own work) after a note is named
 /// for the first time, goes back to empty, or its pin toggles: anything the notes state file
@@ -280,6 +306,10 @@ fn existing_note_names(dir: &Path) -> HashSet<String> {
         .collect()
 }
 
+/// How the notice for a note that could not be written starts; `flush_note` shows it and
+/// `clear_save_warning` removes it again once a save works.
+const SAVE_FAILED: &str = "This note could not be saved";
+
 /// What writing a note's current text to disk did.
 pub(crate) enum NoteWrite {
     /// Empty text: nothing is written; `existing`, if any, was deleted.
@@ -305,12 +335,15 @@ pub(crate) fn write_note_to_disk(dir: &Path, existing: Option<&Path>, text: &str
         }
         return NoteWrite::Empty;
     }
-    if std::fs::create_dir_all(dir).is_err() {
-        return NoteWrite::Failed;
-    }
+    // A note that already has a file keeps writing to it, wherever it lives (`sticky_folder` may
+    // have changed since): only a first save needs `dir`, so a bad folder setting never stops an
+    // existing note from saving.
     let path = match existing {
         Some(path) => path.to_path_buf(),
         None => {
+            if std::fs::create_dir_all(dir).is_err() {
+                return NoteWrite::Failed;
+            }
             let names = existing_note_names(dir);
             let base = base_name(text, chrono::Local::now());
             let name = unique_name(|candidate| names.contains(candidate), &base);
@@ -611,7 +644,7 @@ impl Editor {
         if let Some(note) = self.note.as_mut() {
             note.autosave_task = None;
         }
-        let Some(dir) = cx.try_global::<NotesDir>().map(|dir| dir.0.clone()) else {
+        let Some(dir) = notes_folder(cx) else {
             // Nowhere to save: `documents_dir()` failed at start-up. Not this note's fault, and
             // there is nothing more it can do about it.
             return true;
@@ -621,6 +654,7 @@ impl Editor {
         let existing = self.file.clone();
         match write_note_to_disk(&dir, existing.as_deref(), &text) {
             NoteWrite::Empty => {
+                self.clear_save_warning();
                 let had_file = self.file.take().is_some();
                 self.disk_stamp = None;
                 if let Some(note) = self.note.as_mut() {
@@ -633,6 +667,7 @@ impl Editor {
                 true
             }
             NoteWrite::Saved(path) => {
+                self.clear_save_warning();
                 let named_now = self.file.as_deref() != Some(path.as_path());
                 self.set_note_file(path, cx);
                 if let Some(note) = self.note.as_mut() {
@@ -643,7 +678,19 @@ impl Editor {
                 }
                 true
             }
-            NoteWrite::Failed => false,
+            NoteWrite::Failed => {
+                // The text stays in this window (nothing is lost); say where it was meant to go.
+                let target = self.file.clone().unwrap_or_else(|| dir.clone());
+                self.set_app_notice(
+                    format!(
+                        "{SAVE_FAILED} to {}. Check the sticky notes folder in Preferences.",
+                        target.display()
+                    )
+                    .into(),
+                    cx,
+                );
+                false
+            }
         }
     }
 
@@ -664,6 +711,15 @@ impl Editor {
     pub fn adopt_note_file(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         self.clear_pending_note_file();
         self.set_note_file(path, cx);
+    }
+
+    /// Removes the "could not be saved" notice once a save has worked (`flush_note`), so a note
+    /// does not keep warning about a folder that has since been fixed. Only that notice: any
+    /// other application notice is left alone.
+    fn clear_save_warning(&mut self) {
+        if self.app_notice.as_ref().is_some_and(|n| n.starts_with(SAVE_FAILED)) {
+            self.app_notice = None;
+        }
     }
 
     /// Whether the user chose plain text for this note (see `NoteState::chose_plain`).
@@ -698,13 +754,54 @@ impl Editor {
         cx.notify();
     }
 
+    /// Opens the folder sticky notes are saved in (`notes_folder`) in the system file manager,
+    /// creating it first if nothing has been saved there yet: a folder just set in Preferences
+    /// has nothing to open until it exists, and this is the way to find where new notes go.
+    /// Says so, rather than doing nothing, if there is no folder or it cannot be created.
+    pub fn open_notes_folder(&mut self, cx: &mut Context<Self>) {
+        let Some(dir) = notes_folder(cx) else {
+            return self.set_app_notice("There is no sticky notes folder to open.".into(), cx);
+        };
+        // The folder may be on a slow or remote mount, so it is created off the UI thread.
+        let target = dir.clone();
+        cx.spawn(async move |editor, cx| {
+            let created = cx
+                .background_executor()
+                .spawn(async move { std::fs::create_dir_all(&target) })
+                .await;
+            match created {
+                // Opened even if the window that asked has closed meanwhile.
+                Ok(()) => {
+                    cx.update(|cx| {
+                        if let Some(open) = cx.try_global::<OpenFolder>().copied() {
+                            (open.0)(cx, &dir);
+                        }
+                    });
+                }
+                Err(error) => {
+                    let notice = format!("Could not open {}: {error}", dir.display());
+                    let _ =
+                        editor.update(cx, |editor, cx| editor.set_app_notice(notice.into(), cx));
+                }
+            }
+        })
+        .detach();
+    }
+
     /// `Editor::close_window`'s note branch: never asks (autosave already keeps the file
     /// current; there is nothing a prompt would protect here) - flushing first so text from
     /// inside the last debounce window is not lost.
-    pub(crate) fn close_note(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    ///
+    /// A note whose text could not be written (an unwritable `sticky_folder`) stays open with its
+    /// notice instead: a note has no other copy (no hot-exit backup), so closing it would lose
+    /// the text. Returns whether the window may close.
+    pub(crate) fn close_note(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         self.flush_pending_paste(cx);
-        self.flush_note(cx);
+        if !self.flush_note(cx) {
+            return false;
+        }
         window.remove_window();
+        true
     }
 }
 

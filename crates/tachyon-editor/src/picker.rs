@@ -333,7 +333,7 @@ impl Editor {
     /// Lists the notes folder and opens the picker. The directory read happens off the UI thread;
     /// a missing folder opens an empty picker ("no notes") rather than an error.
     pub fn open_note_picker(&mut self, cx: &mut Context<Self>) {
-        let Some(dir) = cx.try_global::<crate::NotesDir>().map(|dir| dir.0.clone()) else {
+        let Some(dir) = crate::notes::notes_folder(cx) else {
             self.open_picker(Picker::new("Reopen sticky note", "no notes", Vec::new(), 0), cx);
             return;
         };

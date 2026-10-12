@@ -203,6 +203,7 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
             cx.set_global(tachyon_editor::NotesDir(dir.join("tachyon").join("notes")));
         }
         cx.set_global(tachyon_editor::NotesChanged(refresh_notes_state));
+        cx.set_global(tachyon_editor::OpenFolder(|cx, dir| cx.open_with_system(dir)));
         // A plain function pointer: nothing of the renderer runs until a diagram is drawn.
         cx.set_global(tachyon_editor::MermaidRenderer(render_mermaid));
         if is_primary && resident {
@@ -308,8 +309,17 @@ pub fn run(cli: Cli, listener: Option<Listener>, mut startup: Startup) {
                 write_session_now(cx);
                 // Notes first get their text onto disk: a note typed into but not yet saved has no
                 // file, so no record in the notes state, until its first save names it.
-                flush_every_note(cx);
+                let all_saved = flush_every_note(cx);
                 write_notes_state_now(cx);
+                if !all_saved {
+                    // Quit is called off: the unsaved note(s) stay open with their notice, and
+                    // the app goes back to normal, so later saves and closes record state again.
+                    cx.global_mut::<Lifecycle>().quitting = false;
+                    if cx.has_global::<tachyon_editor::HotExit>() {
+                        cx.remove_global::<tachyon_editor::HotExit>();
+                    }
+                    return;
+                }
                 let windows = cx.windows();
                 if windows.is_empty() {
                     cx.quit();
@@ -1693,16 +1703,21 @@ enum TrayMessage {
 /// losing the text.
 /// Writes every open sticky note's text to its file now (`Editor::flush_note`), so each has a file
 /// and so a record in the notes state.
-fn flush_every_note(cx: &mut App) {
+///
+/// Returns whether every note saved. A note that could not be (an unwritable `sticky_folder`) has
+/// no other copy, so Quit must not close it.
+fn flush_every_note(cx: &mut App) -> bool {
+    let mut all_saved = true;
     for window in cx.windows() {
         if let Some(editor) = window.downcast::<Editor>() {
             let _ = editor.update(cx, |editor, _, cx| {
-                if editor.is_note() {
-                    editor.flush_note(cx);
+                if editor.is_note() && !editor.flush_note(cx) {
+                    all_saved = false;
                 }
             });
         }
     }
+    all_saved
 }
 
 fn backup_every_window_for_session_end(cx: &mut App) {

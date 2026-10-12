@@ -567,8 +567,8 @@ impl Editor {
         // A sticky note saves itself and never asks, however it is closed: its own close button,
         // Alt+F4, the taskbar or the Windows close area.
         if self.is_note() {
-            self.flush_note(cx);
-            return true;
+            // A note whose text could not be saved is not closed: it has no other copy.
+            return self.flush_note(cx);
         }
         if !self.is_modified() {
             self.discard_backup();
@@ -1739,6 +1739,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         if self.is_note() {
+            // Refused (the window stays) if the note's text could not be saved.
             self.close_note(window, cx);
             return;
         }
