@@ -6,6 +6,8 @@ All notable user-visible changes are recorded here. The format follows
 
 ## [Unreleased]
 
+## [1.4.2] - 2026-10-12
+
 ### Changed
 
 - A sticky note shows each line as you typed it. A single Enter used to join the lines into one
