@@ -3626,6 +3626,12 @@ fn the_notes_folder_is_the_setting_when_set_and_the_standard_one_otherwise(
 static OPENED_FOLDERS: std::sync::Mutex<Vec<std::path::PathBuf>> =
     std::sync::Mutex::new(Vec::new());
 
+/// How often `dir` was opened. The log is shared by tests running in parallel, so each looks
+/// only at its own (unique) folder.
+fn opened_count(dir: &std::path::Path) -> usize {
+    OPENED_FOLDERS.lock().unwrap().iter().filter(|d| d.as_path() == dir).count()
+}
+
 fn record_opened_folder(_: &mut gpui::App, dir: &std::path::Path) {
     OPENED_FOLDERS.lock().unwrap().push(dir.to_path_buf());
 }
@@ -3638,32 +3644,30 @@ fn open_sticky_notes_folder_opens_the_folder_that_is_set_and_reports_failure(
     let custom = notes_dir("open-custom");
     cx.update(|cx| cx.set_global(crate::OpenFolder(record_opened_folder)));
     let (editor, cx) = open_note(standard.clone(), cx);
-    OPENED_FOLDERS.lock().unwrap().clear();
     assert!(!standard.exists(), "nothing saved yet, so no folder");
 
     editor.update(cx, |e, cx| e.open_notes_folder(cx));
     cx.run_until_parked();
     assert!(standard.is_dir(), "the folder exists once there is something to open");
-    assert_eq!(*OPENED_FOLDERS.lock().unwrap(), vec![standard.clone()], "the standard folder");
+    assert_eq!(opened_count(&standard), 1, "the standard folder");
 
     // With `sticky_folder` set, it opens that one, not the standard one.
     with_sticky_folder(&custom, cx);
     editor.update(cx, |e, cx| e.open_notes_folder(cx));
     cx.run_until_parked();
     assert!(custom.is_dir());
-    assert_eq!(OPENED_FOLDERS.lock().unwrap().last(), Some(&custom));
+    assert_eq!(opened_count(&custom), 1);
 
     // A folder that cannot be created is reported, and nothing is opened.
     let blocker = notes_dir("open-blocker");
     std::fs::create_dir_all(blocker.parent().unwrap()).unwrap();
     std::fs::write(&blocker, "x").unwrap();
     with_sticky_folder(&blocker.join("sub"), cx);
-    let opened = OPENED_FOLDERS.lock().unwrap().len();
     editor.update(cx, |e, cx| e.open_notes_folder(cx));
     cx.run_until_parked();
     let notice = editor.read_with(cx, |e, _| e.app_notice.clone()).expect("a notice");
     assert!(notice.starts_with("Could not open"), "{notice}");
-    assert_eq!(OPENED_FOLDERS.lock().unwrap().len(), opened, "nothing was opened");
+    assert_eq!(opened_count(&blocker.join("sub")), 0, "nothing was opened");
     let _ = std::fs::remove_file(&blocker);
     let _ = std::fs::remove_dir_all(&standard);
     let _ = std::fs::remove_dir_all(&custom);
@@ -3771,15 +3775,14 @@ fn open_sticky_notes_folder_does_not_create_the_folder_on_the_ui_thread(cx: &mut
     let standard = notes_dir("async-open");
     cx.update(|cx| cx.set_global(crate::OpenFolder(record_opened_folder)));
     let (editor, cx) = open_note(standard.clone(), cx);
-    OPENED_FOLDERS.lock().unwrap().clear();
 
     editor.update(cx, |e, cx| e.open_notes_folder(cx));
     // Nothing happens synchronously: creating the folder is left to the background executor.
     assert!(!standard.exists(), "no filesystem work on the UI thread");
-    assert!(OPENED_FOLDERS.lock().unwrap().is_empty());
+    assert_eq!(opened_count(&standard), 0);
 
     cx.run_until_parked();
     assert!(standard.is_dir(), "created in the background");
-    assert_eq!(*OPENED_FOLDERS.lock().unwrap(), vec![standard.clone()], "then opened");
+    assert_eq!(opened_count(&standard), 1, "then opened");
     let _ = std::fs::remove_dir_all(&standard);
 }
