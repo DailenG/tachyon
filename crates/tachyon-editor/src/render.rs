@@ -1442,38 +1442,59 @@ impl Editor {
             row = row.pl(theme.scaled(px(INDENT * f32::from(depth))));
         }
         if let Some(marker) = line.marker {
-            row = row.child(self.marker(marker));
+            // A task box toggles on click: the source offset is the item's leaf start (its line
+            // start), from which the toggle finds the box.
+            let leaf_start = parsed.ir.leaves.get(line.leaf).map(|leaf| block_start + leaf.start);
+            row = row.child(self.marker(marker, leaf_start, line.leaf, cx));
         } else if line.indent > 0 {
             row = row.pl(theme.scaled(px(INDENT * f32::from(line.indent))));
         }
         row.child(content).into_any_element()
     }
 
-    fn marker(&self, marker: Marker) -> AnyElement {
+    fn marker(
+        &self,
+        marker: Marker,
+        task_at: Option<usize>,
+        leaf: usize,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let theme = &self.theme;
         let el = div().w(theme.scaled(px(INDENT))).flex_none().text_color(theme.text.muted);
         match marker {
             Marker::Bullet => el.child("•").into_any_element(),
             Marker::Ordered(n) => el.child(SharedString::from(format!("{n}."))).into_any_element(),
-            Marker::Task { checked } => el
-                .flex()
-                .items_center()
-                .child(
-                    div()
-                        .size(theme.scaled(px(13.)))
-                        .rounded(theme.radius_small)
-                        .border_1()
-                        .border_color(theme.border.control)
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .text_size(theme.scaled(px(11.)))
-                        .line_height(theme.scaled(px(11.)))
-                        .when(checked, |d| {
-                            d.bg(theme.accent).text_color(theme.text.on_accent).child("✓")
-                        }),
-                )
-                .into_any_element(),
+            Marker::Task { checked } => {
+                let editor = cx.entity();
+                let boxed = div()
+                    .id(("task", task_at.unwrap_or(leaf)))
+                    .debug_selector(|| format!("task-box-{}", task_at.unwrap_or(leaf)))
+                    .size(theme.scaled(px(13.)))
+                    .rounded(theme.radius_small)
+                    .border_1()
+                    .border_color(theme.border.control)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_size(theme.scaled(px(11.)))
+                    .line_height(theme.scaled(px(11.)))
+                    .when(checked, |d| {
+                        d.bg(theme.accent).text_color(theme.text.on_accent).child("✓")
+                    });
+                let boxed = match task_at {
+                    Some(at) => boxed.cursor_pointer().on_mouse_down(
+                        MouseButton::Left,
+                        move |_: &MouseDownEvent, _, cx| {
+                            // Toggling is not a caret move or a drag start: nothing below, the
+                            // text or the margin, should see this press.
+                            editor.update(cx, |editor, cx| editor.toggle_task_at(at, cx));
+                            cx.stop_propagation();
+                        },
+                    ),
+                    None => boxed,
+                };
+                el.flex().items_center().child(boxed).into_any_element()
+            }
         }
     }
 

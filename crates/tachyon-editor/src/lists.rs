@@ -103,6 +103,36 @@ fn next_prefix(item: &ListLine<'_>) -> String {
     format!("{}{}{marker}{task} ", item.quote, " ".repeat(item.indent))
 }
 
+/// The byte offset of the mark (the space or `x` inside `[ ]`) of the task box on the list item
+/// line `line` (without its line break), and whether it is checked. `None` if `line` is not a
+/// task item. Scans the item's prefix itself rather than reusing [`parse`], because the Markdown
+/// parser accepts any run of spaces between the marker and the box (`-  [ ] item`), which draws
+/// a box that `parse` (one space, as Enter and Tab write them) would not find.
+pub(crate) fn task_mark(line: &str) -> Option<(usize, bool)> {
+    let item = parse_marker_only(line)?;
+    let bytes = line.as_bytes();
+    let mut at = item;
+    while bytes.get(at) == Some(&b' ') {
+        at += 1;
+    }
+    // At least one space after the marker, then `[`, the mark, `]`, and a space or the line end.
+    if at == item {
+        return None;
+    }
+    match &bytes[at..] {
+        [b'[', mark @ (b' ' | b'x' | b'X'), b']'] => Some((at + 1, *mark != b' ')),
+        [b'[', mark @ (b' ' | b'x' | b'X'), b']', b' ', ..] => Some((at + 1, *mark != b' ')),
+        _ => None,
+    }
+}
+
+/// Where a list item's marker ends on `line` (past its quote markers, indent and bullet or
+/// number), the offset the task box scan starts from. `None` if the line is not a list item.
+fn parse_marker_only(line: &str) -> Option<usize> {
+    let item = parse(line)?;
+    Some(item.quote.len() + item.indent + item.marker.len())
+}
+
 impl Editor {
     /// Whether list editing applies at `offset`: not inside code, HTML or text awaiting a parse,
     /// where a line starting with `-` is not a list item.
@@ -231,6 +261,54 @@ impl Editor {
     }
 }
 
+impl Editor {
+    /// Flips the task box on the list item at source offset `at` (any offset on its line): the
+    /// space or `x` inside `[ ]` becomes the other, as one undoable edit that leaves the caret,
+    /// the selection and the block's rendered state alone. Returns whether `at` was a task item.
+    pub(crate) fn toggle_task_at(&mut self, at: usize, cx: &mut Context<Self>) -> bool {
+        // Decided from the text as the user saw it when they clicked: which line, where its mark
+        // is, whether it is checked.
+        if !self.in_list_context(at) {
+            return false;
+        }
+        let rope = self.doc.buffer().rope();
+        let (start, end) = (movement::home(rope, at), movement::end(rope, at));
+        let line = rope.byte_slice(start..end).to_string();
+        let Some((mark, checked)) = task_mark(&line) else { return false };
+        let mut mark_at = start + mark;
+        // A paste still being read or prepared lands first, so the edits keep the order of the
+        // user's input (every other non-typing input does the same). It may move the box, so the
+        // mark's offset follows it; and the byte found there must still be the mark we decided
+        // on, so a paste that rewrote the box itself toggles nothing.
+        let before = self.doc.buffer().version();
+        self.flush_pending_paste(cx);
+        if let Some(edits) = self.doc.buffer().edits_since(before) {
+            mark_at = edits.fold(mark_at, |at, edit| edit.map_offset(at));
+        }
+        let rope = self.doc.buffer().rope();
+        let current = (mark_at < rope.len_bytes()).then(|| rope.byte_slice(mark_at..mark_at + 1));
+        let intact = current.is_some_and(|byte| {
+            let byte = byte.to_string();
+            if checked { byte == "x" || byte == "X" } else { byte == " " }
+        });
+        if !intact {
+            return false;
+        }
+        let (caret, reversed, reveal) = (self.selection.clone(), self.reversed, self.reveal);
+        self.doc.seal_undo_group();
+        self.replace(mark_at..mark_at + 1, if checked { " " } else { "x" }, cx);
+        self.doc.seal_undo_group();
+        // `replace` puts the caret after the edit and asks for it to be scrolled into view; a
+        // checkbox click is neither a caret move nor a reason to leave the box that was clicked.
+        self.selection = caret;
+        self.reversed = reversed;
+        self.reveal = reveal;
+        self.update_active();
+        cx.notify();
+        true
+    }
+}
+
 /// How many lines before a selection are searched for its items' siblings and parents.
 const LOOKBACK: usize = 500;
 
@@ -335,5 +413,46 @@ mod tests {
         assert_eq!(next("- one"), "- ");
         assert_eq!(next("  9. nine"), "  10. ");
         assert_eq!(next("> - [x] done"), "> - [ ] ");
+    }
+
+    #[test]
+    fn task_mark_finds_the_box_in_every_item_shape() {
+        // (line, expected mark offset, checked)
+        for (line, mark, checked) in [
+            ("- [ ] one", 3, false),
+            ("- [x] two", 3, true),
+            ("- [X] two", 3, true),
+            ("  - [ ] nested", 5, false),
+            ("1. [ ] numbered", 4, false),
+            ("12) [x] twelve", 5, true),
+            ("> - [ ] quoted", 5, false),
+            ("> > * [x] deep", 7, true),
+            ("- [ ]", 3, false), // an empty task item: the box ends the line
+            ("-  [ ] padded", 4, false), // the parser accepts any run of spaces after the marker
+            ("-   [x] more", 5, true),
+            ("1.  [ ] numbered", 5, false),
+        ] {
+            let found = task_mark(line);
+            assert_eq!(found, Some((mark, checked)), "{line:?}");
+            assert!(
+                matches!(line.as_bytes()[mark], b' ' | b'x' | b'X'),
+                "{line:?}: points at the mark"
+            );
+        }
+    }
+
+    #[test]
+    fn task_mark_ignores_lines_that_are_not_task_items() {
+        for line in [
+            "- plain [ ] not a task",
+            "- [] no mark",
+            "- [y] bad mark",
+            "text [ ]",
+            "[ ] bare",
+            "- [ ]x",
+            "",
+        ] {
+            assert_eq!(task_mark(line), None, "{line:?}");
+        }
     }
 }
