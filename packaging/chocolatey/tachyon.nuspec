@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>tachyon</id>
+    <version>1.5.0</version>
+    <title>Tachyon</title>
+    <authors>Dailen Gunter</authors>
+    <owners>Dailen</owners>
+    <projectUrl>https://daileng.github.io/tachyon/</projectUrl>
+    <iconUrl>https://cdn.jsdelivr.net/gh/DailenG/tachyon@v1.5.0/packaging/msix/Assets/Square44x44Logo.targetsize-256.png</iconUrl>
+    <projectSourceUrl>https://github.com/DailenG/tachyon</projectSourceUrl>
+    <packageSourceUrl>https://github.com/DailenG/tachyon/tree/main/packaging/chocolatey</packageSourceUrl>
+    <bugTrackerUrl>https://github.com/DailenG/tachyon/issues</bugTrackerUrl>
+    <docsUrl>https://github.com/DailenG/tachyon#readme</docsUrl>
+    <licenseUrl>https://github.com/DailenG/tachyon#license</licenseUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <copyright>Copyright (c) 2026 Dailen Gunter</copyright>
+    <tags>tachyon markdown markdown-editor editor text-editor notes sticky-notes writing wysiwyg mermaid foss open-source portable</tags>
+    <summary>A fast, native Markdown editor: inline WYSIWYG editing that opens as quickly as a scratchpad. No WebView.</summary>
+    <description><![CDATA[Tachyon is a GPU-accelerated native Markdown editor, built for reading and editing text such as pasted LLM output. It starts as fast as a scratchpad and edits like Typora: one pane, inline WYSIWYG, no WebView.
+
+## Features
+
+- **Block swap editing:** the block under the caret shows raw Markdown; every other block shows rendered rich text. Files that are not Markdown open in plain-text mode (`Ctrl+Shift+M` toggles).
+- **Fast:** after the first start, launches open in about one frame because Tachyon stays resident in the notification area. A keystroke paints within one frame, and a 5 MB paste never drops one.
+- **Large files stay responsive:** a 200 MB log opens in about 400 MB of memory; files over 2 GiB are refused with a message instead of crashing.
+- **Everyday editing:** find and replace, light and dark themes that follow Windows, zoom, `Ctrl+click` links, list continuation, syntax highlighting in fenced code, a command palette, Go to heading, quick open and Open recent, Copy as HTML, local images, Mermaid diagrams and math.
+- **Hot exit and session restore:** quitting keeps unsaved documents and reopens every window where it was.
+- **Sticky notes** with their own global hotkey.
+- A Preferences panel (`Ctrl+,`) over a plain `settings.toml`.
+
+## Command line
+
+`tachyon notes.md` opens a file, `tachyon --paste` opens the clipboard, `tachyon --quit` ends the resident instance, `tachyon --autostart on` starts it at sign-in, and `tachyon --help` lists every option.
+
+## Notes
+
+- Requires Windows 10 (version 1903 or later) or Windows 11, 64-bit.
+- This package installs the signed portable build from the GitHub release and adds a Start menu shortcut. Update it with `choco upgrade tachyon`; it does not update itself.
+- The project also publishes a self-updating MSIX install (`Tachyon.appinstaller`). Use one or the other: if both are installed, `tachyon` in a terminal starts whichever comes first on your PATH.
+- Uninstalling closes Tachyon if it is running from this package. Your settings, session and unsaved documents (under `%APPDATA%` and `%LOCALAPPDATA%`) are kept.
+]]></description>
+    <releaseNotes>https://github.com/DailenG/tachyon/releases/tag/v1.5.0</releaseNotes>
+  </metadata>
+  <files>
+    <file src="tools\**" target="tools" />
+    <file src="legal\**" target="legal" />
+  </files>
+</package>

@@ -1,0 +1,4 @@
+# The embedded zip is the GitHub release asset; download it into tools\ before packing:
+#   gh release download v<version> -R DailenG/tachyon -p "*-x86_64-windows.zip" -D tools
+# legal\VERIFICATION.txt carries its SHA256.
+tools/*.zip
