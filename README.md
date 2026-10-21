@@ -224,6 +224,13 @@ with". Launches of a packaged app go through Windows' package activation, which 
 package does not remove the autostart entry if you turned it on; run `tachyon --autostart off`
 first.
 
+**Windows, with Chocolatey:** `choco install tachyon` installs the signed `.zip` build for all
+users, with a Start menu shortcut and `tachyon` on the PATH; `choco upgrade tachyon` updates it
+(new versions appear after the Chocolatey community repository's moderation).
+`choco uninstall tachyon` closes Tachyon if it runs from the package and removes its sign-in
+autostart, keeping your settings and documents. Use either this or the MSIX install, not both.
+The package source is in [`packaging/chocolatey/`](packaging/chocolatey/).
+
 **Nightly builds:** every merge to `main` publishes a signed MSIX to a rolling
 [`nightly`](https://github.com/DailenG/tachyon/releases/tag/nightly) prerelease. Install once from
 [`Tachyon.appinstaller`](https://github.com/DailenG/tachyon/releases/download/nightly/Tachyon.appinstaller)
