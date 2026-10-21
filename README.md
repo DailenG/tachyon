@@ -227,8 +227,11 @@ first.
 **Windows, with Chocolatey:** `choco install tachyon` installs the signed `.zip` build for all
 users, with a Start menu shortcut and `tachyon` on the PATH; `choco upgrade tachyon` updates it
 (new versions appear after the Chocolatey community repository's moderation).
-`choco uninstall tachyon` closes Tachyon if it runs from the package and removes its sign-in
-autostart, keeping your settings and documents. Use either this or the MSIX install, not both.
+`choco uninstall tachyon` closes Tachyon if it runs from the package and keeps your settings and
+documents. It also removes the sign-in autostart (`tachyon --autostart on`) of every user signed in
+at the time; for anyone else, run `tachyon --autostart off` before uninstalling (a leftover entry
+is harmless: Windows skips it once the file is gone). Use either this or the MSIX install, not
+both.
 The package source is in [`packaging/chocolatey/`](packaging/chocolatey/).
 
 **Nightly builds:** every merge to `main` publishes a signed MSIX to a rolling

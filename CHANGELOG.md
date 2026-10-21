@@ -10,8 +10,9 @@ All notable user-visible changes are recorded here. The format follows
 
 - A Chocolatey package: `choco install tachyon` installs the signed Windows build with a Start
   menu shortcut and `tachyon` on the PATH, and `choco upgrade tachyon` updates it. Upgrading or
-  uninstalling closes a Tachyon running from the package first; uninstalling also removes its
-  sign-in autostart and keeps settings and documents. Source in `packaging/chocolatey/`.
+  uninstalling closes a Tachyon running from the package first; uninstalling also removes the
+  sign-in autostart of users signed in at the time, and keeps settings and documents. Source in
+  `packaging/chocolatey/`.
 
 ## [1.5.0] - 2026-10-12
 
